@@ -50,9 +50,11 @@ Round 2 closed the reader and search gaps: AO3-ordered work metadata, chapter
 preface heading and jump select, `?view_full_work=true` with a Chapter-by-Chapter
 toggle, bottom feedback actions, `Comment as <pseud>`, blurb-based search
 results, the signed-out login dropdown, an A–Z fandoms directory and the
-signed-in dashboard sidebar on every page. Remaining before the plan's final
-gate: search result paging, an optional final pass on the required-tag artwork,
-a manual browser walkthrough in both skins, and the next version bump.
+signed-in dashboard sidebar on every page. Round 3 added paged offline search
+with totals, the home Continue Reading strip, and the two-step
+`/users/logout/confirm` flow. Remaining before the plan's final gate: an
+optional pass on required-tag SVG artwork, a manual browser walkthrough in both
+skins, and the next version bump.
 
 ---
 
