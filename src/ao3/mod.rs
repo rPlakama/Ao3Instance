@@ -5,5 +5,6 @@ pub mod client;
 pub mod governor;
 pub mod jar;
 pub mod parse;
+pub mod pseuds;
 pub mod session;
 pub mod work;

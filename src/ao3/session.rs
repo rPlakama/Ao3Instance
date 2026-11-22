@@ -22,6 +22,7 @@ use serde::Deserialize;
 use crate::ao3::client::{Client, Response};
 use crate::ao3::jar::Jar;
 use crate::ao3::parse::{SpaceMode, percent_decode, percent_encode};
+use crate::ao3::pseuds::Pseud;
 use crate::config::Config;
 use crate::consts;
 use crate::crypto::SecretString;
@@ -77,6 +78,7 @@ pub struct AccountSession {
     account: String,
     state: SessionState,
     csrf: Option<SecretString>,
+    pseud: Option<Pseud>,
     client: Client,
 }
 
@@ -91,6 +93,7 @@ impl AccountSession {
             account: String::new(),
             state: SessionState::LoggedOut,
             csrf: None,
+            pseud: None,
             client,
         })
     }
@@ -105,6 +108,15 @@ impl AccountSession {
 
     pub fn jar(&self) -> &Jar {
         self.client.jar()
+    }
+
+    /// The pseud used for comments, once discovered for this session.
+    pub fn pseud(&self) -> Option<&Pseud> {
+        self.pseud.as_ref()
+    }
+
+    pub fn set_pseud(&mut self, pseud: Pseud) {
+        self.pseud = Some(pseud);
     }
 
     pub fn client(&self) -> &Client {
@@ -124,6 +136,7 @@ impl AccountSession {
         let account = validate_account(account)?;
         self.account = account.to_string();
         self.csrf = None;
+        self.pseud = None;
         if !jar.is_complete() {
             self.client.set_jar(Jar::new());
             self.state = SessionState::SessionIncomplete;
@@ -169,6 +182,7 @@ impl AccountSession {
         let account = validate_account(account)?;
         self.account = account.to_string();
         self.csrf = None;
+        self.pseud = None;
         // One account per jar: never authenticate on top of a previous identity.
         self.client.set_jar(Jar::new());
         self.state = SessionState::LoggedOut;
@@ -564,6 +578,7 @@ impl AccountSession {
     fn wipe(&mut self) {
         self.client.set_jar(Jar::new());
         self.csrf = None;
+        self.pseud = None;
         self.state = SessionState::LoggedOut;
     }
 }

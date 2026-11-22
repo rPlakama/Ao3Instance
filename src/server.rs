@@ -20,6 +20,7 @@ use crate::ao3::actions;
 use crate::ao3::governor::WriteGovernor;
 use crate::ao3::jar::Jar;
 use crate::ao3::parse::{SpaceMode, percent_encode};
+use crate::ao3::pseuds::Pseud;
 use crate::ao3::session::{AccountSession, SessionState};
 use crate::ao3::work::parse_work_page;
 use crate::config::Config;
@@ -84,6 +85,9 @@ impl From<Error> for AppError {
                 Self::Upstream(format!("AO3 blocked the request (HTTP {status})"))
             }
             Error::Validation(message) => Self::BadRequest(message),
+            Error::SpamRejected => Self::BadRequest(
+                "AO3's spam filter rejected the content; reword and try again.".into(),
+            ),
             Error::LoggedOut | Error::SessionIncomplete => Self::Upstream(
                 "The AO3 session is not usable. Import cookies on the Session page.".to_string(),
             ),
@@ -110,10 +114,15 @@ pub async fn router(config: &Config, store: Store) -> Result<Router> {
     let key = SecretKey::load_or_create(&config.key_file)?;
     let mut session = AccountSession::new(config)?;
 
-    if let Some((account, jar_enc)) = store.load_session().await? {
-        match Jar::decrypt(&key, &jar_enc) {
-            Ok(jar) => match session.restore(&account, jar) {
-                Ok(state) => eprintln!("session restored for {account} ({state})"),
+    if let Some(saved) = store.load_session().await? {
+        match Jar::decrypt(&key, &saved.jar_enc) {
+            Ok(jar) => match session.restore(&saved.account, jar) {
+                Ok(state) => {
+                    if let (Some(id), Some(name)) = (saved.pseud_id, saved.pseud_name) {
+                        session.set_pseud(crate::ao3::pseuds::Pseud { id, name });
+                    }
+                    eprintln!("session restored for {} ({state})", saved.account);
+                }
                 Err(error) => eprintln!("stored session refused: {error}"),
             },
             Err(error) => eprintln!("stored session could not be decrypted: {error}"),
@@ -145,6 +154,8 @@ pub async fn router(config: &Config, store: Store) -> Result<Router> {
         .route("/write/unsubscribe", post(write_unsubscribe))
         .route("/write/kudos", post(write_kudos))
         .route("/write/reading", post(write_reading))
+        .route("/write/comment/preview", post(write_comment_preview))
+        .route("/write/comment", post(write_comment))
         .route("/audit", get(audit))
         .route("/health", get(health))
         .with_state(state))
@@ -463,7 +474,14 @@ async fn persist_session(state: &AppState, session: &AccountSession) -> Result<(
     state
         .store
         .save_session(session.account(), &encrypted)
-        .await
+        .await?;
+    if let Some(pseud) = session.pseud() {
+        state
+            .store
+            .set_session_pseud(session.account(), pseud.id, &pseud.name)
+            .await?;
+    }
+    Ok(())
 }
 
 #[derive(Deserialize)]
@@ -614,6 +632,10 @@ fn notice_text(key: &str) -> Option<&'static str> {
         "reading_for_later" => Some("Marked for later."),
         "reading_read" => Some("Marked as read."),
         "reading_failed" => Some("AO3 refused the reading update; see the audit log."),
+        "comment_posted" => Some("Comment posted on AO3."),
+        "comment_failed" => Some("AO3 rejected the comment; see the audit log."),
+        "comment_spam" => Some("AO3's spam filter rejected the comment; reword and try again."),
+        "comment_rate_limited" => Some("AO3's comment limit is 3 per 15 minutes; try again later."),
         _ => None,
     }
 }
@@ -680,6 +702,7 @@ async fn write_preview(
             &description,
             "/write/kudos",
             &[("target_id", &target_id), ("confirm", "yes")],
+            None,
         )));
     }
     let kind = actions::normalize_kind(&raw_kind)
@@ -701,6 +724,7 @@ async fn write_preview(
             ("target_id", &target_id),
             ("confirm", "yes"),
         ],
+        None,
     )))
 }
 
@@ -1012,6 +1036,166 @@ async fn write_reading(
                 .finish_intent(intent, "failed", "failed", Some(&error.to_string()))
                 .await?;
             Ok(redirect_after_write(&state, actions::WORK, &target_id, "reading_failed").await)
+        }
+    }
+}
+
+#[derive(Deserialize)]
+struct CommentForm {
+    target_id: String,
+    content: String,
+    confirm: Option<String>,
+}
+
+async fn ensure_pseud(
+    state: &AppState,
+    session: &mut AccountSession,
+    account: &str,
+) -> Handled<Pseud> {
+    if let Some(pseud) = session.pseud().cloned() {
+        return Ok(pseud);
+    }
+    let pseud = actions::discover_default_pseud(session, account)
+        .await
+        .map_err(AppError::from)?;
+    session.set_pseud(pseud.clone());
+    persist_session(state, session)
+        .await
+        .map_err(AppError::from)?;
+    Ok(pseud)
+}
+
+fn validate_comment_content(content: &str) -> Handled<()> {
+    let trimmed = content.trim();
+    if trimmed.is_empty() {
+        return Err(AppError::BadRequest("the comment is empty".into()));
+    }
+    if trimmed.chars().count() > actions::COMMENT_MAX_CHARS {
+        return Err(AppError::BadRequest(format!(
+            "the comment is longer than {} characters",
+            actions::COMMENT_MAX_CHARS
+        )));
+    }
+    Ok(())
+}
+
+async fn write_comment_preview(
+    State(state): State<Arc<AppState>>,
+    Form(form): Form<CommentForm>,
+) -> Handled<Html<String>> {
+    if !state.write_enabled {
+        return Err(AppError::Forbidden(
+            "Writes are disabled (set AO3I_WRITE_ENABLED=true).".into(),
+        ));
+    }
+    let target_id = form.target_id.trim().to_string();
+    if target_id.is_empty() {
+        return Err(AppError::BadRequest("missing comment target".into()));
+    }
+    validate_comment_content(&form.content)?;
+    let (account, usable) = session_identity(&state).await;
+    if !usable || account.is_empty() {
+        return Err(AppError::Forbidden("Sign in to AO3 first.".into()));
+    }
+    let pseud = {
+        let mut session = state.session.lock().await;
+        ensure_pseud(&state, &mut session, &account).await?
+    };
+    let title = state
+        .store
+        .get_work(&target_id)
+        .await?
+        .map(|work| work.title)
+        .unwrap_or_else(|| format!("work {target_id}"));
+    Ok(Html(render::confirm_page(
+        "Confirm comment",
+        &format!(
+            "Post this comment on “{title}” as {}? It will be public on AO3.",
+            pseud.name
+        ),
+        "/write/comment",
+        &[
+            ("target_id", &target_id),
+            ("content", &form.content),
+            ("confirm", "yes"),
+        ],
+        Some(&form.content),
+    )))
+}
+
+async fn write_comment(
+    State(state): State<Arc<AppState>>,
+    Form(form): Form<CommentForm>,
+) -> Handled<Redirect> {
+    if !state.write_enabled {
+        return Err(AppError::Forbidden(
+            "Writes are disabled (set AO3I_WRITE_ENABLED=true).".into(),
+        ));
+    }
+    if form.confirm.as_deref() != Some("yes") {
+        return Err(AppError::BadRequest(
+            "A deliberate confirmation is required for public actions.".into(),
+        ));
+    }
+    let target_id = form.target_id.trim().to_string();
+    if target_id.is_empty() {
+        return Err(AppError::BadRequest("missing comment target".into()));
+    }
+    validate_comment_content(&form.content)?;
+    let (account, usable) = session_identity(&state).await;
+    if !usable || account.is_empty() {
+        return Err(AppError::Forbidden("Sign in to AO3 first.".into()));
+    }
+
+    state
+        .governor
+        .begin("comment")
+        .await
+        .map_err(AppError::from)?;
+
+    let (intent, result) = {
+        let mut session = state.session.lock().await;
+        let pseud = ensure_pseud(&state, &mut session, &account).await?;
+        let intent = state
+            .store
+            .record_intent(&account, "comment", actions::WORK, &target_id)
+            .await?;
+        let result =
+            actions::post_comment(&mut session, &target_id, pseud.id, form.content.as_str()).await;
+        (intent, result)
+    };
+
+    match result {
+        Ok(outcome) => {
+            let evidence = outcome
+                .comment_id
+                .map(|id| format!("comment {id}"))
+                .unwrap_or_else(|| "posted".to_string());
+            state
+                .store
+                .finish_intent(intent, "done", "commented", Some(&evidence))
+                .await?;
+            Ok(redirect_after_write(&state, actions::WORK, &target_id, "comment_posted").await)
+        }
+        Err(error) => {
+            let retry_after = if let Error::RateLimited { retry_after } = &error {
+                *retry_after
+            } else {
+                None
+            };
+            state.governor.record_outcome("comment", retry_after).await;
+            state
+                .store
+                .finish_intent(intent, "failed", "failed", Some(&error.to_string()))
+                .await?;
+            let flag = if matches!(error, Error::SpamRejected) {
+                "comment_spam"
+            } else if matches!(error, Error::RateLimited { .. }) {
+                "comment_rate_limited"
+            } else {
+                "comment_failed"
+            };
+            Ok(redirect_after_write(&state, actions::WORK, &target_id, flag).await)
         }
     }
 }

@@ -271,6 +271,27 @@ The fault matrix in ADR-0005 is the acceptance test for W6.
 | **W5** | comments (top-level + reply) | rate limit, spam, duplicate, frozen, moderation all typed; no auto-retry |
 | **W6** | failure injection + sandbox suite + kill switch + operator docs | ADR-0005 fault matrix passes; `AO3I_WRITE_ENABLED=false` blocks all writes |
 
+### W6 status — partial (2026-11-22): comments
+
+**Landed:**
+- **Comments**: `POST /works/:id/comments` with `comment[pseud_id]` +
+  `comment[comment_content]`; the default pseud is discovered from
+  `/users/:login/pseuds` (parser traced to `pseuds/_pseud_module.html.erb`,
+  default marked `span.current`) and persisted with the encrypted session.
+- Public action: goes through the same confirmation page, now showing the exact
+  comment text; governor budget 3/900 s (AO3's own limit); one request, never retried.
+- Failure classification from the re-rendered form: duplicate-content, spam filter,
+  closed/hidden/unrevealed comments, generic validation, HTTP 429 -> distinct
+  notices, all audited as failed with the AO3 message as evidence.
+- Success is read from the redirect fragment `#comment_<id>`; audit outcome
+  "commented" records the id.
+- Tests: 137 total; new `tests/writes_comments.rs` (pseud discovery + preview +
+  post + audit, duplicate, spam, 429, overlong/unconfirmed no-network).
+  Evidence: `notes/gates/w6.txt`.
+
+**Remaining W6:** bookmarks (`pseud_id` discovery now exists, so this is cheap),
+failure injection/offline matrix, operator docs, sandbox validation.
+
 ### W5 status — partial (2026-11-22): kudos + reading flags
 
 **Landed:**

@@ -91,16 +91,16 @@ async fn imported_session_is_persisted_and_used_for_fetches() {
     assert!(page.contains("someone"));
 
     // It is stored encrypted, not as a plaintext cookie.
-    let (account, encrypted) = store
+    let saved = store
         .load_session()
         .await
         .expect("load session")
         .expect("persisted");
-    assert_eq!(account, "someone");
-    assert!(!encrypted.contains("_otwarchive_session=s1"));
+    assert_eq!(saved.account, "someone");
+    assert!(!saved.jar_enc.contains("_otwarchive_session=s1"));
     let config = config_for(&dir, &upstream.url());
     let key = SecretKey::load_or_create(&config.key_file).expect("key");
-    let jar = Jar::decrypt(&key, &encrypted).expect("decrypt");
+    let jar = Jar::decrypt(&key, &saved.jar_enc).expect("decrypt");
     assert!(jar.is_complete());
 
     // Opening a work uses that jar.

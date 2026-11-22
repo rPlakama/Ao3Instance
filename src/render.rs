@@ -62,6 +62,10 @@ h2.title { margin:.2rem 0 0; font-size:1.9rem; line-height:1.25; }
 .toolbar a:hover { color:var(--accent); }
 iframe.chapter { width:100%; border:0; background:transparent; min-height:70vh; }
 table.audit { width:100%; border-collapse:collapse; font-size:.9rem; }
+pre.preview { white-space:pre-wrap; border:1px solid var(--line); border-radius:6px; padding:.8rem; background:rgba(127,127,127,.06); font:inherit; }
+details.comment { margin:2rem 0 1rem; border-top:1px solid var(--line); padding-top:1rem; }
+details.comment summary { cursor:pointer; color:var(--accent); }
+form.stack textarea { padding:.6rem .7rem; font:inherit; color:inherit; background:transparent; border:1px solid var(--line); border-radius:6px; resize:vertical; }
 table.audit th, table.audit td { text-align:left; padding:.45rem .5rem; border-bottom:1px solid var(--line); }
 table.audit th { color:var(--muted); font-weight:600; }
 footer.site { padding:1rem 1.5rem; border-top:1px solid var(--line); color:var(--muted); font-size:.8rem; }
@@ -399,6 +403,18 @@ pub fn read_page(work: &StoredWork, chapters: &[StoredChapter], ctx: &ReadContex
         ),
     }
 
+    if can_write {
+        body.push_str(&format!(
+            "<details class=\"comment\"><summary>Comment on this work</summary>\
+             <form class=\"stack\" method=\"post\" action=\"/write/comment/preview\">\
+             <input type=\"hidden\" name=\"target_id\" value=\"{}\">\
+             <label>Comment (max 10000 characters — it will be public on AO3)\
+             <textarea name=\"content\" rows=\"6\" maxlength=\"10000\" required></textarea></label>\
+             <button type=\"submit\">Preview comment</button></form></details>",
+            escape(&work.ao3_id)
+        ));
+    }
+
     layout(&format!("{} — AO3Instance", work.title), &body)
 }
 
@@ -583,6 +599,7 @@ pub fn confirm_page(
     description: &str,
     action: &str,
     hidden: &[(&str, &str)],
+    detail: Option<&str>,
 ) -> String {
     let mut body = format!(
         "<h2>{}</h2><p>{}</p><form class=\"stack\" method=\"post\" action=\"{}\"\
@@ -592,6 +609,9 @@ pub fn confirm_page(
         escape(description),
         escape(action)
     );
+    if let Some(detail) = detail {
+        body.push_str(&format!("<pre class=\"preview\">{}</pre>", escape(detail)));
+    }
     for (name, value) in hidden {
         body.push_str(&format!(
             "<input type=\"hidden\" name=\"{}\" value=\"{}\">",

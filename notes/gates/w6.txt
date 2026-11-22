@@ -1,0 +1,50 @@
+W6 gate run (comments) — 2026-11-22
+toolchain: rustc 1.98.1, cargo 1.98.0 (nix dev shell)
+
+== cargo test (137 total)
+lib                  81 passed   (incl. pseud parser + comment-id/classification unit tests)
+client_http           7 passed
+search_and_refresh    3 passed
+server_smoke          2 passed
+session_and_progress  3 passed
+session_flow         25 passed
+work_parse            5 passed
+writes                3 passed
+writes_kudos_reading  4 passed
+writes_comments       4 passed   (new)
+== cargo clippy --all-targets -- -D warnings: clean
+== cargo fmt --check: clean
+
+== application opens (real binary, temp config, writes default OFF)
+/         200 · landing page
+/audit    200 · write ledger
+/health   200 · ok
+
+== what the new integration tests prove
+1. comment_is_discovered_confirmed_posted_and_audited
+   - the reader shows a comment form for a signed-in session
+   - POST /write/comment/preview discovers the default pseud from
+     GET /users/someone/pseuds (fixture built from app/views/pseuds/*), then renders
+     a confirmation page with the exact comment text and pseud name
+   - POST /write/comment sends exactly ONE POST /works/12345/comments with
+     comment[pseud_id]=111, comment[comment_content]=Hello world, CSRF token;
+     the 302 Location /works/12345#comment_777 is parsed as success (comment id 777)
+   - the pseud is persisted with the encrypted session; audit outcome "commented"
+2. duplicate_comment_is_typed_and_audited_once
+   - 200 re-render containing "already left this comment" -> typed failure, exactly one
+     attempt, audit evidence carries the AO3 message
+3. spam_and_rate_limits_have_their_own_notices
+   - "looks like spam" -> spam-filter notice; HTTP 429 -> "3 per 15 minutes" notice
+4. overlong_or_unconfirmed_comments_never_reach_ao3
+   - >10000 chars rejected before any network; missing confirm=yes -> 400; the mock
+     upstream saw no comment request
+
+== contract notes (pinned clone 452391b)
+- POST /works/:id/comments with comment[pseud_id] + comment[comment_content];
+  AO3's limit is 3 / 900 s and 10000 chars (comments_controller.rb:57-77,
+  comment.rb:21-23, config.yml:105)
+- failure is a 200 re-render with error text (no JSON responder on create); the exact
+  duplicate and spam strings from config/locales/models/en.yml:170,178 are mapped
+- success is a redirect whose fragment carries #comment_<id>
+- the pseud is required for a logged-in account (check_pseud_ownership): discovered
+  from /users/:login/pseuds where the default is marked <span class="current">

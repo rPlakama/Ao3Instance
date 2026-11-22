@@ -28,6 +28,8 @@ pub enum Error {
     LoggedOut,
     /// Upstream rejected an action's payload (validation/authorisation message).
     Validation(String),
+    /// AO3's spam filter refused the content.
+    SpamRejected,
     /// Cookie jar incomplete: the app redirected to `/lost_cookie`.
     SessionIncomplete,
     /// CSRF token missing or rejected upstream.
@@ -63,6 +65,7 @@ impl fmt::Display for Error {
             }
             Self::LoggedOut => write!(f, "session is logged out"),
             Self::Validation(msg) => write!(f, "upstream rejected the action: {msg}"),
+            Self::SpamRejected => write!(f, "AO3's spam filter rejected the content"),
             Self::SessionIncomplete => {
                 write!(
                     f,

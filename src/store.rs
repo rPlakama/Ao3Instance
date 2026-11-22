@@ -56,7 +56,23 @@ pub struct AuditEntry {
     pub action: String,
     pub target: String,
     pub outcome: String,
+    pub evidence: Option<String>,
     pub created_at: i64,
+}
+
+impl AuditEntry {
+    /// Convenience for tests and templates: never `None`.
+    pub fn evidence_or_empty(&self) -> &str {
+        self.evidence.as_deref().unwrap_or("")
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SavedSession {
+    pub account: String,
+    pub jar_enc: String,
+    pub pseud_id: Option<i64>,
+    pub pseud_name: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -329,6 +345,7 @@ impl Store {
                     COALESCE(i.action, '?') AS action,
                     COALESCE(i.target_kind || ' ' || i.target_id, '?') AS target,
                     a.outcome,
+                    a.evidence,
                     a.created_at
              FROM write_audit a
              LEFT JOIN write_intent i ON i.id = a.intent_id
@@ -345,6 +362,7 @@ impl Store {
                 action: row.get("action"),
                 target: row.get("target"),
                 outcome: row.get("outcome"),
+                evidence: row.get("evidence"),
                 created_at: row.get("created_at"),
             })
             .collect())
@@ -524,15 +542,41 @@ impl Store {
         Ok(())
     }
 
-    /// Most recently saved session: `(account, encrypted jar)`.
-    pub async fn load_session(&self) -> Result<Option<(String, String)>> {
+    /// Most recently saved session (jar is still encrypted).
+    pub async fn load_session(&self) -> Result<Option<SavedSession>> {
         let row = sqlx::query(
-            "SELECT account_id, jar_enc FROM sessions ORDER BY updated_at DESC LIMIT 1",
+            "SELECT account_id, jar_enc, pseud_id, pseud_name FROM sessions
+             ORDER BY updated_at DESC LIMIT 1",
         )
         .fetch_optional(&self.pool)
         .await
         .map_err(|e| Error::Store(format!("load session: {e}")))?;
-        Ok(row.map(|row| (row.get("account_id"), row.get("jar_enc"))))
+        Ok(row.map(|row| SavedSession {
+            account: row.get("account_id"),
+            jar_enc: row.get("jar_enc"),
+            pseud_id: row.get("pseud_id"),
+            pseud_name: row.get("pseud_name"),
+        }))
+    }
+
+    /// Remembers the pseud used for comments on the persisted session.
+    pub async fn set_session_pseud(
+        &self,
+        account: &str,
+        pseud_id: i64,
+        pseud_name: &str,
+    ) -> Result<()> {
+        sqlx::query(
+            "UPDATE sessions SET pseud_id = ?2, pseud_name = ?3
+             WHERE account_id = ?1",
+        )
+        .bind(account)
+        .bind(pseud_id)
+        .bind(pseud_name)
+        .execute(&self.pool)
+        .await
+        .map_err(|e| Error::Store(format!("set session pseud: {e}")))?;
+        Ok(())
     }
 
     pub async fn delete_session(&self) -> Result<()> {
@@ -712,9 +756,17 @@ mod tests {
 
         store.save_session("someone", "ciphertext-1").await.unwrap();
         store.save_session("someone", "ciphertext-2").await.unwrap();
-        let (account, jar) = store.load_session().await.unwrap().expect("session");
-        assert_eq!(account, "someone");
-        assert_eq!(jar, "ciphertext-2");
+        let saved = store.load_session().await.unwrap().expect("session");
+        assert_eq!(saved.account, "someone");
+        assert_eq!(saved.jar_enc, "ciphertext-2");
+        assert_eq!(saved.pseud_id, None);
+        store
+            .set_session_pseud("someone", 111, "Main Pseud")
+            .await
+            .unwrap();
+        let saved = store.load_session().await.unwrap().expect("session");
+        assert_eq!(saved.pseud_id, Some(111));
+        assert_eq!(saved.pseud_name.as_deref(), Some("Main Pseud"));
         store.delete_session().await.unwrap();
         assert!(store.load_session().await.unwrap().is_none());
 

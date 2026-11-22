@@ -7,6 +7,7 @@
 use serde::Deserialize;
 
 use crate::ao3::parse::{SpaceMode, percent_encode};
+use crate::ao3::pseuds::{self, Pseud};
 use crate::ao3::session::AccountSession;
 use crate::error::{Error, Result};
 
@@ -230,9 +231,176 @@ pub async fn set_reading_flag(
     }
 }
 
+/// `GET /users/:login/pseuds` → the default pseud (needed for comments).
+pub async fn discover_default_pseud(session: &mut AccountSession, login: &str) -> Result<Pseud> {
+    let path = format!(
+        "/users/{}/pseuds",
+        percent_encode(login, SpaceMode::Percent20)
+    );
+    let response = session.client_mut().get(&path).await?;
+    match response.status {
+        200 => {
+            pseuds::ensure_pseuds_page(&response.body)?;
+            pseuds::default_pseud(&response.body)
+                .ok_or_else(|| Error::Validation("AO3 did not show a pseud to comment with".into()))
+        }
+        302 | 303 if response.location_contains("/users/login") => Err(Error::LoggedOut),
+        302 | 303 if response.location_contains("/auth_error") => Err(Error::CsrfExpired),
+        429 => Err(Error::RateLimited {
+            retry_after: response.retry_after,
+        }),
+        403 | 503 => Err(Error::BlockedByEdge {
+            status: response.status,
+        }),
+        status => Err(Error::UpstreamChanged(format!(
+            "pseuds page returned HTTP {status}"
+        ))),
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CommentOutcome {
+    pub comment_id: Option<i64>,
+}
+
+/// AO3's comment limit (`app/models/comment.rb:21-23`, `config/config.yml:105`).
+pub const COMMENT_MAX_CHARS: usize = 10_000;
+
+/// `POST /works/:work_id/comments`.
+///
+/// A 302 whose fragment carries `#comment_<id>` is success; a 200 is a
+/// re-rendered form and its body names the reason (duplicate, spam, moderation).
+pub async fn post_comment(
+    session: &mut AccountSession,
+    work_id: &str,
+    pseud_id: i64,
+    content: &str,
+) -> Result<CommentOutcome> {
+    let content = content.trim();
+    if content.is_empty() {
+        return Err(Error::Validation("the comment is empty".into()));
+    }
+    if content.chars().count() > COMMENT_MAX_CHARS {
+        return Err(Error::Validation(format!(
+            "the comment is longer than {COMMENT_MAX_CHARS} characters"
+        )));
+    }
+    let path = format!("/works/{}/comments", work_id.trim());
+    let pseud = pseud_id.to_string();
+    let response = session
+        .post_write(
+            &path,
+            &[
+                ("comment[pseud_id]", pseud.as_str()),
+                ("comment[comment_content]", content),
+            ],
+        )
+        .await?;
+
+    match response.status {
+        302 | 303 => {
+            if response.location_contains("/auth_error") {
+                return Err(Error::CsrfExpired);
+            }
+            if response.location_contains("/users/login") {
+                return Err(Error::LoggedOut);
+            }
+            if response.location_contains("/429") {
+                return Err(Error::RateLimited { retry_after: None });
+            }
+            Ok(CommentOutcome {
+                comment_id: comment_id_from_location(response.location.as_deref()),
+            })
+        }
+        429 => Err(Error::RateLimited {
+            retry_after: response.retry_after,
+        }),
+        200 => Err(classify_comment_failure(&response.body)),
+        403 | 503 => Err(Error::BlockedByEdge {
+            status: response.status,
+        }),
+        status => Err(Error::UpstreamChanged(format!(
+            "comment create returned HTTP {status}"
+        ))),
+    }
+}
+
+/// Maps the re-rendered comment form's error text to a typed failure.
+fn classify_comment_failure(body: &str) -> Error {
+    if body.contains("already left this comment") {
+        Error::Validation(
+            "you already left this exact comment here (AO3 rejects duplicates)".into(),
+        )
+    } else if body.contains("looks like spam") {
+        Error::SpamRejected
+    } else if body.contains("can't add or edit comments on a hidden work") {
+        Error::Validation("comments are closed on this work".into())
+    } else if body.contains("can't add or edit comments on an unrevealed work") {
+        Error::Validation("the work is in an unrevealed collection".into())
+    } else if body.contains("Couldn't save comment") {
+        Error::Validation("AO3 rejected the comment (validation or moderation rules)".into())
+    } else {
+        Error::Validation("AO3 rejected the comment".into())
+    }
+}
+
+fn comment_id_from_location(location: Option<&str>) -> Option<i64> {
+    let location = location?;
+    let marker = "#comment_";
+    if let Some(start) = location.find(marker) {
+        let digits: String = location[start + marker.len()..]
+            .chars()
+            .take_while(|ch| ch.is_ascii_digit())
+            .collect();
+        return digits.parse::<i64>().ok();
+    }
+    let marker = "/comments/";
+    if let Some(start) = location.find(marker) {
+        let digits: String = location[start + marker.len()..]
+            .chars()
+            .take_while(|ch| ch.is_ascii_digit())
+            .collect();
+        return digits.parse::<i64>().ok();
+    }
+    None
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn comment_ids_are_recovered_from_redirects() {
+        assert_eq!(
+            comment_id_from_location(Some("/works/1/chapters/2#comment_777")),
+            Some(777)
+        );
+        assert_eq!(comment_id_from_location(Some("/comments/42")), Some(42));
+        assert_eq!(comment_id_from_location(Some("/works/1")), None);
+        assert_eq!(comment_id_from_location(None), None);
+    }
+
+    #[test]
+    fn comment_failures_are_classified() {
+        assert!(matches!(
+            classify_comment_failure("<p>You've already left this comment here.</p>"),
+            Error::Validation(_)
+        ));
+        assert!(matches!(
+            classify_comment_failure("<p>This comment looks like spam to our system</p>"),
+            Error::SpamRejected
+        ));
+        assert!(matches!(
+            classify_comment_failure(
+                "<p>Sorry, you can't add or edit comments on a hidden work.</p>"
+            ),
+            Error::Validation(_)
+        ));
+        assert!(matches!(
+            classify_comment_failure("<p>Couldn't save comment!</p>"),
+            Error::Validation(_)
+        ));
+    }
 
     #[test]
     fn kinds_are_normalised_and_bounded() {

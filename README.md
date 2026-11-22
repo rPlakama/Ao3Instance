@@ -35,6 +35,6 @@ Configuration (environment, read once at startup): `AO3I_BIND`, `AO3I_PORT`,
 Current state: M1 vertical slice (open → cache → read) plus AO3 session management
 (cookie import or password login, encrypted jar), chapter-level reading progress/resume,
 local full-text search over the cache, conditional refresh from AO3, and a
-write path (subscriptions, kudos and AO3 reading flags today; comments next) behind an explicit
+write path (subscriptions, kudos, comments and AO3 reading flags today; comments and AO3 reading flags today) behind an explicit
 confirmation step, an intent/audit ledger and a kill switch (`AO3I_WRITE_ENABLED=true`). Tests: `nix develop -c cargo test`.
 Design and decisions: `docs/init-audit.md`, `docs/ao3-write-api.md`, `docs/adr/`.
