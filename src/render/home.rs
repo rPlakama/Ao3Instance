@@ -9,6 +9,7 @@ pub fn home_page(
     ctx: &PageContext,
     works: &[WorkSummary],
     detailed: &[StoredWork],
+    fandoms: &[(String, usize)],
     flash: Option<&str>,
 ) -> String {
     let mut body = String::from(
@@ -28,6 +29,21 @@ pub fn home_page(
             "<div class=\"flash notice\">{}</div>",
             escape(flash)
         ));
+    }
+
+    if !fandoms.is_empty() {
+        body.push_str("<h3>Cached Fandoms</h3><ul class=\"tags commas\">");
+        for (fandom, count) in fandoms.iter().take(10) {
+            body.push_str(&format!(
+                "<li><a href=\"/works?fandom={}\">{} <span class=\"meta\">({count})</span></a></li>",
+                escape(&crate::ao3::parse::percent_encode(
+                    fandom,
+                    crate::ao3::parse::SpaceMode::Percent20
+                )),
+                escape(fandom),
+            ));
+        }
+        body.push_str("</ul><p class=\"meta\"><a href=\"/fandoms\">All cached fandoms →</a></p>");
     }
 
     let continuing: Vec<&WorkSummary> = works
