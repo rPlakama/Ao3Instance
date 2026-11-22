@@ -61,6 +61,9 @@ h2.title { margin:.2rem 0 0; font-size:1.9rem; line-height:1.25; }
 .toolbar a, .toolbar span { font-size:.85rem; color:var(--muted); text-decoration:none; }
 .toolbar a:hover { color:var(--accent); }
 iframe.chapter { width:100%; border:0; background:transparent; min-height:70vh; }
+table.audit { width:100%; border-collapse:collapse; font-size:.9rem; }
+table.audit th, table.audit td { text-align:left; padding:.45rem .5rem; border-bottom:1px solid var(--line); }
+table.audit th { color:var(--muted); font-weight:600; }
 footer.site { padding:1rem 1.5rem; border-top:1px solid var(--line); color:var(--muted); font-size:.8rem; }
 form.stack { display:grid; gap:.6rem; max-width:32rem; margin:1rem 0 2rem; }
 form.stack label { font-size:.85rem; color:var(--muted); }
@@ -81,14 +84,15 @@ fn layout(title: &str, body: &str) -> String {
          <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\
          <title>{title}</title><style>{STYLE}</style></head>\n<body>\
          <header class=\"site\"><h1><a href=\"/\">AO3Instance</a></h1>\
-         <span class=\"muted\">local cache · reader</span></header>\
+         <span class=\"muted\">local cache · reader</span>\
+         <span class=\"muted\"><a href=\"/audit\">Audit</a> · <a href=\"/session\">Session</a></span></header>\
          <main>{body}</main>\
          <footer class=\"site\">Fetched from archiveofourown.org for personal offline reading. \
          Content belongs to its authors.</footer></body></html>"
     )
 }
 
-pub fn home_page(works: &[WorkSummary], error: Option<&str>) -> String {
+pub fn home_page(works: &[WorkSummary], flash: Option<&str>) -> String {
     let mut body = String::from(
         "<form class=\"open\" method=\"get\" action=\"/search\">\
          <input name=\"q\" placeholder=\"Search cached works (title, author, tag)\">\
@@ -97,12 +101,10 @@ pub fn home_page(works: &[WorkSummary], error: Option<&str>) -> String {
          <input name=\"id\" placeholder=\"AO3 work id or URL (e.g. 12345678)\" autofocus required>\
          <button type=\"submit\">Open work</button></form>",
     );
-    if let Some(error) = error {
-        body.push_str(&format!("<div class=\"error\">{}</div>", escape(error)));
+    if let Some(flash) = flash {
+        body.push_str(&format!("<div class=\"notice\">{}</div>", escape(flash)));
     }
-    body.push_str(
-        "<div class=\"meta\"><a href=\"/session\">Session</a> · cached works stay readable offline</div>",
-    );
+    body.push_str("<div class=\"meta\">cached works stay readable offline</div>");
     if works.is_empty() {
         body.push_str(
             "<p class=\"muted\">Nothing cached yet. Paste a work id or URL above; \
@@ -198,13 +200,23 @@ fn tag_chips(tags: &[String], class: &str) -> String {
     out
 }
 
-pub fn read_page(
-    work: &StoredWork,
-    chapters: &[StoredChapter],
-    current: i64,
-    progress: Option<i64>,
-    notice: Option<&str>,
-) -> String {
+/// Everything the reader needs that is not the work itself.
+pub struct ReadContext<'a> {
+    pub current: i64,
+    pub progress: Option<i64>,
+    pub notice: Option<&'a str>,
+    pub subscribed: bool,
+    pub can_write: bool,
+}
+
+pub fn read_page(work: &StoredWork, chapters: &[StoredChapter], ctx: &ReadContext<'_>) -> String {
+    let ReadContext {
+        current,
+        progress,
+        notice,
+        subscribed,
+        can_write,
+    } = *ctx;
     let authors = if work.authors.is_empty() {
         "Anonymous".to_string()
     } else {
@@ -298,6 +310,25 @@ pub fn read_page(
          open on AO3</a>",
         escape(&work.ao3_id)
     ));
+    if can_write {
+        if subscribed {
+            toolbar.push_str(&format!(
+                "<span class=\"state active\">subscribed</span>\
+                 <form class=\"inline\" method=\"post\" action=\"/write/unsubscribe\">\
+                 <input type=\"hidden\" name=\"kind\" value=\"Work\">\
+                 <input type=\"hidden\" name=\"target_id\" value=\"{}\">\
+                 <button type=\"submit\">Unsubscribe</button></form>",
+                escape(&work.ao3_id)
+            ));
+        } else {
+            toolbar.push_str(&format!(
+                "<a href=\"/write/preview?kind=work&id={}\">Subscribe to work</a>",
+                escape(&work.ao3_id)
+            ));
+        }
+    } else {
+        toolbar.push_str("<a href=\"/session\">Sign in to subscribe</a>");
+    }
     toolbar.push_str("</div>");
     body.push_str(&toolbar);
     body.push_str(&format!(
@@ -510,6 +541,58 @@ fn civil_from_days(days: i64) -> (i64, i64, i64) {
         month_prime - 9
     };
     (if month <= 2 { year + 1 } else { year }, month, day)
+}
+
+/// Two-step confirmation page for a write action.
+pub fn confirm_page(
+    title: &str,
+    description: &str,
+    action: &str,
+    hidden: &[(&str, &str)],
+) -> String {
+    let mut body = format!(
+        "<h2>{}</h2><p>{}</p><form class=\"stack\" method=\"post\" action=\"{}\"\
+         <p class=\"meta\">This sends one request to archiveofourown.org and is recorded \
+         in the audit log.</p>",
+        escape(title),
+        escape(description),
+        escape(action)
+    );
+    for (name, value) in hidden {
+        body.push_str(&format!(
+            "<input type=\"hidden\" name=\"{}\" value=\"{}\">",
+            escape(name),
+            escape(value)
+        ));
+    }
+    body.push_str("<button type=\"submit\">Confirm</button></form><p><a href=\"/\">Cancel</a></p>");
+    layout("Confirm — AO3Instance", &body)
+}
+
+/// Recent write actions, newest first. No secrets: the ledger stores targets and
+/// outcomes, never credentials or payloads.
+pub fn audit_page(entries: &[crate::store::AuditEntry]) -> String {
+    let mut body = String::from("<h2>Audit log</h2>");
+    if entries.is_empty() {
+        body.push_str("<p class=\"muted\">No writes recorded yet.</p>");
+    } else {
+        body.push_str(
+            "<table class=\"audit\"><thead><tr><th>when</th><th>action</th>\
+             <th>target</th><th>outcome</th></tr></thead><tbody>",
+        );
+        for entry in entries {
+            body.push_str(&format!(
+                "<tr><td>{}</td><td>{}</td><td>{}</td><td>{}</td></tr>",
+                escape(&format_utc(entry.created_at)),
+                escape(&entry.action),
+                escape(&entry.target),
+                escape(&entry.outcome),
+            ));
+        }
+        body.push_str("</tbody></table>");
+    }
+    body.push_str("<p><a href=\"/\">Back to the start</a></p>");
+    layout("Audit — AO3Instance", &body)
 }
 
 pub fn error_page(status: u16, message: &str) -> String {

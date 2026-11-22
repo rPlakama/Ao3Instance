@@ -1,0 +1,45 @@
+W4 gate run (write spine + subscriptions) — 2026-11-22
+toolchain: rustc 1.98.1, cargo 1.98.0 (nix dev shell)
+
+== cargo test (121 total)
+lib                 73 passed   (incl. governor budgets/parking/spacing, action kinds, write ledger)
+client_http          7 passed
+search_and_refresh   3 passed
+server_smoke         2 passed
+session_and_progress 3 passed
+session_flow        25 passed
+work_parse           5 passed
+writes               3 passed   (new: subscribe->audit->ledger->duplicate->unsubscribe,
+                                validation failure audited once, kill switch)
+== cargo clippy --all-targets -- -D warnings: clean
+== cargo fmt --check: clean
+
+== application opens (real binary, default config = writes OFF)
+/audit                          200 · empty state ("No writes recorded yet")
+/write/preview?kind=work&id=1   403 · "Writes are disabled (set AO3I_WRITE_ENABLED=true)."
+POST /write/subscribe           403 · kill switch holds; no network
+/health                         200 · ok
+
+== what the new integration tests prove
+1. subscribe_is_confirmed_audited_and_ledgered_then_unsubscribed
+   - reader shows "Subscribe to work" for a signed-in session
+   - /write/preview is a deliberate confirmation page
+   - POST /write/subscribe sends exactly ONE request with
+     subscription[subscribable_id]=12345, subscribable_type=Work and the CSRF token
+   - ledger stores active subscription_id=42; audit logs outcome "subscribed"
+   - duplicate subscribe is refused from the ledger with NO second upstream request
+   - unsubscribe sends DELETE /users/someone/subscriptions/42.json using the stored id,
+     marks the ledger removed, audit logs "unsubscribed"; /audit renders the trail
+2. validation_failure_is_audited_and_not_retried
+   - 422 from AO3 surfaces "AO3 rejected the action", the intent is marked failed,
+     the audit row exists, and there is exactly one POST attempt
+3. writes_require_the_switch_and_an_explicit_confirmation
+   - with AO3I_WRITE_ENABLED unset every write route is 403 and no subscription
+     request is sent (test asserts on captured upstream requests)
+
+== safety spine
+- one write at a time (governor holds its gate across the spacing sleep)
+- per-action budgets (comment 3/900s, kudos 10/min, subscriptions 20/h)
+- Retry-After parking
+- intent row committed BEFORE the request; audit row after; no payloads/secrets stored
+- confirmation required (confirm=yes), kill switch default off

@@ -76,6 +76,11 @@ impl Response {
         self
     }
 
+    pub fn with_status(mut self, status: u16) -> Self {
+        self.status = status;
+        self
+    }
+
     pub fn with_cookie(self, cookie: impl Into<String>) -> Self {
         self.with_header("set-cookie", cookie)
     }

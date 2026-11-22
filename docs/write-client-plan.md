@@ -271,6 +271,26 @@ The fault matrix in ADR-0005 is the acceptance test for W6.
 | **W5** | comments (top-level + reply) | rate limit, spam, duplicate, frozen, moderation all typed; no auto-retry |
 | **W6** | failure injection + sandbox suite + kill switch + operator docs | ADR-0005 fault matrix passes; `AO3I_WRITE_ENABLED=false` blocks all writes |
 
+### W4 status — complete (2026-11-22): write spine + subscriptions
+
+**Landed:**
+- Write safety spine: `write_intent`/`write_audit` ledger (intent committed before
+  the request, audit after, no payloads or secrets), confirmation page
+  (`/write/preview` → `POST ... confirm=yes`), local subscription ledger as the
+  duplicate pre-check (AO3 has no uniqueness constraint), `AO3I_WRITE_ENABLED`
+  master switch (default off).
+- Governor (`ao3/governor.rs`): one write at a time, spacing floor, per-action
+  budgets (comments 3/900 s, kudos 10/min, subscriptions 20/h), Retry-After parking.
+- First write action: **subscriptions** (`POST /users/:login/subscriptions.json`,
+  `DELETE .../:id.json`) with typed 200/201/422/302/429/403 classification; reader
+  shows Subscribe/Unsubscribe; `/audit` lists the trail.
+- Tests: 121 total, `tests/writes.rs` (happy path + duplicate + unsubscribe +
+  validation + kill switch). Evidence: `notes/gates/w4.txt`.
+
+**Remaining:** kudos, reading flags/bookmarks (W5); comments + failure injection +
+operator docs (W6). W3 leftovers still open: password-at-rest/auto re-login,
+scroll anchor.
+
 ### W3 status — partial (2026-11-22): session + progress
 
 **Landed:**

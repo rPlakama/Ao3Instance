@@ -16,6 +16,8 @@ use axum::{
 use serde::Deserialize;
 use tokio::sync::Mutex;
 
+use crate::ao3::actions;
+use crate::ao3::governor::WriteGovernor;
 use crate::ao3::jar::Jar;
 use crate::ao3::parse::{SpaceMode, percent_encode};
 use crate::ao3::session::{AccountSession, SessionState};
@@ -38,10 +40,13 @@ pub struct AppState {
     pub store: Store,
     pub session: Mutex<AccountSession>,
     pub key: SecretKey,
+    pub governor: WriteGovernor,
+    pub write_enabled: bool,
 }
 
 enum AppError {
     BadRequest(String),
+    Forbidden(String),
     NotFound,
     Upstream(String),
     Internal(String),
@@ -51,6 +56,7 @@ impl IntoResponse for AppError {
     fn into_response(self) -> Response {
         let (status, message) = match self {
             Self::BadRequest(message) => (StatusCode::BAD_REQUEST, message),
+            Self::Forbidden(message) => (StatusCode::FORBIDDEN, message),
             Self::NotFound => (
                 StatusCode::NOT_FOUND,
                 "Not cached. Open the work from the start page first.".to_string(),
@@ -77,6 +83,7 @@ impl From<Error> for AppError {
             Error::BlockedByEdge { status } => {
                 Self::Upstream(format!("AO3 blocked the request (HTTP {status})"))
             }
+            Error::Validation(message) => Self::BadRequest(message),
             Error::LoggedOut | Error::SessionIncomplete => Self::Upstream(
                 "The AO3 session is not usable. Import cookies on the Session page.".to_string(),
             ),
@@ -117,6 +124,8 @@ pub async fn router(config: &Config, store: Store) -> Result<Router> {
         store,
         session: Mutex::new(session),
         key,
+        governor: WriteGovernor::new(config.min_request_spacing),
+        write_enabled: config.write_enabled,
     });
     Ok(Router::new()
         .route("/", get(home))
@@ -131,6 +140,10 @@ pub async fn router(config: &Config, store: Store) -> Result<Router> {
         .route("/session/probe", post(session_probe))
         .route("/session/adult", post(session_adult))
         .route("/session/logout", post(session_logout))
+        .route("/write/preview", get(write_preview))
+        .route("/write/subscribe", post(write_subscribe))
+        .route("/write/unsubscribe", post(write_unsubscribe))
+        .route("/audit", get(audit))
         .route("/health", get(health))
         .with_state(state))
 }
@@ -156,9 +169,18 @@ async fn shutdown() {
     drop(tokio::signal::ctrl_c().await);
 }
 
-async fn home(State(state): State<Arc<AppState>>) -> Handled<Html<String>> {
+#[derive(Deserialize)]
+struct HomeQuery {
+    notice: Option<String>,
+}
+
+async fn home(
+    State(state): State<Arc<AppState>>,
+    Query(query): Query<HomeQuery>,
+) -> Handled<Html<String>> {
     let works = state.store.list_works(50).await?;
-    Ok(Html(render::home_page(&works, None)))
+    let flash = query.notice.as_deref().and_then(notice_text);
+    Ok(Html(render::home_page(&works, flash)))
 }
 
 #[derive(Deserialize)]
@@ -259,6 +281,8 @@ struct ReadQuery {
     checked: Option<String>,
     /// Set by a refresh that stored a new version.
     updated: Option<String>,
+    /// Fixed-key notice from a write action (never raw user input).
+    notice: Option<String>,
 }
 
 async fn read_work(
@@ -278,10 +302,29 @@ async fn read_work(
     } else if query.updated.is_some() {
         Some("Updated from AO3.")
     } else {
-        None
+        query.notice.as_deref().and_then(notice_text)
     };
+    let (account, usable) = session_identity(&state).await;
+    let subscribed = if usable && !account.is_empty() {
+        state
+            .store
+            .get_subscription(&account, actions::WORK, &id)
+            .await?
+            .is_some_and(|row| row.state == "active")
+    } else {
+        false
+    };
+    let can_write = usable && !account.is_empty() && state.write_enabled;
     Ok(Html(render::read_page(
-        &work, &chapters, current, progress, notice,
+        &work,
+        &chapters,
+        &render::ReadContext {
+            current,
+            progress,
+            notice,
+            subscribed,
+            can_write,
+        },
     )))
 }
 
@@ -542,6 +585,265 @@ async fn session_logout(State(state): State<Arc<AppState>>) -> Handled<Redirect>
     }
 }
 
+// ---------------------------------------------------------------------------
+// Writes (W4): confirmation -> governor -> intent -> one request -> audit
+// ---------------------------------------------------------------------------
+
+fn notice_text(key: &str) -> Option<&'static str> {
+    match key {
+        "subscribed" => Some("Subscribed on AO3."),
+        "unsubscribed" => Some("Unsubscribed on AO3."),
+        "already_subscribed" => Some("Already subscribed according to the local ledger."),
+        "not_subscribed" => Some("No active subscription in the local ledger."),
+        "write_failed" => Some("AO3 rejected the action; see the audit log."),
+        "write_rate_limited" => Some("Rate limited by the client governor; try again later."),
+        "write_disabled" => Some("Writes are disabled (set AO3I_WRITE_ENABLED=true)."),
+        _ => None,
+    }
+}
+
+async fn session_identity(state: &AppState) -> (String, bool) {
+    let session = state.session.lock().await;
+    (session.account().to_string(), session.state().is_usable())
+}
+
+async fn redirect_after_write(
+    state: &AppState,
+    kind: &str,
+    target_id: &str,
+    flag: &str,
+) -> Redirect {
+    if kind == actions::WORK
+        && state
+            .store
+            .get_work(target_id)
+            .await
+            .ok()
+            .flatten()
+            .is_some()
+    {
+        Redirect::to(&format!("/read/{target_id}?notice={flag}"))
+    } else {
+        Redirect::to(&format!("/?notice={flag}"))
+    }
+}
+
+#[derive(Deserialize)]
+struct PreviewQuery {
+    kind: Option<String>,
+    id: Option<String>,
+}
+
+async fn write_preview(
+    State(state): State<Arc<AppState>>,
+    Query(query): Query<PreviewQuery>,
+) -> Handled<Html<String>> {
+    if !state.write_enabled {
+        return Err(AppError::Forbidden(
+            "Writes are disabled (set AO3I_WRITE_ENABLED=true).".into(),
+        ));
+    }
+    let (account, usable) = session_identity(&state).await;
+    if !usable || account.is_empty() {
+        return Err(AppError::Forbidden(
+            "Sign in to AO3 on the Session page before writing.".into(),
+        ));
+    }
+    let kind = query
+        .kind
+        .as_deref()
+        .and_then(actions::normalize_kind)
+        .ok_or_else(|| AppError::BadRequest("unknown subscription kind".into()))?;
+    let target_id = query.id.unwrap_or_default().trim().to_string();
+    if target_id.is_empty() {
+        return Err(AppError::BadRequest("missing subscription target".into()));
+    }
+    let description = if kind == actions::WORK {
+        match state.store.get_work(&target_id).await? {
+            Some(work) => format!("Subscribe to “{}” on AO3?", work.title),
+            None => format!("Subscribe to work {target_id} on AO3?"),
+        }
+    } else {
+        format!("Subscribe to {kind} {target_id} on AO3?")
+    };
+    Ok(Html(render::confirm_page(
+        "Confirm subscription",
+        &description,
+        "/write/subscribe",
+        &[
+            ("kind", kind),
+            ("target_id", &target_id),
+            ("confirm", "yes"),
+        ],
+    )))
+}
+
+#[derive(Deserialize)]
+struct WriteForm {
+    kind: String,
+    target_id: String,
+    confirm: Option<String>,
+}
+
+async fn write_subscribe(
+    State(state): State<Arc<AppState>>,
+    Form(form): Form<WriteForm>,
+) -> Handled<Redirect> {
+    if !state.write_enabled {
+        return Err(AppError::Forbidden(
+            "Writes are disabled (set AO3I_WRITE_ENABLED=true).".into(),
+        ));
+    }
+    if form.confirm.as_deref() != Some("yes") {
+        return Err(AppError::BadRequest(
+            "A deliberate confirmation is required for public actions.".into(),
+        ));
+    }
+    let kind = form
+        .kind
+        .as_str()
+        .pipe_kind()
+        .ok_or_else(|| AppError::BadRequest("unknown subscription kind".into()))?;
+    let target_id = form.target_id.trim().to_string();
+    if target_id.is_empty() {
+        return Err(AppError::BadRequest("missing subscription target".into()));
+    }
+
+    let (account, usable) = session_identity(&state).await;
+    if !usable || account.is_empty() {
+        return Err(AppError::Forbidden("Sign in to AO3 first.".into()));
+    }
+    if let Some(row) = state
+        .store
+        .get_subscription(&account, kind, &target_id)
+        .await?
+        && row.state == "active"
+    {
+        return Ok(redirect_after_write(&state, kind, &target_id, "already_subscribed").await);
+    }
+
+    state
+        .governor
+        .begin("subscribe")
+        .await
+        .map_err(AppError::from)?;
+    let intent = state
+        .store
+        .record_intent(&account, "subscribe", kind, &target_id)
+        .await?;
+    let result = {
+        let mut session = state.session.lock().await;
+        actions::subscribe(&mut session, &account, kind, &target_id).await
+    };
+    match result {
+        Ok(outcome) => {
+            state
+                .store
+                .upsert_subscription(&account, kind, &target_id, outcome.item_id, "active")
+                .await?;
+            state
+                .store
+                .finish_intent(intent, "done", "subscribed", outcome.message.as_deref())
+                .await?;
+            Ok(redirect_after_write(&state, kind, &target_id, "subscribed").await)
+        }
+        Err(error) => {
+            let retry_after = if let Error::RateLimited { retry_after } = &error {
+                *retry_after
+            } else {
+                None
+            };
+            state
+                .governor
+                .record_outcome("subscribe", retry_after)
+                .await;
+            state
+                .store
+                .finish_intent(intent, "failed", "failed", Some(&error.to_string()))
+                .await?;
+            let flag = if retry_after.is_some() {
+                "write_rate_limited"
+            } else {
+                "write_failed"
+            };
+            Ok(redirect_after_write(&state, kind, &target_id, flag).await)
+        }
+    }
+}
+
+async fn write_unsubscribe(
+    State(state): State<Arc<AppState>>,
+    Form(form): Form<WriteForm>,
+) -> Handled<Redirect> {
+    if !state.write_enabled {
+        return Err(AppError::Forbidden(
+            "Writes are disabled (set AO3I_WRITE_ENABLED=true).".into(),
+        ));
+    }
+    let kind = form
+        .kind
+        .as_str()
+        .pipe_kind()
+        .ok_or_else(|| AppError::BadRequest("unknown subscription kind".into()))?;
+    let target_id = form.target_id.trim().to_string();
+    let (account, usable) = session_identity(&state).await;
+    if !usable || account.is_empty() {
+        return Err(AppError::Forbidden("Sign in to AO3 first.".into()));
+    }
+    let Some(row) = state
+        .store
+        .get_subscription(&account, kind, &target_id)
+        .await?
+    else {
+        return Ok(redirect_after_write(&state, kind, &target_id, "not_subscribed").await);
+    };
+    if row.state != "active" {
+        return Ok(redirect_after_write(&state, kind, &target_id, "not_subscribed").await);
+    }
+    let Some(subscription_id) = row.subscription_id else {
+        return Ok(redirect_after_write(&state, kind, &target_id, "not_subscribed").await);
+    };
+
+    state
+        .governor
+        .begin("unsubscribe")
+        .await
+        .map_err(AppError::from)?;
+    let intent = state
+        .store
+        .record_intent(&account, "unsubscribe", kind, &target_id)
+        .await?;
+    let result = {
+        let mut session = state.session.lock().await;
+        actions::unsubscribe(&mut session, &account, subscription_id).await
+    };
+    match result {
+        Ok(message) => {
+            state
+                .store
+                .upsert_subscription(&account, kind, &target_id, None, "removed")
+                .await?;
+            state
+                .store
+                .finish_intent(intent, "done", "unsubscribed", message.as_deref())
+                .await?;
+            Ok(redirect_after_write(&state, kind, &target_id, "unsubscribed").await)
+        }
+        Err(error) => {
+            state
+                .store
+                .finish_intent(intent, "failed", "failed", Some(&error.to_string()))
+                .await?;
+            Ok(redirect_after_write(&state, kind, &target_id, "write_failed").await)
+        }
+    }
+}
+
+async fn audit(State(state): State<Arc<AppState>>) -> Handled<Html<String>> {
+    let entries = state.store.recent_audit(100).await?;
+    Ok(Html(render::audit_page(&entries)))
+}
+
 async fn health() -> &'static str {
     "ok"
 }
@@ -549,6 +851,17 @@ async fn health() -> &'static str {
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
+
+/// `&str` → normalized subscription kind (form-friendly).
+trait KindStr {
+    fn pipe_kind(self) -> Option<&'static str>;
+}
+
+impl KindStr for &str {
+    fn pipe_kind(self) -> Option<&'static str> {
+        actions::normalize_kind(self)
+    }
+}
 
 /// AO3's adult interstitial has no work title, so the parser reports drift; the
 /// gate markers let us say "enable adult content" instead of "AO3 changed".

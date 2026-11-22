@@ -51,6 +51,23 @@ pub struct StoredChapter {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AuditEntry {
+    pub id: i64,
+    pub action: String,
+    pub target: String,
+    pub outcome: String,
+    pub created_at: i64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SubscriptionRow {
+    pub target_kind: String,
+    pub target_id: String,
+    pub subscription_id: Option<i64>,
+    pub state: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WorkSummary {
     pub ao3_id: String,
     pub title: String,
@@ -247,6 +264,146 @@ impl Store {
 }
 
 impl Store {
+    // ---- write ledger (intent before the request, audit after) ----
+
+    pub async fn record_intent(
+        &self,
+        account: &str,
+        action: &str,
+        target_kind: &str,
+        target_id: &str,
+    ) -> Result<i64> {
+        let result = sqlx::query(
+            "INSERT INTO write_intent (account, action, target_kind, target_id, created_at)
+             VALUES (?1, ?2, ?3, ?4, ?5)",
+        )
+        .bind(account)
+        .bind(action)
+        .bind(target_kind)
+        .bind(target_id)
+        .bind(now_secs())
+        .execute(&self.pool)
+        .await
+        .map_err(|e| Error::Store(format!("record intent: {e}")))?;
+        Ok(result.last_insert_rowid())
+    }
+
+    pub async fn finish_intent(
+        &self,
+        intent_id: i64,
+        state: &str,
+        outcome: &str,
+        evidence: Option<&str>,
+    ) -> Result<()> {
+        let mut tx = self
+            .pool
+            .begin()
+            .await
+            .map_err(|e| Error::Store(format!("begin tx: {e}")))?;
+        sqlx::query("UPDATE write_intent SET state = ?2 WHERE id = ?1")
+            .bind(intent_id)
+            .bind(state)
+            .execute(&mut *tx)
+            .await
+            .map_err(|e| Error::Store(format!("update intent: {e}")))?;
+        sqlx::query(
+            "INSERT INTO write_audit (intent_id, outcome, evidence, created_at)
+             VALUES (?1, ?2, ?3, ?4)",
+        )
+        .bind(intent_id)
+        .bind(outcome)
+        .bind(evidence)
+        .bind(now_secs())
+        .execute(&mut *tx)
+        .await
+        .map_err(|e| Error::Store(format!("insert audit: {e}")))?;
+        tx.commit()
+            .await
+            .map_err(|e| Error::Store(format!("commit audit: {e}")))?;
+        Ok(())
+    }
+
+    pub async fn recent_audit(&self, limit: i64) -> Result<Vec<AuditEntry>> {
+        let rows = sqlx::query(
+            "SELECT a.id,
+                    COALESCE(i.action, '?') AS action,
+                    COALESCE(i.target_kind || ' ' || i.target_id, '?') AS target,
+                    a.outcome,
+                    a.created_at
+             FROM write_audit a
+             LEFT JOIN write_intent i ON i.id = a.intent_id
+             ORDER BY a.id DESC LIMIT ?1",
+        )
+        .bind(limit)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| Error::Store(format!("recent audit: {e}")))?;
+        Ok(rows
+            .into_iter()
+            .map(|row| AuditEntry {
+                id: row.get("id"),
+                action: row.get("action"),
+                target: row.get("target"),
+                outcome: row.get("outcome"),
+                created_at: row.get("created_at"),
+            })
+            .collect())
+    }
+
+    // ---- subscription ledger (our own duplicate pre-check) ----
+
+    pub async fn get_subscription(
+        &self,
+        account: &str,
+        target_kind: &str,
+        target_id: &str,
+    ) -> Result<Option<SubscriptionRow>> {
+        let row = sqlx::query(
+            "SELECT target_kind, target_id, subscription_id, state FROM subscriptions
+             WHERE account = ?1 AND target_kind = ?2 AND target_id = ?3",
+        )
+        .bind(account)
+        .bind(target_kind)
+        .bind(target_id)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(|e| Error::Store(format!("get subscription: {e}")))?;
+        Ok(row.map(|row| SubscriptionRow {
+            target_kind: row.get("target_kind"),
+            target_id: row.get("target_id"),
+            subscription_id: row.get("subscription_id"),
+            state: row.get("state"),
+        }))
+    }
+
+    pub async fn upsert_subscription(
+        &self,
+        account: &str,
+        target_kind: &str,
+        target_id: &str,
+        subscription_id: Option<i64>,
+        state: &str,
+    ) -> Result<()> {
+        sqlx::query(
+            "INSERT INTO subscriptions (account, target_kind, target_id, subscription_id, state, updated_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+             ON CONFLICT(account, target_kind, target_id) DO UPDATE SET
+               subscription_id = excluded.subscription_id,
+               state = excluded.state,
+               updated_at = excluded.updated_at",
+        )
+        .bind(account)
+        .bind(target_kind)
+        .bind(target_id)
+        .bind(subscription_id)
+        .bind(state)
+        .bind(now_secs())
+        .execute(&self.pool)
+        .await
+        .map_err(|e| Error::Store(format!("upsert subscription: {e}")))?;
+        Ok(())
+    }
+
     /// Full-text search over cached works. Returns recent-first ties broken by
     /// rank; an empty query is an empty result, never "everything".
     pub async fn search_works(&self, query: &str, limit: i64) -> Result<Vec<WorkSummary>> {
@@ -604,6 +761,57 @@ mod tests {
         );
         assert_eq!(fts_query("a\"b").as_deref(), Some("\"a\"\"b\"*"));
         assert_eq!(fts_query("  "), None);
+    }
+
+    #[tokio::test]
+    async fn write_ledger_and_subscription_round_trip() {
+        let (store, dir) = test_store("writes").await;
+        let intent = store
+            .record_intent("someone", "subscribe", "Work", "123")
+            .await
+            .unwrap();
+        store
+            .finish_intent(intent, "done", "subscribed", Some("item 42"))
+            .await
+            .unwrap();
+        let audit = store.recent_audit(10).await.unwrap();
+        assert_eq!(audit.len(), 1);
+        assert_eq!(audit[0].action, "subscribe");
+        assert_eq!(audit[0].target, "Work 123");
+        assert_eq!(audit[0].outcome, "subscribed");
+
+        assert!(
+            store
+                .get_subscription("someone", "Work", "123")
+                .await
+                .unwrap()
+                .is_none()
+        );
+        store
+            .upsert_subscription("someone", "Work", "123", Some(42), "active")
+            .await
+            .unwrap();
+        let row = store
+            .get_subscription("someone", "Work", "123")
+            .await
+            .unwrap()
+            .expect("ledger row");
+        assert_eq!(row.subscription_id, Some(42));
+        assert_eq!(row.state, "active");
+
+        store
+            .upsert_subscription("someone", "Work", "123", None, "removed")
+            .await
+            .unwrap();
+        let row = store
+            .get_subscription("someone", "Work", "123")
+            .await
+            .unwrap()
+            .expect("ledger row");
+        assert_eq!(row.state, "removed");
+
+        store.pool().close().await;
+        drop(std::fs::remove_dir_all(dir));
     }
 
     #[test]

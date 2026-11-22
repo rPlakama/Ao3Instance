@@ -412,6 +412,23 @@ impl AccountSession {
         }
     }
 
+    /// CSRF-protected form POST for a write action.
+    ///
+    /// The caller classifies the response (201/200/422/302); this only guarantees
+    /// the token is present and sent.
+    pub async fn post_write(&mut self, path: &str, fields: &[(&str, &str)]) -> Result<Response> {
+        let token = self.csrf_token()?.to_string();
+        let mut all: Vec<(&str, &str)> = fields.to_vec();
+        all.push(("authenticity_token", token.as_str()));
+        self.client.post_form(path, &all).await
+    }
+
+    /// CSRF-protected DELETE for a write action (e.g. unsubscribe).
+    pub async fn delete_write(&mut self, path: &str) -> Result<Response> {
+        let token = self.csrf_token()?.to_string();
+        self.client.delete_with_csrf(path, &token).await
+    }
+
     /// Fetches a fresh CSRF token from `/token_dispenser.json`.
     async fn fetch_csrf(&mut self) -> Result<()> {
         let before = self.jar_signature();

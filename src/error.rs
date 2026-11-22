@@ -26,6 +26,8 @@ pub enum Error {
     PasswordChangeRequired,
     /// Session is dead: a read redirected to the login page.
     LoggedOut,
+    /// Upstream rejected an action's payload (validation/authorisation message).
+    Validation(String),
     /// Cookie jar incomplete: the app redirected to `/lost_cookie`.
     SessionIncomplete,
     /// CSRF token missing or rejected upstream.
@@ -60,6 +62,7 @@ impl fmt::Display for Error {
                 )
             }
             Self::LoggedOut => write!(f, "session is logged out"),
+            Self::Validation(msg) => write!(f, "upstream rejected the action: {msg}"),
             Self::SessionIncomplete => {
                 write!(
                     f,
