@@ -155,6 +155,7 @@ pub async fn router(config: &Config, store: Store) -> Result<Router> {
         .route("/works/{id}", get(reads::work_alias))
         .route("/works/{id}/chapters/{idx}", get(reads::chapter_alias))
         .route("/assets/ao3.css", get(stylesheet))
+        .route("/favicon.ico", get(favicon))
         .route("/skin", post(session::skin))
         .route("/solve", post(solver::solve))
         .route("/diagnostics", get(solver::diagnostics))
@@ -193,6 +194,12 @@ async fn shutdown() {
 
 async fn health() -> &'static str {
     "ok"
+}
+
+/// Browsers request this unprompted; answering cheaply keeps the diagnostics
+/// table free of meaningless 404 rows.
+async fn favicon() -> axum::http::StatusCode {
+    axum::http::StatusCode::NO_CONTENT
 }
 
 /// Serves the embedded stylesheet with conservative caching and nosniff.

@@ -210,6 +210,13 @@ async fn inbound_4xx_is_logged_without_upstream_traffic() {
     // Unreachable upstream: the 404 must come from the cache layer, not AO3.
     let (root, store, handle) = serve_app(&dir, "http://127.0.0.1:1").await;
 
+    let favicon = http()
+        .get(format!("{root}/favicon.ico"))
+        .send()
+        .await
+        .expect("favicon");
+    assert_eq!(favicon.status(), 204);
+
     let response = http()
         .get(format!("{root}/read/999999"))
         .send()
@@ -222,6 +229,10 @@ async fn inbound_4xx_is_logged_without_upstream_traffic() {
     assert_eq!(rows[0].status, Some(404));
     assert_eq!(rows[0].path, "/read/999999");
     assert_eq!(rows[0].transport, "direct");
+    assert!(
+        rows.iter().all(|row| row.path != "/favicon.ico"),
+        "favicon must not be logged: {rows:?}"
+    );
     assert!(
         store
             .recent_http_errors(10, Some("upstream"))
