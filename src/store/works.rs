@@ -262,6 +262,17 @@ impl Store {
         })
     }
 
+    /// The recent works list with full rows, for the shared blurb card.
+    pub async fn list_works_detailed(&self, limit: i64) -> Result<Vec<StoredWork>> {
+        let mut works = Vec::new();
+        for summary in self.list_works(limit).await? {
+            if let Some(work) = self.get_work(&summary.ao3_id).await? {
+                works.push(work);
+            }
+        }
+        Ok(works)
+    }
+
     /// Search hits with the full cached row, so the renderer can use the same
     /// blurb card as browse. Reuses [`Self::search_works`] for ranking.
     pub async fn search_works_detailed(&self, query: &str, limit: i64) -> Result<Vec<StoredWork>> {

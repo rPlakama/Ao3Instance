@@ -35,9 +35,10 @@ pub(super) async fn home(
     Query(query): Query<HomeQuery>,
 ) -> Handled<Html<String>> {
     let works = state.store.list_works(50).await?;
+    let detailed = state.store.list_works_detailed(50).await?;
     let flash = query.notice.as_deref().and_then(notice_text);
     let page = super::page_context(&state, "AO3Instance", NavSection::Home).await;
-    Ok(Html(render::home_page(&page, &works, flash)))
+    Ok(Html(render::home_page(&page, &works, &detailed, flash)))
 }
 
 #[derive(Deserialize)]

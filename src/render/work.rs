@@ -51,7 +51,8 @@ pub fn read_page(
         body.push_str(&format!("<div class=\"notice\">{}</div>", escape(notice)));
     }
     body.push_str(&format!(
-        "<h2 class=\"title\">{}</h2><div class=\"byline\">by {}</div>",
+        "<div class=\"preface group\"><h2 class=\"title heading\">{}</h2>\
+         <h3 class=\"byline heading\">by {}</h3></div>",
         escape(&work.title),
         escape(&authors)
     ));
@@ -329,14 +330,6 @@ pub fn read_page(
 /// Standalone document for the chapter iframe. Served with its own CSP.
 pub fn chapter_document(work_title: &str, chapter: &StoredChapter) -> String {
     let mut body = String::new();
-    if let Some(title) = &chapter.title
-        && !title.trim().is_empty()
-    {
-        body.push_str(&format!(
-            "<h3 class=\"chapter-title\">{}</h3>",
-            escape(title)
-        ));
-    }
     body.push_str(&sanitize(&chapter.body_html));
     if let Some(notes) = &chapter.notes_html
         && !notes.trim().is_empty()
@@ -353,7 +346,6 @@ pub fn chapter_document(work_title: &str, chapter: &StoredChapter) -> String {
          body{{margin:0;padding:0 1.25rem;color:inherit;background:transparent;\
          font:16px/1.7 Georgia,serif;}} \
          a{{color:#8c2f39;}} img{{max-width:100%;height:auto;}} \
-         .chapter-title{{font-size:1.1rem;font-weight:600;margin:.2rem 0 1rem;}} \
          .notes-sep{{border:0;border-top:1px solid #ccc4;margin:1.5rem 0 1rem;}} \
          .notes{{font-size:.92rem;color:#8a857e;}} \
          blockquote{{border-left:3px solid #ccc4;margin:1rem 0;padding-left:1rem;color:#8a857e;}}</style>\
@@ -387,8 +379,12 @@ mod tests {
             body_html: "<p>body</p><script>bad()</script>".into(),
             notes_html: Some("<p>note</p>".into()),
         };
-        let doc = chapter_document("w", &chapter);
-        assert!(doc.contains("&lt;One&gt;"));
+        let doc = chapter_document("Work <One>", &chapter);
+        assert!(doc.contains("Work &lt;One&gt;"));
+        assert!(
+            !doc.contains("<h3 class=\"chapter-title\""),
+            "preface owns the title"
+        );
         assert!(doc.contains("<p>body</p>"));
         assert!(!doc.contains("bad()"));
         assert!(doc.contains("Chapter notes"));
