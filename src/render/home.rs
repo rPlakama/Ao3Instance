@@ -40,7 +40,8 @@ pub fn home_page(
         for work in continuing {
             let chapter = work.progress_chapter.unwrap_or(1);
             body.push_str(&format!(
-                "<li><a href=\"/read/{id}?chapter={chapter}\">{title}</a></li>",
+                "<li><a href=\"/read/{id}?chapter={chapter}\">{title}</a> \
+                 <span class=\"meta\">· continue ch. {chapter}</span></li>",
                 id = escape(&work.ao3_id),
                 title = escape(&work.title),
             ));
