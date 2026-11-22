@@ -251,14 +251,15 @@ pub fn read_page(
             body.push_str(&format!(
                 "<div class=\"chapter preface group\"><h3 class=\"title\">Chapter {}: {}</h3></div>\
                  <iframe class=\"chapter\" sandbox referrerpolicy=\"no-referrer\" \
-                 title=\"Chapter {} of {}\" src=\"/read/{}/chapter/{}?v={}\"></iframe>",
+                 title=\"Chapter {} of {}\" src=\"/read/{}/chapter/{}?v={}&skin={}\"></iframe>",
                 index + 1,
                 escape(candidate.title.as_deref().unwrap_or("")),
                 index + 1,
                 total,
                 escape(&work.ao3_id),
                 candidate.idx,
-                work.fetched_at
+                work.fetched_at,
+                escape(&page.skin)
             ));
         }
     } else {
@@ -271,12 +272,13 @@ pub fn read_page(
                 ));
                 body.push_str(&format!(
                     "<iframe class=\"chapter\" sandbox referrerpolicy=\"no-referrer\" \
-                     title=\"Chapter {} of {}\" src=\"/read/{}/chapter/{}?v={}\"></iframe>",
+                     title=\"Chapter {} of {}\" src=\"/read/{}/chapter/{}?v={}&skin={}\"></iframe>",
                     position + 1,
                     total,
                     escape(&work.ao3_id),
                     chapter.idx,
-                    work.fetched_at
+                    work.fetched_at,
+                    escape(&page.skin)
                 ));
             }
             None => body.push_str(
@@ -328,7 +330,15 @@ pub fn read_page(
 }
 
 /// Standalone document for the chapter iframe. Served with its own CSP.
-pub fn chapter_document(work_title: &str, chapter: &StoredChapter) -> String {
+///
+/// Iframes are separate documents: they do not inherit the parent page's
+/// palette, so the reader passes the active skin explicitly. Without this the
+/// chapter text would stay dark on a Reversi background.
+pub fn chapter_document(work_title: &str, chapter: &StoredChapter, skin: &str) -> String {
+    let skin = match skin {
+        "reversi" => "reversi",
+        _ => "default",
+    };
     let mut body = String::new();
     body.push_str(&sanitize(&chapter.body_html));
     if let Some(notes) = &chapter.notes_html
@@ -340,12 +350,22 @@ pub fn chapter_document(work_title: &str, chapter: &StoredChapter) -> String {
         ));
     }
     format!(
-        "<!DOCTYPE html><html lang=\"en\"><head><meta charset=\"utf-8\">\
+        "<!DOCTYPE html><html lang=\"en\" data-skin=\"{skin}\"><head><meta charset=\"utf-8\">\
          <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\
          <title>{} — chapter</title><style>\
-         body{{margin:0;padding:0 1.25rem;color:inherit;background:transparent;\
+         :root{{color-scheme:light dark;}} \
+         body{{margin:0;padding:0 1.25rem;color:#2a2a2a;background:transparent;\
          font:16px/1.7 Georgia,serif;}} \
          a{{color:#8c2f39;}} img{{max-width:100%;height:auto;}} \
+         :root[data-skin=\"reversi\"] body{{color:#eee;}} \
+         :root[data-skin=\"reversi\"] a{{color:#ff9b9b;}} \
+         :root[data-skin=\"reversi\"] .notes,\
+         :root[data-skin=\"reversi\"] blockquote{{color:#b8b8b8;border-color:#555;}} \
+         @media (prefers-color-scheme: dark) {{\
+         :root:not([data-skin=\"default\"]) body{{color:#eee;}} \
+         :root:not([data-skin=\"default\"]) a{{color:#ff9b9b;}} \
+         :root:not([data-skin=\"default\"]) .notes,\
+         :root:not([data-skin=\"default\"]) blockquote{{color:#b8b8b8;border-color:#555;}}}} \
          .notes-sep{{border:0;border-top:1px solid #ccc4;margin:1.5rem 0 1rem;}} \
          .notes{{font-size:.92rem;color:#8a857e;}} \
          blockquote{{border-left:3px solid #ccc4;margin:1rem 0;padding-left:1rem;color:#8a857e;}}</style>\
@@ -379,7 +399,7 @@ mod tests {
             body_html: "<p>body</p><script>bad()</script>".into(),
             notes_html: Some("<p>note</p>".into()),
         };
-        let doc = chapter_document("Work <One>", &chapter);
+        let doc = chapter_document("Work <One>", &chapter, "default");
         assert!(doc.contains("Work &lt;One&gt;"));
         assert!(
             !doc.contains("<h3 class=\"chapter-title\""),
@@ -388,5 +408,15 @@ mod tests {
         assert!(doc.contains("<p>body</p>"));
         assert!(!doc.contains("bad()"));
         assert!(doc.contains("Chapter notes"));
+        assert!(doc.contains("data-skin=\"default\""));
+
+        let dark = chapter_document("w", &chapter, "reversi");
+        assert!(dark.contains("data-skin=\"reversi\""));
+        assert!(dark.contains(":root[data-skin=\"reversi\"] body{color:#eee;}"));
+        assert_eq!(
+            chapter_document("w", &chapter, "neon"),
+            chapter_document("w", &chapter, "default"),
+            "unknown skins fall back to the light document"
+        );
     }
 }

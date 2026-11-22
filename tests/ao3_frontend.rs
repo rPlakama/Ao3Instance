@@ -364,6 +364,26 @@ async fn skin_toggle_persists_and_required_tags_render() {
             .contains("data-skin=\"reversi\"")
     );
 
+    let reader = client
+        .get(format!("{root}/read/12345"))
+        .send()
+        .await
+        .expect("reader in reversi");
+    let reader = reader.text().await.expect("body");
+    assert!(
+        reader.contains("&skin=reversi"),
+        "iframe carries the skin: {reader}"
+    );
+
+    let chapter = client
+        .get(format!("{root}/read/12345/chapter/1?skin=reversi"))
+        .send()
+        .await
+        .expect("chapter");
+    let chapter = chapter.text().await.expect("body");
+    assert!(chapter.contains("data-skin=\"reversi\""), "{chapter}");
+    assert!(chapter.contains("color:#eee"), "light text for dark iframe");
+
     let bad = client
         .post(format!("{root}/skin"))
         .header("content-type", "application/x-www-form-urlencoded")

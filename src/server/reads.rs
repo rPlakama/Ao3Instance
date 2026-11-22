@@ -261,9 +261,15 @@ pub(super) async fn read_work(
     )))
 }
 
+#[derive(Deserialize)]
+pub(super) struct ChapterQuery {
+    skin: Option<String>,
+}
+
 pub(super) async fn read_chapter(
     State(state): State<Arc<AppState>>,
     Path((id, idx)): Path<(String, i64)>,
+    Query(query): Query<ChapterQuery>,
 ) -> Handled<Response> {
     let work = state.store.get_work(&id).await?.ok_or(AppError::NotFound)?;
     let chapters = state.store.get_chapters(&id).await?;
@@ -271,7 +277,11 @@ pub(super) async fn read_chapter(
         .iter()
         .find(|chapter| chapter.idx == idx)
         .ok_or(AppError::NotFound)?;
-    let mut response = Html(render::chapter_document(&work.title, chapter)).into_response();
+    let skin = match query.skin.as_deref() {
+        Some("reversi") => "reversi",
+        _ => "default",
+    };
+    let mut response = Html(render::chapter_document(&work.title, chapter, skin)).into_response();
     let headers = response.headers_mut();
     headers.insert(
         header::CONTENT_TYPE,
