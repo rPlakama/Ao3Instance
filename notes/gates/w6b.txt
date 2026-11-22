@@ -1,7 +1,7 @@
 W6 gate run (bookmarks, operator docs, failure matrix) — 2026-11-22
 toolchain: rustc 1.98.1, cargo 1.98.0 (nix dev shell)
 
-== cargo test (141 total)
+== cargo test (143 total)
 lib                  83 passed
 client_http           7 passed
 failure_matrix        2 passed   (new: offline cache reads, unreachable/403/429/restricted upstream)
