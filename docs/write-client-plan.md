@@ -271,6 +271,24 @@ The fault matrix in ADR-0005 is the acceptance test for W6.
 | **W5** | comments (top-level + reply) | rate limit, spam, duplicate, frozen, moderation all typed; no auto-retry |
 | **W6** | failure injection + sandbox suite + kill switch + operator docs | ADR-0005 fault matrix passes; `AO3I_WRITE_ENABLED=false` blocks all writes |
 
+### W5 status — partial (2026-11-22): kudos + reading flags
+
+**Landed:**
+- **Kudos** via the machine-readable `.js` format (`POST /kudos.js`): 201 success,
+  422 `error_message` rejection; AO3's exact strings map to "given", "already
+  given" (a receipt is stored) and "refused" (audited as failed, button stays).
+  Public action, so it goes through the same confirmation page as subscriptions.
+- **Reading flags** (`PATCH /works/:id/mark_for_later|mark_as_read`) with the CSRF
+  token; the local `reading_flags` mirror drives the reader state chips.
+- Local receipts: `kudos_sent` and `reading_flags` tables (migration 0005) keep the
+  UI honest and prevent duplicate public actions without relying on upstream state.
+- Tests: 126 total; new `tests/writes_kudos_reading.rs` (happy path, AO3-side
+  duplicate, policy refusal, CSRF failure) plus a shared write-test harness.
+  Evidence: `notes/gates/w5.txt`.
+
+**Deferred with reason:** bookmarks need a `pseud_id` (the user's pseud list must be
+fetched/parsed first); it lands after W6 comments.
+
 ### W4 status — complete (2026-11-22): write spine + subscriptions
 
 **Landed:**

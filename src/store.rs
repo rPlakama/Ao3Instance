@@ -404,6 +404,60 @@ impl Store {
         Ok(())
     }
 
+    // ---- kudos receipts and reading flags ----
+
+    pub async fn mark_kudos(&self, account: &str, work_id: &str) -> Result<()> {
+        sqlx::query(
+            "INSERT OR IGNORE INTO kudos_sent (account, work_id, created_at) VALUES (?1, ?2, ?3)",
+        )
+        .bind(account)
+        .bind(work_id)
+        .bind(now_secs())
+        .execute(&self.pool)
+        .await
+        .map_err(|e| Error::Store(format!("mark kudos: {e}")))?;
+        Ok(())
+    }
+
+    pub async fn has_kudos(&self, account: &str, work_id: &str) -> Result<bool> {
+        let row = sqlx::query("SELECT 1 FROM kudos_sent WHERE account = ?1 AND work_id = ?2")
+            .bind(account)
+            .bind(work_id)
+            .fetch_optional(&self.pool)
+            .await
+            .map_err(|e| Error::Store(format!("has kudos: {e}")))?;
+        Ok(row.is_some())
+    }
+
+    pub async fn set_reading_state(&self, account: &str, work_id: &str, state: &str) -> Result<()> {
+        sqlx::query(
+            "INSERT INTO reading_flags (account, work_id, state, updated_at)
+             VALUES (?1, ?2, ?3, ?4)
+             ON CONFLICT(account, work_id) DO UPDATE SET
+               state = excluded.state,
+               updated_at = excluded.updated_at",
+        )
+        .bind(account)
+        .bind(work_id)
+        .bind(state)
+        .bind(now_secs())
+        .execute(&self.pool)
+        .await
+        .map_err(|e| Error::Store(format!("set reading state: {e}")))?;
+        Ok(())
+    }
+
+    pub async fn get_reading_state(&self, account: &str, work_id: &str) -> Result<Option<String>> {
+        let row =
+            sqlx::query("SELECT state FROM reading_flags WHERE account = ?1 AND work_id = ?2")
+                .bind(account)
+                .bind(work_id)
+                .fetch_optional(&self.pool)
+                .await
+                .map_err(|e| Error::Store(format!("get reading state: {e}")))?;
+        Ok(row.map(|row| row.get("state")))
+    }
+
     /// Full-text search over cached works. Returns recent-first ties broken by
     /// rank; an empty query is an empty result, never "everything".
     pub async fn search_works(&self, query: &str, limit: i64) -> Result<Vec<WorkSummary>> {
@@ -810,6 +864,50 @@ mod tests {
             .expect("ledger row");
         assert_eq!(row.state, "removed");
 
+        store.pool().close().await;
+        drop(std::fs::remove_dir_all(dir));
+    }
+
+    #[tokio::test]
+    async fn kudos_and_reading_state_round_trip() {
+        let (store, dir) = test_store("kudos").await;
+        assert!(!store.has_kudos("someone", "123").await.unwrap());
+        store.mark_kudos("someone", "123").await.unwrap();
+        store.mark_kudos("someone", "123").await.unwrap(); // idempotent
+        assert!(store.has_kudos("someone", "123").await.unwrap());
+        assert!(!store.has_kudos("other", "123").await.unwrap());
+
+        assert!(
+            store
+                .get_reading_state("someone", "123")
+                .await
+                .unwrap()
+                .is_none()
+        );
+        store
+            .set_reading_state("someone", "123", "for_later")
+            .await
+            .unwrap();
+        assert_eq!(
+            store
+                .get_reading_state("someone", "123")
+                .await
+                .unwrap()
+                .as_deref(),
+            Some("for_later")
+        );
+        store
+            .set_reading_state("someone", "123", "read")
+            .await
+            .unwrap();
+        assert_eq!(
+            store
+                .get_reading_state("someone", "123")
+                .await
+                .unwrap()
+                .as_deref(),
+            Some("read")
+        );
         store.pool().close().await;
         drop(std::fs::remove_dir_all(dir));
     }

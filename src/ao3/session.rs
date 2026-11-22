@@ -423,6 +423,14 @@ impl AccountSession {
         self.client.post_form(path, &all).await
     }
 
+    /// CSRF-protected PATCH for a write action (reading flags).
+    pub async fn patch_write(&mut self, path: &str, fields: &[(&str, &str)]) -> Result<Response> {
+        let token = self.csrf_token()?.to_string();
+        let mut all: Vec<(&str, &str)> = fields.to_vec();
+        all.push(("authenticity_token", token.as_str()));
+        self.client.patch_form(path, &all).await
+    }
+
     /// CSRF-protected DELETE for a write action (e.g. unsubscribe).
     pub async fn delete_write(&mut self, path: &str) -> Result<Response> {
         let token = self.csrf_token()?.to_string();

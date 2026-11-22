@@ -207,6 +207,8 @@ pub struct ReadContext<'a> {
     pub notice: Option<&'a str>,
     pub subscribed: bool,
     pub can_write: bool,
+    pub kudos_sent: bool,
+    pub reading_state: Option<&'a str>,
 }
 
 pub fn read_page(work: &StoredWork, chapters: &[StoredChapter], ctx: &ReadContext<'_>) -> String {
@@ -216,6 +218,8 @@ pub fn read_page(work: &StoredWork, chapters: &[StoredChapter], ctx: &ReadContex
         notice,
         subscribed,
         can_write,
+        kudos_sent,
+        reading_state,
     } = *ctx;
     let authors = if work.authors.is_empty() {
         "Anonymous".to_string()
@@ -327,7 +331,37 @@ pub fn read_page(work: &StoredWork, chapters: &[StoredChapter], ctx: &ReadContex
             ));
         }
     } else {
-        toolbar.push_str("<a href=\"/session\">Sign in to subscribe</a>");
+        toolbar.push_str("<a href=\"/session\">Sign in to write</a>");
+    }
+    if can_write {
+        if kudos_sent {
+            toolbar.push_str("<span class=\"state active\">kudos given</span>");
+        } else {
+            toolbar.push_str(&format!(
+                "<a href=\"/write/preview?kind=kudos&id={}\">Give kudos</a>",
+                escape(&work.ao3_id)
+            ));
+        }
+        toolbar.push_str(&format!(
+            "<form class=\"inline\" method=\"post\" action=\"/write/reading\">\
+             <input type=\"hidden\" name=\"target_id\" value=\"{}\">\
+             <input type=\"hidden\" name=\"action\" value=\"later\">\
+             <button type=\"submit\">Mark for later</button></form>\
+             <form class=\"inline\" method=\"post\" action=\"/write/reading\">\
+             <input type=\"hidden\" name=\"target_id\" value=\"{}\">\
+             <input type=\"hidden\" name=\"action\" value=\"read\">\
+             <button type=\"submit\">Mark as read</button></form>",
+            escape(&work.ao3_id),
+            escape(&work.ao3_id)
+        ));
+        if let Some(state) = reading_state {
+            let label = if state == "read" {
+                "marked read"
+            } else {
+                "marked for later"
+            };
+            toolbar.push_str(&format!("<span class=\"state active\">{label}</span>"));
+        }
     }
     toolbar.push_str("</div>");
     body.push_str(&toolbar);

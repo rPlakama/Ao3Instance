@@ -110,6 +110,8 @@ pub async fn serve(app: axum::Router) -> (String, tokio::task::JoinHandle<()>) {
     (format!("http://{addr}"), handle)
 }
 
+pub mod harness;
+
 type Routes = HashMap<String, Vec<Response>>;
 
 pub struct Server {

@@ -130,6 +130,15 @@ impl Client {
         self.send(request).await
     }
 
+    pub async fn patch_form(&mut self, path: &str, fields: &[(&str, &str)]) -> Result<Response> {
+        let body = form_urlencode(fields);
+        let request = self
+            .request(Method::PATCH, path)
+            .header(CONTENT_TYPE, FORM_CONTENT_TYPE)
+            .body(body);
+        self.send(request).await
+    }
+
     pub async fn delete(&mut self, path: &str) -> Result<Response> {
         let request = self.request(Method::DELETE, path);
         self.send(request).await

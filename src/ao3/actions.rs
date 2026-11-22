@@ -40,6 +40,19 @@ struct SuccessEnvelope {
 }
 
 #[derive(Deserialize, Default)]
+struct ErrorMessageEnvelope {
+    #[serde(default)]
+    error_message: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct KudosOutcome {
+    /// AO3 said we had already left kudos: success for our purposes.
+    pub already: bool,
+    pub message: Option<String>,
+}
+
+#[derive(Deserialize, Default)]
 struct ErrorsEnvelope {
     #[serde(default)]
     errors: Vec<String>,
@@ -138,6 +151,81 @@ pub async fn unsubscribe(
                 parsed.errors.join("; ")
             }))
         }
+        _ => Err(classified_error(&response)),
+    }
+}
+
+/// `POST /kudos.js` — the JS format is machine-readable: 201 on success,
+/// 422 with `error_message` on rejection (`kudos_controller.rb:52-72`).
+pub async fn kudos(session: &mut AccountSession, work_id: &str) -> Result<KudosOutcome> {
+    let work_id = work_id.trim();
+    if work_id.is_empty() {
+        return Err(Error::Validation("kudos target is empty".into()));
+    }
+    let response = session
+        .post_write(
+            "/kudos.js",
+            &[
+                ("kudo[commentable_id]", work_id),
+                ("kudo[commentable_type]", WORK),
+            ],
+        )
+        .await?;
+    match response.status {
+        200 | 201 => Ok(KudosOutcome {
+            already: false,
+            message: None,
+        }),
+        422 => {
+            let parsed: ErrorMessageEnvelope =
+                serde_json::from_str(&response.body).unwrap_or_default();
+            let message = parsed
+                .error_message
+                .unwrap_or_else(|| "AO3 rejected the kudos".to_string());
+            if message.contains("already left kudos") {
+                Ok(KudosOutcome {
+                    already: true,
+                    message: Some(message),
+                })
+            } else {
+                Err(Error::Validation(message))
+            }
+        }
+        _ => Err(classified_error(&response)),
+    }
+}
+
+/// `PATCH /works/:id/mark_for_later` or `/mark_as_read` (`works_controller.rb:704-722`).
+///
+/// Both set a state rather than toggling, so a lost response is safe to
+/// re-issue; we still never retry automatically.
+pub async fn set_reading_flag(
+    session: &mut AccountSession,
+    work_id: &str,
+    for_later: bool,
+) -> Result<()> {
+    let work_id = work_id.trim();
+    if work_id.is_empty() {
+        return Err(Error::Validation("reading-flag target is empty".into()));
+    }
+    let action = if for_later {
+        "mark_for_later"
+    } else {
+        "mark_as_read"
+    };
+    let path = format!("/works/{work_id}/{action}");
+    let response = session.patch_write(&path, &[]).await?;
+    match response.status {
+        200 | 302 | 303 => {
+            if response.location_contains("/auth_error") {
+                Err(Error::CsrfExpired)
+            } else if response.location_contains("/users/login") {
+                Err(Error::LoggedOut)
+            } else {
+                Ok(())
+            }
+        }
+        404 => Err(Error::Validation("work not found upstream".into())),
         _ => Err(classified_error(&response)),
     }
 }

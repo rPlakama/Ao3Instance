@@ -1,0 +1,49 @@
+W5 gate run (kudos + reading flags) — 2026-11-22
+toolchain: rustc 1.98.1, cargo 1.98.0 (nix dev shell)
+
+== cargo test (126 total)
+lib                  74 passed   (incl. kudos/reading store round-trip, PATCH client)
+client_http           7 passed
+search_and_refresh    3 passed
+server_smoke          2 passed
+session_and_progress  3 passed
+session_flow         25 passed
+work_parse            5 passed
+writes                3 passed   (subscriptions)
+writes_kudos_reading  4 passed   (new)
+== cargo clippy --all-targets -- -D warnings: clean
+== cargo fmt --check: clean
+
+== application opens (real binary, temp config, writes default OFF)
+/         200 · landing page (search + open + audit/session links)
+/audit    200 · empty state
+/health   200 · ok
+
+== what the new integration tests prove
+1. kudos_and_reading_flags_are_confirmed_audited_and_remembered
+   - reader shows Give kudos / Mark for later / Mark as read for a signed-in session
+   - /write/preview?kind=kudos is a deliberate confirmation step
+   - POST /write/kudos sends ONE POST /kudos.js carrying
+     kudo[commentable_id]=12345, kudo[commentable_type]=Work, authenticity_token
+   - 201 -> "Kudos given.", local receipt stored, button replaced by "kudos given"
+   - second kudos refused from the receipt with NO upstream request
+   - POST /write/reading action=later/read sends PATCH
+     /works/12345/mark_for_later|mark_as_read with the CSRF token, stores the
+     local reading state, and the audit records kudos / reading_for_later / reading_read
+2. already_given_kudos_from_ao3_is_reported_as_such
+   - 422 {"error_message":"You have already left kudos here. :)"} -> "already left
+     kudos" notice, receipt stored, audit outcome "already-done"
+3. refused_kudos_is_a_failed_audit_and_keeps_the_button
+   - 422 own-work error -> "AO3 refused the kudos", no receipt, audit "failed",
+     the button stays (so the user is not lied to)
+4. reading_flag_csrf_failure_is_a_failed_audit
+   - PATCH answered with /auth_error -> "AO3 refused the reading update", no local
+     state change
+
+== contract notes (from the pinned clone)
+- kudos uses the `.js` format: success is 201, rejection is 422 with a JSON
+  `error_message` (kudos_controller.rb:52-72) — no flash-cookie guessing needed
+- reading flags are state-setting PATCHes (works_controller.rb:704-722), so a lost
+  response is safe to re-issue; we still never retry automatically
+- bookmarks are NOT included: they require a pseud_id, which needs the user's
+  pseud list first (deferred with a note in the plan)

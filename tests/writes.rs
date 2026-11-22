@@ -9,96 +9,11 @@
 
 mod support;
 
-use std::time::Duration;
-
-use ao3instance::ao3::work::parse_work_page;
-use ao3instance::config::Config;
-use ao3instance::store::Store;
-use ao3instance::{db, server};
+use support::harness::{http, seed_work, session_routes, sign_in, start};
 use support::{Response, Server};
 
 const SUCCESS_JSON: &str = r#"{"item_id":42,"item_success_message":"You are now following it."}"#;
 const UNSUB_JSON: &str = r#"{"item_success_message":"You have successfully unsubscribed."}"#;
-
-fn fixture() -> String {
-    std::fs::read_to_string("tests/fixtures/work_full.html").expect("fixture")
-}
-
-fn config_for(dir: &std::path::Path, base: &str, writes: bool) -> Config {
-    let mut pairs = vec![
-        ("AO3I_BASE_URL", base.to_string()),
-        ("AO3I_DATA_DIR", dir.to_str().expect("utf8 dir").to_string()),
-        (
-            "XDG_CONFIG_HOME",
-            dir.to_str().expect("utf8 dir").to_string(),
-        ),
-        ("AO3I_MIN_SPACING_MS", "0".to_string()),
-    ];
-    if writes {
-        pairs.push(("AO3I_WRITE_ENABLED", "true".to_string()));
-    }
-    Config::from_pairs(pairs).expect("config")
-}
-
-fn http() -> reqwest::Client {
-    reqwest::Client::builder()
-        .timeout(Duration::from_secs(10))
-        .build()
-        .expect("http")
-}
-
-fn session_routes(writes: Vec<(&'static str, Response)>) -> Vec<(String, Response)> {
-    let mut routes = vec![
-        (
-            "GET /users/someone/subscriptions".to_string(),
-            Response::ok("<html>subscriptions</html>"),
-        ),
-        (
-            "GET /token_dispenser.json".to_string(),
-            Response::json(r#"{"token":"action-token"}"#),
-        ),
-    ];
-    routes.extend(
-        writes
-            .into_iter()
-            .map(|(key, response)| (key.to_string(), response)),
-    );
-    routes
-}
-
-async fn start(
-    dir: &std::path::Path,
-    upstream: &Server,
-    writes: bool,
-) -> (String, Store, tokio::task::JoinHandle<()>) {
-    let config = config_for(dir, &upstream.url(), writes);
-    let pool = db::open(&config.db_file).await.expect("db");
-    let store = Store::new(pool);
-    let app = server::router(&config, store.clone())
-        .await
-        .expect("router");
-    let (root, handle) = support::serve(app).await;
-    (root, store, handle)
-}
-
-async fn sign_in(client: &reqwest::Client, root: &str) {
-    let imported = client
-        .post(format!("{root}/session/import"))
-        .header("content-type", "application/x-www-form-urlencoded")
-        .body("account=someone&session_cookie=s1&credentials_cookie=1")
-        .send()
-        .await
-        .expect("import");
-    assert_eq!(imported.status(), 200);
-    let body = imported.text().await.expect("body");
-    assert!(body.contains("Session imported and verified"), "{body}");
-}
-
-async fn seed_work(store: &Store) {
-    let mut page = parse_work_page(&fixture()).expect("fixture parses");
-    page.ao3_id = "12345".into();
-    store.upsert_work(&page, "hash").await.expect("seed");
-}
 
 fn post_form(path: &str, body: &'static str) -> reqwest::RequestBuilder {
     http()
@@ -109,7 +24,6 @@ fn post_form(path: &str, body: &'static str) -> reqwest::RequestBuilder {
 
 #[tokio::test]
 async fn subscribe_is_confirmed_audited_and_ledgered_then_unsubscribed() {
-    let dir = support::temp_dir("writes-happy");
     let upstream = Server::start(session_routes(vec![
         (
             "POST /users/someone/subscriptions.json",
@@ -122,7 +36,7 @@ async fn subscribe_is_confirmed_audited_and_ledgered_then_unsubscribed() {
             Response::json(UNSUB_JSON).with_header("content-type", "application/json"),
         ),
     ]));
-    let (root, store, handle) = start(&dir, &upstream, true).await;
+    let (root, store, dir, handle) = start(&upstream, true).await;
     let client = http();
     sign_in(&client, &root).await;
     seed_work(&store).await;
@@ -255,14 +169,13 @@ async fn subscribe_is_confirmed_audited_and_ledgered_then_unsubscribed() {
 
 #[tokio::test]
 async fn validation_failure_is_audited_and_not_retried() {
-    let dir = support::temp_dir("writes-validation");
     let upstream = Server::start(session_routes(vec![(
         "POST /users/someone/subscriptions.json",
         Response::json(r#"{"errors":["You can't subscribe to that."]}"#)
             .with_header("content-type", "application/json")
             .with_status(422),
     )]));
-    let (root, store, handle) = start(&dir, &upstream, true).await;
+    let (root, store, dir, handle) = start(&upstream, true).await;
     let client = http();
     sign_in(&client, &root).await;
 
@@ -293,9 +206,8 @@ async fn validation_failure_is_audited_and_not_retried() {
 
 #[tokio::test]
 async fn writes_require_the_switch_and_an_explicit_confirmation() {
-    let dir = support::temp_dir("writes-off");
     let upstream = Server::start(session_routes(vec![]));
-    let (root, _store, handle) = start(&dir, &upstream, false).await;
+    let (root, _store, dir, handle) = start(&upstream, false).await;
 
     // Kill switch: no network, clear error.
     let disabled = post_form(

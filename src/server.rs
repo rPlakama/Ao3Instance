@@ -143,6 +143,8 @@ pub async fn router(config: &Config, store: Store) -> Result<Router> {
         .route("/write/preview", get(write_preview))
         .route("/write/subscribe", post(write_subscribe))
         .route("/write/unsubscribe", post(write_unsubscribe))
+        .route("/write/kudos", post(write_kudos))
+        .route("/write/reading", post(write_reading))
         .route("/audit", get(audit))
         .route("/health", get(health))
         .with_state(state))
@@ -315,6 +317,12 @@ async fn read_work(
         false
     };
     let can_write = usable && !account.is_empty() && state.write_enabled;
+    let kudos_sent = can_write && state.store.has_kudos(&account, &id).await?;
+    let reading_state = if can_write {
+        state.store.get_reading_state(&account, &id).await?
+    } else {
+        None
+    };
     Ok(Html(render::read_page(
         &work,
         &chapters,
@@ -324,6 +332,8 @@ async fn read_work(
             notice,
             subscribed,
             can_write,
+            kudos_sent,
+            reading_state: reading_state.as_deref(),
         },
     )))
 }
@@ -598,6 +608,12 @@ fn notice_text(key: &str) -> Option<&'static str> {
         "write_failed" => Some("AO3 rejected the action; see the audit log."),
         "write_rate_limited" => Some("Rate limited by the client governor; try again later."),
         "write_disabled" => Some("Writes are disabled (set AO3I_WRITE_ENABLED=true)."),
+        "kudos_given" => Some("Kudos given."),
+        "kudos_already" => Some("You had already left kudos on this work."),
+        "kudos_failed" => Some("AO3 refused the kudos; see the audit log."),
+        "reading_for_later" => Some("Marked for later."),
+        "reading_read" => Some("Marked as read."),
+        "reading_failed" => Some("AO3 refused the reading update; see the audit log."),
         _ => None,
     }
 }
@@ -649,15 +665,25 @@ async fn write_preview(
             "Sign in to AO3 on the Session page before writing.".into(),
         ));
     }
-    let kind = query
-        .kind
-        .as_deref()
-        .and_then(actions::normalize_kind)
-        .ok_or_else(|| AppError::BadRequest("unknown subscription kind".into()))?;
+    let raw_kind = query.kind.unwrap_or_default();
     let target_id = query.id.unwrap_or_default().trim().to_string();
     if target_id.is_empty() {
-        return Err(AppError::BadRequest("missing subscription target".into()));
+        return Err(AppError::BadRequest("missing write target".into()));
     }
+    if raw_kind.trim().eq_ignore_ascii_case("kudos") {
+        let description = match state.store.get_work(&target_id).await? {
+            Some(work) => format!("Leave kudos on “{}” on AO3?", work.title),
+            None => format!("Leave kudos on work {target_id} on AO3?"),
+        };
+        return Ok(Html(render::confirm_page(
+            "Confirm kudos",
+            &description,
+            "/write/kudos",
+            &[("target_id", &target_id), ("confirm", "yes")],
+        )));
+    }
+    let kind = actions::normalize_kind(&raw_kind)
+        .ok_or_else(|| AppError::BadRequest("unknown subscription kind".into()))?;
     let description = if kind == actions::WORK {
         match state.store.get_work(&target_id).await? {
             Some(work) => format!("Subscribe to “{}” on AO3?", work.title),
@@ -835,6 +861,157 @@ async fn write_unsubscribe(
                 .finish_intent(intent, "failed", "failed", Some(&error.to_string()))
                 .await?;
             Ok(redirect_after_write(&state, kind, &target_id, "write_failed").await)
+        }
+    }
+}
+
+#[derive(Deserialize)]
+struct KudosForm {
+    target_id: String,
+    confirm: Option<String>,
+}
+
+async fn write_kudos(
+    State(state): State<Arc<AppState>>,
+    Form(form): Form<KudosForm>,
+) -> Handled<Redirect> {
+    if !state.write_enabled {
+        return Err(AppError::Forbidden(
+            "Writes are disabled (set AO3I_WRITE_ENABLED=true).".into(),
+        ));
+    }
+    if form.confirm.as_deref() != Some("yes") {
+        return Err(AppError::BadRequest(
+            "A deliberate confirmation is required for public actions.".into(),
+        ));
+    }
+    let target_id = form.target_id.trim().to_string();
+    if target_id.is_empty() {
+        return Err(AppError::BadRequest("missing kudos target".into()));
+    }
+    let (account, usable) = session_identity(&state).await;
+    if !usable || account.is_empty() {
+        return Err(AppError::Forbidden("Sign in to AO3 first.".into()));
+    }
+    if state.store.has_kudos(&account, &target_id).await? {
+        return Ok(redirect_after_write(&state, actions::WORK, &target_id, "kudos_already").await);
+    }
+
+    state
+        .governor
+        .begin("kudos")
+        .await
+        .map_err(AppError::from)?;
+    let intent = state
+        .store
+        .record_intent(&account, "kudos", actions::WORK, &target_id)
+        .await?;
+    let result = {
+        let mut session = state.session.lock().await;
+        actions::kudos(&mut session, &target_id).await
+    };
+    match result {
+        Ok(outcome) if outcome.already => {
+            state.store.mark_kudos(&account, &target_id).await?;
+            state
+                .store
+                .finish_intent(intent, "done", "already-done", outcome.message.as_deref())
+                .await?;
+            Ok(redirect_after_write(&state, actions::WORK, &target_id, "kudos_already").await)
+        }
+        Ok(_) => {
+            state.store.mark_kudos(&account, &target_id).await?;
+            state
+                .store
+                .finish_intent(intent, "done", "kudos-given", None)
+                .await?;
+            Ok(redirect_after_write(&state, actions::WORK, &target_id, "kudos_given").await)
+        }
+        Err(error) => {
+            let retry_after = if let Error::RateLimited { retry_after } = &error {
+                *retry_after
+            } else {
+                None
+            };
+            state.governor.record_outcome("kudos", retry_after).await;
+            state
+                .store
+                .finish_intent(intent, "failed", "failed", Some(&error.to_string()))
+                .await?;
+            Ok(redirect_after_write(&state, actions::WORK, &target_id, "kudos_failed").await)
+        }
+    }
+}
+
+#[derive(Deserialize)]
+struct ReadingForm {
+    target_id: String,
+    action: String,
+}
+
+async fn write_reading(
+    State(state): State<Arc<AppState>>,
+    Form(form): Form<ReadingForm>,
+) -> Handled<Redirect> {
+    if !state.write_enabled {
+        return Err(AppError::Forbidden(
+            "Writes are disabled (set AO3I_WRITE_ENABLED=true).".into(),
+        ));
+    }
+    let for_later = match form.action.trim() {
+        "later" => true,
+        "read" => false,
+        _ => return Err(AppError::BadRequest("unknown reading action".into())),
+    };
+    let target_id = form.target_id.trim().to_string();
+    if target_id.is_empty() {
+        return Err(AppError::BadRequest("missing reading target".into()));
+    }
+    let (account, usable) = session_identity(&state).await;
+    if !usable || account.is_empty() {
+        return Err(AppError::Forbidden("Sign in to AO3 first.".into()));
+    }
+
+    state
+        .governor
+        .begin("reading")
+        .await
+        .map_err(AppError::from)?;
+    let action = if for_later {
+        "reading_for_later"
+    } else {
+        "reading_read"
+    };
+    let intent = state
+        .store
+        .record_intent(&account, action, actions::WORK, &target_id)
+        .await?;
+    let result = {
+        let mut session = state.session.lock().await;
+        actions::set_reading_flag(&mut session, &target_id, for_later).await
+    };
+    match result {
+        Ok(()) => {
+            state
+                .store
+                .set_reading_state(
+                    &account,
+                    &target_id,
+                    if for_later { "for_later" } else { "read" },
+                )
+                .await?;
+            state
+                .store
+                .finish_intent(intent, "done", action, None)
+                .await?;
+            Ok(redirect_after_write(&state, actions::WORK, &target_id, action).await)
+        }
+        Err(error) => {
+            state
+                .store
+                .finish_intent(intent, "failed", "failed", Some(&error.to_string()))
+                .await?;
+            Ok(redirect_after_write(&state, actions::WORK, &target_id, "reading_failed").await)
         }
     }
 }
