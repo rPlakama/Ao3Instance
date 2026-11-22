@@ -1,0 +1,334 @@
+//! Offline reads, plus the one user-initiated upstream fetch behind `/open`.
+
+use std::sync::Arc;
+
+use axum::{
+    extract::{Form, Path, Query, State},
+    http::{HeaderName, HeaderValue, header},
+    response::{Html, IntoResponse, Redirect, Response},
+};
+use serde::Deserialize;
+
+use super::AppState;
+use super::error::{AppError, Handled};
+use super::session_identity;
+use super::writes::notice_text;
+use crate::ao3::actions;
+use crate::ao3::work::parse_work_page;
+use crate::error::Error;
+use crate::render;
+use crate::store::sha256_hex;
+
+/// CSP for the chapter iframe: no scripts, no forms, inline styles only, images
+/// from https only. Author content never runs in the app's origin.
+const CHAPTER_CSP: &str = "default-src 'none'; style-src 'unsafe-inline'; img-src https: data:; \
+     font-src data:; base-uri 'none'; form-action 'none'; frame-ancestors 'self'";
+
+#[derive(Deserialize)]
+pub(super) struct HomeQuery {
+    notice: Option<String>,
+}
+
+pub(super) async fn home(
+    State(state): State<Arc<AppState>>,
+    Query(query): Query<HomeQuery>,
+) -> Handled<Html<String>> {
+    let works = state.store.list_works(50).await?;
+    let flash = query.notice.as_deref().and_then(notice_text);
+    Ok(Html(render::home_page(&works, flash)))
+}
+
+#[derive(Deserialize)]
+pub(super) struct OpenForm {
+    id: String,
+    /// `refresh=1` re-fetches even when the work is cached.
+    refresh: Option<String>,
+}
+
+pub(super) async fn open_work(
+    State(state): State<Arc<AppState>>,
+    Form(form): Form<OpenForm>,
+) -> Handled<Redirect> {
+    let Some(id) = normalize_work_id(&form.id) else {
+        return Err(AppError::BadRequest(
+            "Expected an AO3 work id (e.g. 12345678) or a /works/<id> URL.".into(),
+        ));
+    };
+    let existing = state.store.get_work(&id).await?;
+    // Cache first: re-opening a cached work is an offline read, not a fetch.
+    if form.refresh.is_none() && existing.is_some() {
+        return Ok(Redirect::to(&format!("/read/{id}")));
+    }
+    let html = fetch_work_html(&state, &id).await?;
+    let mut page = match parse_work_page(&html) {
+        Ok(page) => page,
+        Err(Error::UpstreamChanged(_)) if looks_like_adult_gate(&html) => {
+            return Err(AppError::Upstream(
+                "This work is behind AO3's adult-content gate. Enable adult content on the \
+                 Session page (or sign in), then reopen the work."
+                    .into(),
+            ));
+        }
+        Err(Error::UpstreamChanged(_)) if looks_like_login_gate(&html) => {
+            return Err(AppError::Upstream(
+                "AO3 says this work needs a signed-in account. Import your cookies on the \
+                 Session page, then reopen the work."
+                    .into(),
+            ));
+        }
+        Err(error) => return Err(AppError::from(error)),
+    };
+    // The id in our URL is authoritative: the page's links may be relative or
+    // (for synthetic fixtures) point elsewhere.
+    page.ao3_id = id.clone();
+    let content_hash = sha256_hex(html.as_bytes());
+    match existing {
+        Some(work) if work.content_hash == content_hash => {
+            // Same bytes upstream: record the check, do not rewrite the cache.
+            state.store.touch_checked(&id).await?;
+            Ok(Redirect::to(&format!("/read/{id}?checked=1")))
+        }
+        Some(_) => {
+            state.store.upsert_work(&page, &content_hash).await?;
+            Ok(Redirect::to(&format!("/read/{id}?updated=1")))
+        }
+        None => {
+            state.store.upsert_work(&page, &content_hash).await?;
+            Ok(Redirect::to(&format!("/read/{id}")))
+        }
+    }
+}
+
+pub(super) async fn fetch_work_html(state: &AppState, id: &str) -> Handled<String> {
+    // One request, user-initiated; `view_full_work` asks AO3 for all chapters in
+    // a single page (ADR-0002: no crawling, no paging picks).
+    let path = format!("/works/{id}?view_full_work=true");
+    let mut session = state.session.lock().await;
+    let response = session
+        .client_mut()
+        .get(&path)
+        .await
+        .map_err(AppError::from)?;
+    match response.status {
+        200 => Ok(response.body),
+        404 => Err(AppError::NotFound),
+        429 => Err(AppError::Upstream(
+            "AO3 is rate limiting this instance; wait a minute and retry.".into(),
+        )),
+        403 | 503 => Err(AppError::Upstream(format!(
+            "AO3 refused the request (HTTP {}); it may be a bot challenge.",
+            response.status
+        ))),
+        302 | 303 => Err(AppError::Upstream(
+            "AO3 redirected this work (restricted or login-gated). Sign in on the Session page."
+                .into(),
+        )),
+        status => Err(AppError::Upstream(format!(
+            "Unexpected HTTP {status} from AO3."
+        ))),
+    }
+}
+
+#[derive(Deserialize)]
+pub(super) struct ReadQuery {
+    chapter: Option<i64>,
+    /// Set by a refresh that found no upstream change.
+    checked: Option<String>,
+    /// Set by a refresh that stored a new version.
+    updated: Option<String>,
+    /// Fixed-key notice from a write action (never raw user input).
+    notice: Option<String>,
+}
+
+pub(super) async fn read_work(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<String>,
+    Query(query): Query<ReadQuery>,
+) -> Handled<Html<String>> {
+    let work = state.store.get_work(&id).await?.ok_or(AppError::NotFound)?;
+    let chapters = state.store.get_chapters(&id).await?;
+    let progress = state.store.get_progress(&id).await?;
+    let current = query
+        .chapter
+        .or(progress)
+        .unwrap_or_else(|| chapters.first().map(|chapter| chapter.idx).unwrap_or(1));
+    let notice = if query.checked.is_some() {
+        Some("Checked AO3 — no changes since the cached copy.")
+    } else if query.updated.is_some() {
+        Some("Updated from AO3.")
+    } else {
+        query.notice.as_deref().and_then(notice_text)
+    };
+    let (account, usable) = session_identity(&state).await;
+    let subscribed = if usable && !account.is_empty() {
+        state
+            .store
+            .get_subscription(&account, actions::WORK, &id)
+            .await?
+            .is_some_and(|row| row.state == "active")
+    } else {
+        false
+    };
+    let can_write = usable && !account.is_empty() && state.write_enabled;
+    let kudos_sent = can_write && state.store.has_kudos(&account, &id).await?;
+    let bookmarked = can_write && state.store.has_bookmark(&account, &id).await?;
+    let reading_state = if can_write {
+        state.store.get_reading_state(&account, &id).await?
+    } else {
+        None
+    };
+    Ok(Html(render::read_page(
+        &work,
+        &chapters,
+        &render::ReadContext {
+            current,
+            progress,
+            notice,
+            subscribed,
+            can_write,
+            kudos_sent,
+            bookmarked,
+            reading_state: reading_state.as_deref(),
+        },
+    )))
+}
+
+pub(super) async fn read_chapter(
+    State(state): State<Arc<AppState>>,
+    Path((id, idx)): Path<(String, i64)>,
+) -> Handled<Response> {
+    let work = state.store.get_work(&id).await?.ok_or(AppError::NotFound)?;
+    let chapters = state.store.get_chapters(&id).await?;
+    let chapter = chapters
+        .iter()
+        .find(|chapter| chapter.idx == idx)
+        .ok_or(AppError::NotFound)?;
+    let mut response = Html(render::chapter_document(&work.title, chapter)).into_response();
+    let headers = response.headers_mut();
+    headers.insert(
+        header::CONTENT_TYPE,
+        HeaderValue::from_static("text/html; charset=utf-8"),
+    );
+    headers.insert(
+        HeaderName::from_static("content-security-policy"),
+        HeaderValue::from_static(CHAPTER_CSP),
+    );
+    headers.insert(
+        HeaderName::from_static("x-content-type-options"),
+        HeaderValue::from_static("nosniff"),
+    );
+    Ok(response)
+}
+
+#[derive(Deserialize)]
+pub(super) struct SearchQuery {
+    q: Option<String>,
+}
+
+pub(super) async fn search(
+    State(state): State<Arc<AppState>>,
+    Query(query): Query<SearchQuery>,
+) -> Handled<Html<String>> {
+    let raw = query.q.unwrap_or_default();
+    let works = state.store.search_works(&raw, 50).await?;
+    Ok(Html(render::search_page(&raw, &works)))
+}
+
+#[derive(Deserialize)]
+pub(super) struct ProgressForm {
+    work_id: String,
+    chapter: i64,
+}
+
+pub(super) async fn save_progress(
+    State(state): State<Arc<AppState>>,
+    Form(form): Form<ProgressForm>,
+) -> Handled<Redirect> {
+    if state.store.get_work(&form.work_id).await?.is_none() {
+        return Err(AppError::NotFound);
+    }
+    state
+        .store
+        .save_progress(&form.work_id, form.chapter)
+        .await?;
+    Ok(Redirect::to(&format!(
+        "/read/{}?chapter={}",
+        form.work_id, form.chapter
+    )))
+}
+
+/// AO3's adult interstitial has no work title, so the parser reports drift; the
+/// gate markers let us say "enable adult content" instead of "AO3 changed".
+fn looks_like_adult_gate(html: &str) -> bool {
+    html.contains("This work could have adult content")
+        || html.contains("id=\"adult\"")
+        || html.contains("Proceed")
+}
+
+/// Restricted works redirect to the login page; the marker check covers the
+/// rendered login form some paths serve with 200.
+fn looks_like_login_gate(html: &str) -> bool {
+    html.contains("This work is only available to registered users")
+        || (html.contains("id=\"loginform\"") && !html.contains("class=\"title heading\""))
+}
+
+/// Accepts a bare id or any URL containing `/works/<id>`.
+fn normalize_work_id(input: &str) -> Option<String> {
+    let trimmed = input.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    if trimmed.chars().all(|ch| ch.is_ascii_digit()) {
+        return Some(trimmed.to_string());
+    }
+    let marker = "/works/";
+    let start = trimmed.find(marker)? + marker.len();
+    let digits: String = trimmed[start..]
+        .chars()
+        .take_while(char::is_ascii_digit)
+        .collect();
+    if digits.is_empty() {
+        None
+    } else {
+        Some(digits)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn work_ids_are_normalised_from_ids_and_urls() {
+        assert_eq!(normalize_work_id("12345").as_deref(), Some("12345"));
+        assert_eq!(
+            normalize_work_id("https://archiveofourown.org/works/12345").as_deref(),
+            Some("12345")
+        );
+        assert_eq!(
+            normalize_work_id(" https://archiveofourown.org/works/12345?view_full_work=true ")
+                .as_deref(),
+            Some("12345")
+        );
+        assert_eq!(
+            normalize_work_id("https://archiveofourown.org/works/12345/chapters/1").as_deref(),
+            Some("12345")
+        );
+        assert_eq!(normalize_work_id(""), None);
+        assert_eq!(normalize_work_id("   "), None);
+        assert_eq!(normalize_work_id("not a work"), None);
+        assert_eq!(
+            normalize_work_id("https://archiveofourown.org/tags/x/works"),
+            None
+        );
+    }
+
+    #[test]
+    fn gate_markers_are_recognised() {
+        let adult = "<div id=\"adult\">This work could have adult content. Proceed</div>";
+        assert!(looks_like_adult_gate(adult));
+        assert!(!looks_like_login_gate(adult));
+        let login = "<div id=\"loginform\">This work is only available to registered users</div>";
+        assert!(looks_like_login_gate(login));
+    }
+}
