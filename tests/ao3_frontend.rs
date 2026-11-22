@@ -187,6 +187,40 @@ async fn seeded_cache_renders_browse_fandoms_and_dashboard() {
     support::harness::seed_work(&store).await;
     let client = http();
 
+    let reader = client
+        .get(format!("{root}/read/12345"))
+        .send()
+        .await
+        .expect("reader");
+    let reader = reader.text().await.expect("body");
+    assert!(reader.contains("Entire Work"), "{reader}");
+    assert!(!reader.contains("Chapter by Chapter"), "toggle is one-way");
+
+    let full = client
+        .get(format!("{root}/read/12345?view_full_work=true"))
+        .send()
+        .await
+        .expect("full work");
+    let full = full.text().await.expect("body");
+    assert!(full.contains("Chapter by Chapter"), "{full}");
+    assert!(
+        full.matches("iframe class=\"chapter\"").count() >= 2,
+        "every cached chapter is stacked: {full}"
+    );
+
+    let search = client
+        .get(format!("{root}/search?q=Mirror"))
+        .send()
+        .await
+        .expect("search");
+    let search = search.text().await.expect("body");
+    assert!(search.contains("work blurb group"), "{search}");
+    assert!(search.contains("required-tags"), "{search}");
+
+    let home = client.get(&root).send().await.expect("home");
+    let home = home.text().await.expect("body");
+    assert!(home.contains("id=\"login\""), "signed-out login dropdown");
+
     let browse = client
         .get(format!("{root}/works"))
         .send()

@@ -212,6 +212,18 @@ impl Store {
         Ok(works)
     }
 
+    /// Search hits with the full cached row, so the renderer can use the same
+    /// blurb card as browse. Reuses [`Self::search_works`] for ranking.
+    pub async fn search_works_detailed(&self, query: &str, limit: i64) -> Result<Vec<StoredWork>> {
+        let mut works = Vec::new();
+        for summary in self.search_works(query, limit).await? {
+            if let Some(work) = self.get_work(&summary.ao3_id).await? {
+                works.push(work);
+            }
+        }
+        Ok(works)
+    }
+
     /// Records that a work was checked upstream without changing its content.
     pub async fn touch_checked(&self, ao3_id: &str) -> Result<()> {
         sqlx::query("UPDATE works SET fetched_at = ?2 WHERE ao3_id = ?1")

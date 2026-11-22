@@ -119,7 +119,17 @@ impl PageContext {
 
 fn greeting(ctx: &PageContext) -> String {
     if ctx.account.is_empty() {
-        return "<span class=\"muted\">Not signed in</span> · <a href=\"/session\">Log In</a>"
+        return "<span class=\"muted\">Not signed in</span> · \
+                <details id=\"login\" class=\"dropdown\"><summary>Log In</summary>\
+                <div class=\"dropdown-panel\"><form class=\"stack\" method=\"post\" \
+                action=\"/session/login\">\
+                <label>AO3 login or email <input type=\"text\" name=\"account\" required \
+                autocomplete=\"username\"></label>\
+                <label>Password <input type=\"password\" name=\"password\" required \
+                autocomplete=\"current-password\"></label>\
+                <label><input type=\"checkbox\" name=\"adult\" value=\"1\"> Allow adult                 content</label>\
+                <button type=\"submit\">Log In</button></form>\
+                <p class=\"meta\"><a href=\"/session#cookie-import\">Import cookies instead                 (recommended)</a></p></div></details>"
             .to_string();
     }
     format!(
@@ -274,9 +284,11 @@ mod tests {
     }
 
     #[test]
-    fn signed_out_greeting_links_to_the_session_page() {
+    fn signed_out_greeting_offers_the_login_dropdown() {
         let html = layout(&PageContext::new("t", NavSection::Home), "");
         assert!(html.contains("Not signed in"), "{html}");
-        assert!(html.contains("<a href=\"/session\">Log In</a>"), "{html}");
+        assert!(html.contains("id=\"login\""), "{html}");
+        assert!(html.contains("action=\"/session/login\""), "{html}");
+        assert!(html.contains("Import cookies instead"), "{html}");
     }
 }

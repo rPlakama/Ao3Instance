@@ -1,15 +1,16 @@
 //! Offline search results over the local cache.
 
+use super::blurb::work_blurb;
 use super::chrome::{PageContext, layout};
 use super::escape;
-use crate::store::WorkSummary;
+use crate::store::StoredWork;
 
-pub fn search_page(ctx: &PageContext, query: &str, works: &[WorkSummary]) -> String {
+pub fn search_page(ctx: &PageContext, query: &str, works: &[StoredWork]) -> String {
     let mut body = format!(
         "<h2>Search</h2><form class=\"open\" method=\"get\" action=\"/search\">\
          <input type=\"search\" name=\"q\" value=\"{}\" placeholder=\"title, author or tag\">\
          <button type=\"submit\">Search</button></form>\
-         <p class=\"meta\">Local cache only — this search never calls archiveofourown.org.</p>",
+         <p class=\"meta\">Local Cache — offline search. This never calls archiveofourown.org.</p>",
         escape(query)
     );
     if query.trim().is_empty() {
@@ -23,33 +24,8 @@ pub fn search_page(ctx: &PageContext, query: &str, works: &[WorkSummary]) -> Str
     } else {
         body.push_str(&format!("<h3>{} cached match(es)</h3>", works.len()));
         for work in works {
-            body.push_str(&render_blurb(work));
+            body.push_str(&work_blurb(work, None));
         }
     }
     layout(ctx, &body)
-}
-
-fn render_blurb(work: &WorkSummary) -> String {
-    let authors = if work.authors.is_empty() {
-        "Anonymous".to_string()
-    } else {
-        work.authors.join(", ")
-    };
-    let continue_at = work.progress_chapter.map_or_else(String::new, |chapter| {
-        format!(
-            " · <a href=\"/read/{}?chapter={chapter}\">continue ch. {chapter}</a>",
-            escape(&work.ao3_id)
-        )
-    });
-    format!(
-        "<article class=\"work blurb group\"><div class=\"header module\">\
-         <h4 class=\"heading\"><a href=\"/read/{id}\">{title}</a></h4>\
-         <div class=\"byline\">by {authors}</div></div>\
-         <dl class=\"stats\"><dt>chapters</dt><dd>{chapters}</dd></dl>\
-         <p class=\"meta\">{continue_at}</p></article>",
-        id = escape(&work.ao3_id),
-        title = escape(&work.title),
-        authors = escape(&authors),
-        chapters = work.chapter_count,
-    )
 }

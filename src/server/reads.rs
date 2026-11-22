@@ -178,6 +178,8 @@ pub(super) async fn chapter_alias(Path((id, idx)): Path<(String, i64)>) -> Redir
 #[derive(Deserialize)]
 pub(super) struct ReadQuery {
     chapter: Option<i64>,
+    /// AO3-compatible "Entire Work" mode; renders every cached chapter.
+    view_full_work: Option<String>,
     /// Set by a refresh that found no upstream change.
     checked: Option<String>,
     /// Set by a refresh that stored a new version.
@@ -198,6 +200,10 @@ pub(super) async fn read_work(
         .chapter
         .or(progress)
         .unwrap_or_else(|| chapters.first().map(|chapter| chapter.idx).unwrap_or(1));
+    let full_work = query
+        .view_full_work
+        .as_deref()
+        .is_some_and(|value| matches!(value, "true" | "1" | "yes" | "on"));
     let notice = if query.checked.is_some() {
         Some("Checked AO3 — no changes since the cached copy.")
     } else if query.updated.is_some() {
@@ -242,6 +248,7 @@ pub(super) async fn read_work(
             kudos_sent,
             bookmarked,
             reading_state: reading_state.as_deref(),
+            full_work,
         },
     )))
 }
@@ -283,7 +290,7 @@ pub(super) async fn search(
     Query(query): Query<SearchQuery>,
 ) -> Handled<Html<String>> {
     let raw = query.q.unwrap_or_default();
-    let works = state.store.search_works(&raw, 50).await?;
+    let works = state.store.search_works_detailed(&raw, 50).await?;
     let page = super::page_context(&state, "Search — AO3Instance", NavSection::Search).await;
     Ok(Html(render::search_page(&page, &raw, &works)))
 }

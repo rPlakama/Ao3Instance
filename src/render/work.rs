@@ -17,6 +17,8 @@ pub struct ReadContext<'a> {
     pub kudos_sent: bool,
     pub bookmarked: bool,
     pub reading_state: Option<&'a str>,
+    /// `?view_full_work=true`: render every cached chapter stacked.
+    pub full_work: bool,
 }
 
 pub fn read_page(
@@ -34,13 +36,14 @@ pub fn read_page(
         kudos_sent,
         bookmarked,
         reading_state,
+        full_work,
     } = *ctx;
     let authors = if work.authors.is_empty() {
         "Anonymous".to_string()
     } else {
         work.authors.join(", ")
     };
-    let mut body = String::new();
+    let mut body = String::from("<a id=\"top\"></a>");
     if let Some(notice) = notice {
         body.push_str(&format!("<div class=\"notice\">{}</div>", escape(notice)));
     }
@@ -138,8 +141,22 @@ pub fn read_page(
     toolbar.push_str(&format!(
         "<form class=\"inline\" method=\"get\" action=\"/read/{id}\">\
          <label class=\"meta\">Chapter <select name=\"chapter\">{options}</select></label>\
-         <button type=\"submit\">Go</button></form>\
-         <a href=\"https://archiveofourown.org/works/{id}\" rel=\"noopener noreferrer\">\
+         <button type=\"submit\">Go</button></form>",
+        id = escape(&work.ao3_id)
+    ));
+    if full_work {
+        toolbar.push_str(&format!(
+            "<a href=\"/read/{id}?chapter={current}\">Chapter by Chapter</a>",
+            id = escape(&work.ao3_id)
+        ));
+    } else if !chapters.is_empty() {
+        toolbar.push_str(&format!(
+            "<a href=\"/read/{id}?view_full_work=true\">Entire Work</a>",
+            id = escape(&work.ao3_id)
+        ));
+    }
+    toolbar.push_str(&format!(
+        "<a href=\"https://archiveofourown.org/works/{id}\" rel=\"noopener noreferrer\">\
          open on AO3</a>",
         id = escape(&work.ao3_id)
     ));
@@ -218,25 +235,64 @@ pub fn read_page(
         current
     ));
 
-    match chapter {
-        Some(chapter) => {
+    if full_work && !chapters.is_empty() {
+        for (index, candidate) in chapters.iter().enumerate() {
             body.push_str(&format!(
-                "<iframe class=\"chapter\" sandbox referrerpolicy=\"no-referrer\" \
+                "<div class=\"chapter preface group\"><h3 class=\"title\">Chapter {}: {}</h3></div>\
+                 <iframe class=\"chapter\" sandbox referrerpolicy=\"no-referrer\" \
                  title=\"Chapter {} of {}\" src=\"/read/{}/chapter/{}?v={}\"></iframe>",
-                position + 1,
+                index + 1,
+                escape(candidate.title.as_deref().unwrap_or("")),
+                index + 1,
                 total,
                 escape(&work.ao3_id),
-                chapter.idx,
+                candidate.idx,
                 work.fetched_at
             ));
         }
-        None => body.push_str(
-            "<p class=\"muted\">No chapter content was stored for this work. \
-             Re-open it to refresh (AO3's chapter markup may have changed).</p>",
-        ),
+    } else {
+        match chapter {
+            Some(chapter) => {
+                body.push_str(&format!(
+                    "<iframe class=\"chapter\" sandbox referrerpolicy=\"no-referrer\" \
+                     title=\"Chapter {} of {}\" src=\"/read/{}/chapter/{}?v={}\"></iframe>",
+                    position + 1,
+                    total,
+                    escape(&work.ao3_id),
+                    chapter.idx,
+                    work.fetched_at
+                ));
+            }
+            None => body.push_str(
+                "<p class=\"muted\">No chapter content was stored for this work. \
+                 Re-open it to refresh (AO3's chapter markup may have changed).</p>",
+            ),
+        }
     }
 
-    body.push_str("<div id=\"feedback\">");
+    body.push_str("<div id=\"feedback\"><div class=\"actions\">");
+    body.push_str("<a href=\"#top\">↑ Top</a>");
+    if position > 0 {
+        let previous = chapters[position - 1].idx;
+        body.push_str(&format!(
+            "<a href=\"/read/{}?chapter={previous}\">← previous</a>",
+            escape(&work.ao3_id)
+        ));
+    }
+    if position + 1 < total {
+        let next = chapters[position + 1].idx;
+        body.push_str(&format!(
+            "<a href=\"/read/{}?chapter={next}\">next →</a>",
+            escape(&work.ao3_id)
+        ));
+    }
+    if can_write && !kudos_sent {
+        body.push_str(&format!(
+            "<a href=\"/write/preview?kind=kudos&id={}\">Give kudos</a>",
+            escape(&work.ao3_id)
+        ));
+    }
+    body.push_str("</div>");
     if can_write {
         body.push_str(&format!(
             "<details class=\"comment\"><summary>Comment on this work</summary>\
