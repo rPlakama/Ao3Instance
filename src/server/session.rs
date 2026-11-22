@@ -17,6 +17,7 @@ use crate::ao3::session::{AccountSession, SessionState};
 use crate::crypto::SecretString;
 use crate::error::Result;
 use crate::render;
+use crate::render::NavSection;
 
 #[derive(Deserialize)]
 pub(super) struct SessionQuery {
@@ -28,8 +29,10 @@ pub(super) async fn session_page(
     State(state): State<Arc<AppState>>,
     Query(query): Query<SessionQuery>,
 ) -> Handled<Html<String>> {
+    let page = super::page_context(&state, "Session — AO3Instance", NavSection::Session).await;
     let session = state.session.lock().await;
     Ok(Html(render::session_page(
+        &page,
         session.account(),
         &session.state().to_string(),
         session.jar().is_complete(),

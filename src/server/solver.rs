@@ -22,7 +22,7 @@ use crate::consts;
 use crate::crypto::AAD_SOLVER;
 use crate::diag::{HttpDirection, HttpErrorEvent, Transport};
 use crate::error::Error as CoreError;
-use crate::render::{DiagnosticsView, diagnostics_page};
+use crate::render::{DiagnosticsView, NavSection, diagnostics_page};
 use crate::time::now_secs;
 
 #[derive(Deserialize)]
@@ -216,6 +216,8 @@ pub(super) async fn diagnostics(State(state): State<Arc<AppState>>) -> Handled<H
         .store
         .solves_since(now_secs().saturating_sub(3_600))
         .await?;
+    let page =
+        super::page_context(&state, "Diagnostics — AO3Instance", NavSection::Diagnostics).await;
     let view = DiagnosticsView {
         errors: &errors,
         events: &events,
@@ -226,7 +228,7 @@ pub(super) async fn diagnostics(State(state): State<Arc<AppState>>) -> Handled<H
         clearance_expires_at,
         solves_last_hour,
     };
-    Ok(Html(diagnostics_page(&view)))
+    Ok(Html(diagnostics_page(&page, &view)))
 }
 
 pub(super) async fn probe(State(state): State<Arc<AppState>>) -> Handled<Redirect> {

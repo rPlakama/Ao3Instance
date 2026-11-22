@@ -1,6 +1,6 @@
 //! Diagnostics page: recent HTTP failures and the solver's local state.
 
-use super::chrome::layout;
+use super::chrome::{PageContext, layout};
 use super::escape;
 use crate::config::SolverMode;
 use crate::store::{HttpErrorRow, SolverEventRow};
@@ -18,7 +18,7 @@ pub struct DiagnosticsView<'a> {
     pub solves_last_hour: i64,
 }
 
-pub fn diagnostics_page(view: &DiagnosticsView<'_>) -> String {
+pub fn diagnostics_page(ctx: &PageContext, view: &DiagnosticsView<'_>) -> String {
     let mut body = String::from("<h2>HTTP diagnostics</h2>");
 
     body.push_str("<h3>Local FlareSolverr</h3><p class=\"meta\">");
@@ -121,5 +121,5 @@ pub fn diagnostics_page(view: &DiagnosticsView<'_>) -> String {
         body.push_str("</tbody></table>");
     }
     body.push_str("<p><a href=\"/\">Back to the start</a></p>");
-    layout("Diagnostics — AO3Instance", &body)
+    layout(ctx, &body)
 }

@@ -11,6 +11,9 @@
 
 use std::collections::HashSet;
 
+/// Embedded stylesheet: `nix build` stays a self-contained single binary.
+pub const AO3_CSS: &str = include_str!("assets/ao3.css");
+
 mod audit;
 mod chrome;
 mod diagnostics;
@@ -20,6 +23,7 @@ mod session;
 mod work;
 
 pub use audit::{audit_page, challenge_error_page, confirm_page, error_page};
+pub use chrome::{NavSection, PageContext, SolverSummary};
 pub use diagnostics::{DiagnosticsView, diagnostics_page};
 pub use home::home_page;
 pub use search::search_page;

@@ -1,6 +1,6 @@
 //! Two-step write confirmation, the audit log and the error page.
 
-use super::chrome::layout;
+use super::chrome::{NavSection, PageContext, layout};
 use super::escape;
 use crate::time::format_utc;
 /// Two-step confirmation page for a write action.
@@ -30,12 +30,15 @@ pub fn confirm_page(
         ));
     }
     body.push_str("<button type=\"submit\">Confirm</button></form><p><a href=\"/\">Cancel</a></p>");
-    layout("Confirm — AO3Instance", &body)
+    layout(
+        &PageContext::new("Confirm — AO3Instance", NavSection::Home),
+        &body,
+    )
 }
 
 /// Recent write actions, newest first. No secrets: the ledger stores targets and
 /// outcomes, never credentials or payloads.
-pub fn audit_page(entries: &[crate::store::AuditEntry]) -> String {
+pub fn audit_page(ctx: &PageContext, entries: &[crate::store::AuditEntry]) -> String {
     let mut body = String::from("<h2>Audit log</h2>");
     if entries.is_empty() {
         body.push_str("<p class=\"muted\">No writes recorded yet.</p>");
@@ -56,12 +59,12 @@ pub fn audit_page(entries: &[crate::store::AuditEntry]) -> String {
         body.push_str("</tbody></table>");
     }
     body.push_str("<p><a href=\"/\">Back to the start</a></p>");
-    layout("Audit — AO3Instance", &body)
+    layout(ctx, &body)
 }
 
 pub fn error_page(status: u16, message: &str) -> String {
     layout(
-        "AO3Instance — error",
+        &PageContext::new("AO3Instance — error", NavSection::Home),
         &format!(
             "<h2>Something went wrong</h2><div class=\"error\">HTTP {status}: {}</div>\
              <p><a href=\"/\">Back to the start</a></p>",
@@ -112,5 +115,8 @@ pub fn challenge_error_page(
         "<p><a href=\"/session#cookie-import\">Import fresh session cookies</a> · \
          <a href=\"/diagnostics\">Diagnostics</a> · <a href=\"/\">Back to the start</a></p>",
     );
-    layout("AO3Instance — edge block", &body)
+    layout(
+        &PageContext::new("AO3Instance — edge block", NavSection::Home),
+        &body,
+    )
 }

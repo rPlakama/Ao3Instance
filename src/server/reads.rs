@@ -17,6 +17,7 @@ use crate::ao3::actions;
 use crate::ao3::work::parse_work_page;
 use crate::error::Error;
 use crate::render;
+use crate::render::NavSection;
 use crate::store::sha256_hex;
 
 /// CSP for the chapter iframe: no scripts, no forms, inline styles only, images
@@ -35,7 +36,8 @@ pub(super) async fn home(
 ) -> Handled<Html<String>> {
     let works = state.store.list_works(50).await?;
     let flash = query.notice.as_deref().and_then(notice_text);
-    Ok(Html(render::home_page(&works, flash)))
+    let page = super::page_context(&state, "AO3Instance", NavSection::Home).await;
+    Ok(Html(render::home_page(&page, &works, flash)))
 }
 
 #[derive(Deserialize)]
@@ -148,6 +150,11 @@ pub(super) async fn fetch_work_html(state: &AppState, id: &str) -> Handled<Strin
     }
 }
 
+/// `/works/<id>/chapters/<idx>` → the reader's chapter query form.
+pub(super) async fn chapter_alias(Path((id, idx)): Path<(String, i64)>) -> Redirect {
+    Redirect::to(&format!("/read/{id}?chapter={idx}"))
+}
+
 #[derive(Deserialize)]
 pub(super) struct ReadQuery {
     chapter: Option<i64>,
@@ -196,7 +203,14 @@ pub(super) async fn read_work(
     } else {
         None
     };
+    let page = super::page_context(
+        &state,
+        &format!("{} — AO3Instance", work.title),
+        NavSection::Home,
+    )
+    .await;
     Ok(Html(render::read_page(
+        &page,
         &work,
         &chapters,
         &render::ReadContext {
@@ -250,7 +264,8 @@ pub(super) async fn search(
 ) -> Handled<Html<String>> {
     let raw = query.q.unwrap_or_default();
     let works = state.store.search_works(&raw, 50).await?;
-    Ok(Html(render::search_page(&raw, &works)))
+    let page = super::page_context(&state, "Search — AO3Instance", NavSection::Search).await;
+    Ok(Html(render::search_page(&page, &raw, &works)))
 }
 
 #[derive(Deserialize)]

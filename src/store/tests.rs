@@ -380,3 +380,50 @@ async fn http_errors_are_recorded_filtered_and_pruned() {
 
     drop(std::fs::remove_dir_all(&dir));
 }
+
+#[tokio::test]
+async fn solver_events_and_clearance_round_trip() {
+    let (store, dir) = test_store("solver-events").await;
+
+    store
+        .record_solver_event(
+            "solved",
+            "/works/1?view_full_work=true",
+            Some(200),
+            Some(900),
+            200,
+        )
+        .await
+        .unwrap();
+    store
+        .record_solver_event("captcha", "/works/2?view_full_work=true", None, None, 200)
+        .await
+        .unwrap();
+
+    let events = store.recent_solver_events(10).await.unwrap();
+    assert_eq!(events.len(), 2);
+    assert_eq!(events[0].outcome, "captcha");
+    assert_eq!(events[0].status, None);
+    assert_eq!(events[1].outcome, "solved");
+    assert_eq!(events[1].latency_ms, Some(900));
+
+    assert_eq!(store.solves_since(0).await.unwrap(), 1);
+    assert!(store.last_solved_at().await.unwrap().is_some());
+
+    store
+        .save_solver_clearance("deadbeef", "Mozilla/5.0", 42)
+        .await
+        .unwrap();
+    let clearance = store
+        .load_solver_clearance()
+        .await
+        .unwrap()
+        .expect("clearance row");
+    assert_eq!(clearance.ciphertext, "deadbeef");
+    assert_eq!(clearance.user_agent, "Mozilla/5.0");
+
+    store.clear_solver_clearance().await.unwrap();
+    assert!(store.load_solver_clearance().await.unwrap().is_none());
+
+    drop(std::fs::remove_dir_all(&dir));
+}

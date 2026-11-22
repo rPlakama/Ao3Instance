@@ -93,6 +93,14 @@ impl Store {
         Ok(())
     }
 
+    /// Number of cached works, for the chrome footer.
+    pub async fn count_works(&self) -> Result<i64> {
+        sqlx::query_scalar("SELECT COUNT(*) FROM works")
+            .fetch_one(&self.pool)
+            .await
+            .map_err(|e| Error::Store(format!("count works: {e}")))
+    }
+
     pub async fn get_work(&self, ao3_id: &str) -> Result<Option<StoredWork>> {
         let row = sqlx::query(
             "SELECT ao3_id, title, authors_json, summary, tags_json, rating, language,

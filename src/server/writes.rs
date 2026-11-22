@@ -20,6 +20,7 @@ use crate::ao3::pseuds::Pseud;
 use crate::ao3::session::AccountSession;
 use crate::error::Error;
 use crate::render;
+use crate::render::NavSection;
 
 pub(super) fn notice_text(key: &str) -> Option<&'static str> {
     match key {
@@ -48,7 +49,8 @@ pub(super) fn notice_text(key: &str) -> Option<&'static str> {
 }
 pub(super) async fn audit(State(state): State<Arc<AppState>>) -> Handled<Html<String>> {
     let entries = state.store.recent_audit(100).await?;
-    Ok(Html(render::audit_page(&entries)))
+    let page = super::page_context(&state, "Audit — AO3Instance", NavSection::Audit).await;
+    Ok(Html(render::audit_page(&page, &entries)))
 }
 pub(super) async fn redirect_after_write(
     state: &AppState,

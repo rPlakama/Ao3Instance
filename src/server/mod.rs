@@ -17,7 +17,9 @@ mod writes;
 use std::sync::Arc;
 
 use axum::Router;
+use axum::http::{HeaderValue, header};
 use axum::middleware;
+use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use tokio::sync::Mutex;
 
@@ -32,6 +34,8 @@ use crate::crypto::SecretKey;
 use crate::db;
 use crate::diag::HttpErrorEvent;
 use crate::error::{Error, Result};
+use crate::render;
+use crate::render::{NavSection, PageContext, SolverSummary};
 use crate::store::Store;
 
 pub struct AppState {
@@ -134,6 +138,11 @@ pub async fn router(config: &Config, store: Store) -> Result<Router> {
         .route("/write/comment", post(writes::write_comment))
         .route("/write/bookmark", post(writes::write_bookmark))
         .route("/audit", get(writes::audit))
+        .route("/users/login", get(session::session_page))
+        .route("/works/search", get(reads::search))
+        .route("/works/{id}", get(reads::read_work))
+        .route("/works/{id}/chapters/{idx}", get(reads::chapter_alias))
+        .route("/assets/ao3.css", get(stylesheet))
         .route("/solve", post(solver::solve))
         .route("/diagnostics", get(solver::diagnostics))
         .route("/diagnostics/clear", post(solver::clear_logs))
@@ -171,6 +180,52 @@ async fn shutdown() {
 
 async fn health() -> &'static str {
     "ok"
+}
+
+/// Serves the embedded stylesheet with conservative caching and nosniff.
+async fn stylesheet() -> Response {
+    let mut response = render::AO3_CSS.into_response();
+    let headers = response.headers_mut();
+    headers.insert(
+        header::CONTENT_TYPE,
+        HeaderValue::from_static("text/css; charset=utf-8"),
+    );
+    headers.insert(
+        header::CACHE_CONTROL,
+        HeaderValue::from_static("public, max-age=3600"),
+    );
+    headers.insert(
+        axum::http::HeaderName::from_static("x-content-type-options"),
+        HeaderValue::from_static("nosniff"),
+    );
+    response
+}
+
+/// Chrome data shared by every page: session greeting, cache count and solver
+/// state. Read-only; the per-request skin preference comes later.
+pub(super) async fn page_context(state: &AppState, title: &str, active: NavSection) -> PageContext {
+    let (account, session_state, clearance_active) = {
+        let session = state.session.lock().await;
+        (
+            session.account().to_string(),
+            session.state().to_string(),
+            session.clearance_snapshot().is_some(),
+        )
+    };
+    let cached_count = state.store.count_works().await.unwrap_or(0);
+    let solver = {
+        let status = state.solver_status.read().await;
+        SolverSummary {
+            mode: status.mode.to_string(),
+            reachable: status.reachable,
+            clearance_active,
+        }
+    };
+    PageContext::new(title, active)
+        .with_session(account, session_state)
+        .with_write_enabled(state.write_enabled)
+        .with_cached_count(cached_count)
+        .with_solver(solver)
 }
 
 /// The account and whether its session can act, for read/write handlers.

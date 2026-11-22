@@ -4,14 +4,14 @@
 //! Author HTML only ever reaches a page through [`sanitize`]; the chapter body
 //! gets its own document with `CHAPTER_CSP`, never inline in the app page.
 
-use super::chrome::{checked_label, layout};
+use super::chrome::{PageContext, checked_label, layout};
 use super::{escape, sanitize};
 use crate::store::{StoredChapter, StoredWork};
 fn tag_chips(tags: &[String], class: &str) -> String {
     let mut out = String::new();
     for tag in tags {
         out.push_str(&format!(
-            "<span class=\"tag {class}\">{}</span>",
+            "<li class=\"{class}\"><span class=\"tag\">{}</span></li>",
             escape(tag)
         ));
     }
@@ -30,7 +30,12 @@ pub struct ReadContext<'a> {
     pub reading_state: Option<&'a str>,
 }
 
-pub fn read_page(work: &StoredWork, chapters: &[StoredChapter], ctx: &ReadContext<'_>) -> String {
+pub fn read_page(
+    page: &PageContext,
+    work: &StoredWork,
+    chapters: &[StoredChapter],
+    ctx: &ReadContext<'_>,
+) -> String {
     let ReadContext {
         current,
         progress,
@@ -56,21 +61,24 @@ pub fn read_page(work: &StoredWork, chapters: &[StoredChapter], ctx: &ReadContex
         escape(&authors)
     ));
 
-    let mut facts: Vec<String> = Vec::new();
+    let mut meta_rows = String::new();
     if let Some(rating) = &work.rating {
-        facts.push(escape(rating));
+        meta_rows.push_str(&format!("<dt>Rating:</dt><dd>{}</dd>", escape(rating)));
     }
     if let Some(language) = &work.language {
-        facts.push(escape(language));
+        meta_rows.push_str(&format!("<dt>Language:</dt><dd>{}</dd>", escape(language)));
     }
     if let Some(words) = work.word_count {
-        facts.push(format!("{words} words"));
+        meta_rows.push_str(&format!("<dt>Words:</dt><dd>{words}</dd>"));
     }
     if let Some(kudos) = work.kudos {
-        facts.push(format!("{kudos} kudos"));
+        meta_rows.push_str(&format!("<dt>Kudos:</dt><dd>{kudos}</dd>"));
     }
-    facts.push(checked_label(work.fetched_at));
-    body.push_str(&format!("<div class=\"meta\">{}</div>", facts.join(" · ")));
+    meta_rows.push_str(&format!(
+        "<dt>Checked:</dt><dd>{}</dd>",
+        escape(&checked_label(work.fetched_at))
+    ));
+    body.push_str(&format!("<dl class=\"work meta group\">{meta_rows}</dl>"));
 
     let mut tags = String::new();
     tags.push_str(&tag_chips(&work.tags.warnings, "warning"));
@@ -80,14 +88,15 @@ pub fn read_page(work: &StoredWork, chapters: &[StoredChapter], ctx: &ReadContex
     tags.push_str(&tag_chips(&work.tags.additional, ""));
     tags.push_str(&tag_chips(&work.tags.categories, ""));
     if !tags.is_empty() {
-        body.push_str(&format!("<div class=\"tags\">{tags}</div>"));
+        body.push_str(&format!("<ul class=\"tags commas\">{tags}</ul>"));
     }
 
     if let Some(summary) = &work.summary
         && !summary.trim().is_empty()
     {
         body.push_str(&format!(
-            "<details><summary class=\"muted\">Summary</summary><div>{}</div></details>",
+            "<div class=\"summary module\"><h3 class=\"heading\">Summary:</h3>\
+             <blockquote class=\"userstuff\">{}</blockquote></div>",
             sanitize(summary)
         ));
     }
@@ -109,7 +118,7 @@ pub fn read_page(work: &StoredWork, chapters: &[StoredChapter], ctx: &ReadContex
         ));
     }
 
-    let mut toolbar = String::from("<div class=\"toolbar\">");
+    let mut toolbar = String::from("<div class=\"actions toolbar\">");
     toolbar.push_str(&format!(
         "<span>Chapter {} of {}</span>",
         if chapter.is_some() { position + 1 } else { 0 },
@@ -227,6 +236,7 @@ pub fn read_page(work: &StoredWork, chapters: &[StoredChapter], ctx: &ReadContex
         ),
     }
 
+    body.push_str("<div id=\"feedback\">");
     if can_write {
         body.push_str(&format!(
             "<details class=\"comment\"><summary>Comment on this work</summary>\
@@ -238,8 +248,9 @@ pub fn read_page(work: &StoredWork, chapters: &[StoredChapter], ctx: &ReadContex
             escape(&work.ao3_id)
         ));
     }
+    body.push_str("</div>");
 
-    layout(&format!("{} — AO3Instance", work.title), &body)
+    layout(page, &format!("<div id=\"workskin\">{}</div>", body))
 }
 
 /// Standalone document for the chapter iframe. Served with its own CSP.

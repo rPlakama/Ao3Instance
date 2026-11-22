@@ -1,6 +1,6 @@
 //! AO3 session page: status, cookie import, password login, adult opt-in.
 
-use super::chrome::layout;
+use super::chrome::{PageContext, layout};
 use super::escape;
 
 #[allow(
@@ -8,6 +8,7 @@ use super::escape;
     reason = "server-rendered form with independent state fields"
 )]
 pub fn session_page(
+    ctx: &PageContext,
     account: &str,
     state: &str,
     jar_complete: bool,
@@ -27,7 +28,7 @@ pub fn session_page(
         account = if account.is_empty() {
             String::new()
         } else {
-            format!("· signed in as {}", crate::render::escape(account))
+            format!("· signed in as {}", escape(account))
         },
     ));
     if !account.is_empty() {
@@ -45,23 +46,39 @@ pub fn session_page(
             },
         ));
         body.push_str(
-            "<form class=\"inline\" method=\"post\" action=\"/session/probe\">\
-             <button type=\"submit\">Verify session now</button></form>\
-             <form class=\"inline\" method=\"post\" action=\"/session/adult\">\
-             <button type=\"submit\">Enable adult content</button></form>\
-             <form class=\"inline\" method=\"post\" action=\"/session/logout\">\
-             <button type=\"submit\">Log out of AO3</button></form>",
+            "<ul class=\"actions\">\
+             <li><form class=\"inline\" method=\"post\" action=\"/session/probe\">\
+             <button type=\"submit\">Verify session now</button></form></li>\
+             <li><form class=\"inline\" method=\"post\" action=\"/session/adult\">\
+             <button type=\"submit\">Enable adult content</button></form></li>\
+             <li><form class=\"inline\" method=\"post\" action=\"/session/logout\">\
+             <button type=\"submit\">Log out of AO3</button></form></li></ul>",
         );
     }
     if let Some(notice) = notice {
-        body.push_str(&format!("<div class=\"notice\">{}</div>", escape(notice)));
+        body.push_str(&format!(
+            "<div class=\"flash notice\">{}</div>",
+            escape(notice)
+        ));
     }
     if let Some(error) = error {
-        body.push_str(&format!("<div class=\"error\">{}</div>", escape(error)));
+        body.push_str(&format!(
+            "<div class=\"flash error\">{}</div>",
+            escape(error)
+        ));
+    }
+
+    if state == "blocked" {
+        body.push_str(
+            "<div class=\"flash caution\"><strong>AO3's edge refused the request.</strong> \
+             Check <a href=\"/diagnostics\">Diagnostics</a>, verify the account in your browser, \
+             then re-import fresh cookies below. If the host runs FlareSolverr, a blocked work \
+             page offers a one-click solve.</div>",
+        );
     }
 
     body.push_str(
-        "<h3>Import cookies (recommended: no password custody)</h3>\
+        "<h3 id=\"cookie-import\">Import cookies (recommended: no password custody)</h3>\
          <p class=\"meta\">In your browser, sign in to archiveofourown.org, open DevTools → \
          Application → Cookies, and copy the values of <code>_otwarchive_session</code> and \
          <code>user_credentials</code>. They are stored encrypted (AES-256-GCM) with a key \
@@ -74,7 +91,7 @@ pub fn session_page(
          <button type=\"submit\">Import session</button></form>",
     );
     body.push_str(
-        "<h3>Sign in with a password</h3>\
+        "<h3 id=\"login-form\">Sign in with a password</h3>\
          <p class=\"meta\">Optional. The password is encrypted at rest and used only to \
          renew the AO3 session; import is safer.</p>\
          <form class=\"stack\" method=\"post\" action=\"/session/login\">\
@@ -83,5 +100,5 @@ pub fn session_page(
          <label><input type=\"checkbox\" name=\"adult\" value=\"1\"> This account may read adult content</label>\
          <button type=\"submit\">Sign in</button></form>",
     );
-    layout("Session — AO3Instance", &body)
+    layout(ctx, &body)
 }
