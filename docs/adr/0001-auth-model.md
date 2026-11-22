@@ -1,6 +1,7 @@
 # ADR-0001 — AO3 authentication model
 
-- **Status:** Accepted (2026-11-22)
+- **Status:** Accepted (2026-11-22); password-at-rest superseded by
+  [ADR-0006](0006-no-password-custody.md) (login works, password is not persisted)
 - **Date:** 2026-11-22
 - **Supersedes:** nothing
 - **Related:** ADR-0002, ADR-0005, `docs/security-standards.md` §6

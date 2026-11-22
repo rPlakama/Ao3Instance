@@ -1,0 +1,41 @@
+W6 gate run (bookmarks, operator docs, failure matrix) — 2026-11-22
+toolchain: rustc 1.98.1, cargo 1.98.0 (nix dev shell)
+
+== cargo test (141 total)
+lib                  83 passed
+client_http           7 passed
+failure_matrix        2 passed   (new: offline cache reads, unreachable/403/429/restricted upstream)
+search_and_refresh    3 passed
+server_smoke          2 passed
+session_and_progress  3 passed
+session_flow         25 passed
+work_parse            5 passed
+writes                3 passed
+writes_bookmarks      2 passed   (new)
+writes_comments       4 passed
+writes_kudos_reading  4 passed
+== cargo clippy --all-targets -- -D warnings: clean
+== cargo fmt --check: clean
+
+== what the new tests prove
+1. writes_bookmarks
+   - reader offers Bookmark; /write/preview?kind=bookmark is a confirmation page
+   - POST /write/bookmark sends ONE POST /works/12345/bookmarks with
+     bookmark[pseud_id]=111, bookmark[private]=0 and the CSRF token
+   - 302 to /bookmarks/900 -> "Bookmarked on AO3.", ledger receipt, audit
+     "bookmarked" with the id, reader shows the bookmarked state
+   - a second click is refused by the ledger with zero network
+   - a 200 re-render is a typed failure, audited failed, no receipt
+2. failure_matrix
+   - cached work reads from SQLite with AO3 unreachable (port 1): reader 200,
+     offline search 200, /audit 200; a NEW work is a readable 502, never a hang
+   - 403 -> "refused the request"; restricted 302 -> "redirected this work";
+     429 -> "rate limiting" (all 502 with an explanation page)
+
+== docs delivered
+- docs/operator.md: run/config/first use/data/backups/writes/politeness/
+  troubleshooting/limitations
+- docs/failure-matrix.md: every failure mode -> detection -> user result -> audit -> test
+- docs/adr/0006-no-password-custody.md: password login implemented, password never
+  persisted (supersedes ADR-0001's encrypted password storage)
+- plan W3/W6 leftovers closed or explicitly scoped

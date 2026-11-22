@@ -266,6 +266,63 @@ pub struct CommentOutcome {
 /// AO3's comment limit (`app/models/comment.rb:21-23`, `config/config.yml:105`).
 pub const COMMENT_MAX_CHARS: usize = 10_000;
 
+/// `POST /works/:work_id/bookmarks` (HTML form; success is a redirect to the
+/// new bookmark). The local receipt is the duplicate guard because AO3 allows
+/// several bookmarks of the same work.
+pub async fn bookmark(
+    session: &mut AccountSession,
+    work_id: &str,
+    pseud_id: i64,
+) -> Result<Option<i64>> {
+    let work_id = work_id.trim();
+    if work_id.is_empty() {
+        return Err(Error::Validation("bookmark target is empty".into()));
+    }
+    let path = format!("/works/{work_id}/bookmarks");
+    let pseud = pseud_id.to_string();
+    let response = session
+        .post_write(
+            &path,
+            &[
+                ("bookmark[pseud_id]", pseud.as_str()),
+                ("bookmark[private]", "0"),
+            ],
+        )
+        .await?;
+    match response.status {
+        302 | 303 => {
+            if response.location_contains("/auth_error") {
+                return Err(Error::CsrfExpired);
+            }
+            if response.location_contains("/users/login") {
+                return Err(Error::LoggedOut);
+            }
+            Ok(bookmark_id_from_location(response.location.as_deref()))
+        }
+        200 => {
+            if response.body.contains("can't be blank") || response.body.contains("error") {
+                Err(Error::Validation(
+                    "AO3 rejected the bookmark (validation or duplicate)".into(),
+                ))
+            } else {
+                Err(Error::Validation("AO3 rejected the bookmark".into()))
+            }
+        }
+        _ => Err(classified_error(&response)),
+    }
+}
+
+fn bookmark_id_from_location(location: Option<&str>) -> Option<i64> {
+    let location = location?;
+    let marker = "/bookmarks/";
+    let start = location.find(marker)? + marker.len();
+    let digits: String = location[start..]
+        .chars()
+        .take_while(|ch| ch.is_ascii_digit())
+        .collect();
+    digits.parse::<i64>().ok()
+}
+
 /// `POST /works/:work_id/comments`.
 ///
 /// A 302 whose fragment carries `#comment_<id>` is success; a 200 is a
@@ -368,6 +425,17 @@ fn comment_id_from_location(location: Option<&str>) -> Option<i64> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn bookmark_ids_are_recovered_from_redirects() {
+        assert_eq!(bookmark_id_from_location(Some("/bookmarks/900")), Some(900));
+        assert_eq!(
+            bookmark_id_from_location(Some("/users/x/bookmarks/12")),
+            Some(12)
+        );
+        assert_eq!(bookmark_id_from_location(Some("/works/1")), None);
+        assert_eq!(bookmark_id_from_location(None), None);
+    }
 
     #[test]
     fn comment_ids_are_recovered_from_redirects() {

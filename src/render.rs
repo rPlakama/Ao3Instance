@@ -212,6 +212,7 @@ pub struct ReadContext<'a> {
     pub subscribed: bool,
     pub can_write: bool,
     pub kudos_sent: bool,
+    pub bookmarked: bool,
     pub reading_state: Option<&'a str>,
 }
 
@@ -223,6 +224,7 @@ pub fn read_page(work: &StoredWork, chapters: &[StoredChapter], ctx: &ReadContex
         subscribed,
         can_write,
         kudos_sent,
+        bookmarked,
         reading_state,
     } = *ctx;
     let authors = if work.authors.is_empty() {
@@ -343,6 +345,14 @@ pub fn read_page(work: &StoredWork, chapters: &[StoredChapter], ctx: &ReadContex
         } else {
             toolbar.push_str(&format!(
                 "<a href=\"/write/preview?kind=kudos&id={}\">Give kudos</a>",
+                escape(&work.ao3_id)
+            ));
+        }
+        if bookmarked {
+            toolbar.push_str("<span class=\"state active\">bookmarked</span>");
+        } else {
+            toolbar.push_str(&format!(
+                "<a href=\"/write/preview?kind=bookmark&id={}\">Bookmark</a>",
                 escape(&work.ao3_id)
             ));
         }

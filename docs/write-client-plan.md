@@ -288,9 +288,21 @@ The fault matrix in ADR-0005 is the acceptance test for W6.
 - Tests: 137 total; new `tests/writes_comments.rs` (pseud discovery + preview +
   post + audit, duplicate, spam, 429, overlong/unconfirmed no-network).
   Evidence: `notes/gates/w6.txt`.
+- **Bookmarks**: `POST /works/:id/bookmarks` with the discovered pseud; success is
+  a redirect to `/bookmarks/<id>` (id audited), failures typed; the local `bookmarks`
+  ledger (migration 0007) prevents double-posting. Timeout against an unreachable or
+  edge-blocked upstream is covered by the failure matrix.
+- **Operator docs** ([operator.md](operator.md)) and the **failure matrix**
+  ([failure-matrix.md](failure-matrix.md)) with tests in `tests/failure_matrix.rs`
+  (offline cache reads, unreachable upstream, 403, 429, restricted redirect).
+- Decision closed: [ADR-0006](adr/0006-no-password-custody.md) — password login is
+  supported but the password is never persisted; re-authenticate when AO3 expires
+  the session. This supersedes ADR-0001's encrypted-password storage.
+- Reading position stays chapter-anchored for v0 (I7 refinement needs a JS bridge
+  that would weaken the sandbox; recorded as a future item, not an open task).
 
-**Remaining W6:** bookmarks (`pseud_id` discovery now exists, so this is cheap),
-failure injection/offline matrix, operator docs, sandbox validation.
+**Remaining W6:** sandbox validation against a local otwarchive (operator step; heavy
+Docker stack), then final gates and the release skill.
 
 ### W5 status — partial (2026-11-22): kudos + reading flags
 
@@ -355,9 +367,10 @@ scroll anchor.
   labels copies older than 7 days as stale.
 - Tests: 113 total. Evidence: `notes/gates/w3b.txt`.
 
-**Remaining W3:** password at rest + automatic re-login after expiry (today:
-re-authenticate), scroll/block anchor for I7 (today: chapter anchor), series
-follow/scheduled refresh.
+**Remaining W3:** none blocking — password custody is closed by
+[ADR-0006](adr/0006-no-password-custody.md); scroll/block anchoring is a documented
+I7 refinement (chapter anchor is the v0 contract); series follow/scheduled refresh is
+out of v0 scope (ADR-0003).
 
 ### W2 / M1 status — complete (2026-11-22)
 

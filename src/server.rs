@@ -156,6 +156,7 @@ pub async fn router(config: &Config, store: Store) -> Result<Router> {
         .route("/write/reading", post(write_reading))
         .route("/write/comment/preview", post(write_comment_preview))
         .route("/write/comment", post(write_comment))
+        .route("/write/bookmark", post(write_bookmark))
         .route("/audit", get(audit))
         .route("/health", get(health))
         .with_state(state))
@@ -329,6 +330,7 @@ async fn read_work(
     };
     let can_write = usable && !account.is_empty() && state.write_enabled;
     let kudos_sent = can_write && state.store.has_kudos(&account, &id).await?;
+    let bookmarked = can_write && state.store.has_bookmark(&account, &id).await?;
     let reading_state = if can_write {
         state.store.get_reading_state(&account, &id).await?
     } else {
@@ -344,6 +346,7 @@ async fn read_work(
             subscribed,
             can_write,
             kudos_sent,
+            bookmarked,
             reading_state: reading_state.as_deref(),
         },
     )))
@@ -636,6 +639,9 @@ fn notice_text(key: &str) -> Option<&'static str> {
         "comment_failed" => Some("AO3 rejected the comment; see the audit log."),
         "comment_spam" => Some("AO3's spam filter rejected the comment; reword and try again."),
         "comment_rate_limited" => Some("AO3's comment limit is 3 per 15 minutes; try again later."),
+        "bookmark_saved" => Some("Bookmarked on AO3."),
+        "bookmark_already" => Some("Already bookmarked according to the local ledger."),
+        "bookmark_failed" => Some("AO3 rejected the bookmark; see the audit log."),
         _ => None,
     }
 }
@@ -691,6 +697,19 @@ async fn write_preview(
     let target_id = query.id.unwrap_or_default().trim().to_string();
     if target_id.is_empty() {
         return Err(AppError::BadRequest("missing write target".into()));
+    }
+    if raw_kind.trim().eq_ignore_ascii_case("bookmark") {
+        let description = match state.store.get_work(&target_id).await? {
+            Some(work) => format!("Bookmark “{}” on AO3?", work.title),
+            None => format!("Bookmark work {target_id} on AO3?"),
+        };
+        return Ok(Html(render::confirm_page(
+            "Confirm bookmark",
+            &description,
+            "/write/bookmark",
+            &[("target_id", &target_id), ("confirm", "yes")],
+            None,
+        )));
     }
     if raw_kind.trim().eq_ignore_ascii_case("kudos") {
         let description = match state.store.get_work(&target_id).await? {
@@ -1196,6 +1215,80 @@ async fn write_comment(
                 "comment_failed"
             };
             Ok(redirect_after_write(&state, actions::WORK, &target_id, flag).await)
+        }
+    }
+}
+
+#[derive(Deserialize)]
+struct BookmarkForm {
+    target_id: String,
+    confirm: Option<String>,
+}
+
+async fn write_bookmark(
+    State(state): State<Arc<AppState>>,
+    Form(form): Form<BookmarkForm>,
+) -> Handled<Redirect> {
+    if !state.write_enabled {
+        return Err(AppError::Forbidden(
+            "Writes are disabled (set AO3I_WRITE_ENABLED=true).".into(),
+        ));
+    }
+    if form.confirm.as_deref() != Some("yes") {
+        return Err(AppError::BadRequest(
+            "A deliberate confirmation is required for public actions.".into(),
+        ));
+    }
+    let target_id = form.target_id.trim().to_string();
+    if target_id.is_empty() {
+        return Err(AppError::BadRequest("missing bookmark target".into()));
+    }
+    let (account, usable) = session_identity(&state).await;
+    if !usable || account.is_empty() {
+        return Err(AppError::Forbidden("Sign in to AO3 first.".into()));
+    }
+    if state.store.has_bookmark(&account, &target_id).await? {
+        return Ok(
+            redirect_after_write(&state, actions::WORK, &target_id, "bookmark_already").await,
+        );
+    }
+
+    state
+        .governor
+        .begin("bookmark")
+        .await
+        .map_err(AppError::from)?;
+
+    let (intent, result) = {
+        let mut session = state.session.lock().await;
+        let pseud = ensure_pseud(&state, &mut session, &account).await?;
+        let intent = state
+            .store
+            .record_intent(&account, "bookmark", actions::WORK, &target_id)
+            .await?;
+        let result = actions::bookmark(&mut session, &target_id, pseud.id).await;
+        (intent, result)
+    };
+
+    match result {
+        Ok(bookmark_id) => {
+            state
+                .store
+                .mark_bookmark(&account, &target_id, bookmark_id)
+                .await?;
+            let evidence = bookmark_id.map(|id| format!("bookmark {id}"));
+            state
+                .store
+                .finish_intent(intent, "done", "bookmarked", evidence.as_deref())
+                .await?;
+            Ok(redirect_after_write(&state, actions::WORK, &target_id, "bookmark_saved").await)
+        }
+        Err(error) => {
+            state
+                .store
+                .finish_intent(intent, "failed", "failed", Some(&error.to_string()))
+                .await?;
+            Ok(redirect_after_write(&state, actions::WORK, &target_id, "bookmark_failed").await)
         }
     }
 }

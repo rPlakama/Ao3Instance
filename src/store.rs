@@ -437,6 +437,37 @@ impl Store {
         Ok(())
     }
 
+    pub async fn mark_bookmark(
+        &self,
+        account: &str,
+        work_id: &str,
+        bookmark_id: Option<i64>,
+    ) -> Result<()> {
+        sqlx::query(
+            "INSERT INTO bookmarks (account, work_id, bookmark_id, created_at)
+             VALUES (?1, ?2, ?3, ?4)
+             ON CONFLICT(account, work_id) DO UPDATE SET bookmark_id = excluded.bookmark_id",
+        )
+        .bind(account)
+        .bind(work_id)
+        .bind(bookmark_id)
+        .bind(now_secs())
+        .execute(&self.pool)
+        .await
+        .map_err(|e| Error::Store(format!("mark bookmark: {e}")))?;
+        Ok(())
+    }
+
+    pub async fn has_bookmark(&self, account: &str, work_id: &str) -> Result<bool> {
+        let row = sqlx::query("SELECT 1 FROM bookmarks WHERE account = ?1 AND work_id = ?2")
+            .bind(account)
+            .bind(work_id)
+            .fetch_optional(&self.pool)
+            .await
+            .map_err(|e| Error::Store(format!("has bookmark: {e}")))?;
+        Ok(row.is_some())
+    }
+
     pub async fn has_kudos(&self, account: &str, work_id: &str) -> Result<bool> {
         let row = sqlx::query("SELECT 1 FROM kudos_sent WHERE account = ?1 AND work_id = ?2")
             .bind(account)
@@ -916,6 +947,24 @@ mod tests {
             .expect("ledger row");
         assert_eq!(row.state, "removed");
 
+        store.pool().close().await;
+        drop(std::fs::remove_dir_all(dir));
+    }
+
+    #[tokio::test]
+    async fn bookmark_receipts_are_idempotent_and_per_account() {
+        let (store, dir) = test_store("bookmarks").await;
+        assert!(!store.has_bookmark("someone", "123").await.unwrap());
+        store
+            .mark_bookmark("someone", "123", Some(900))
+            .await
+            .unwrap();
+        store
+            .mark_bookmark("someone", "123", Some(900))
+            .await
+            .unwrap();
+        assert!(store.has_bookmark("someone", "123").await.unwrap());
+        assert!(!store.has_bookmark("other", "123").await.unwrap());
         store.pool().close().await;
         drop(std::fs::remove_dir_all(dir));
     }
