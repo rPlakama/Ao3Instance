@@ -56,9 +56,12 @@ with totals, the home Continue Reading strip, the two-step
 browse, diagnostics, Reversi) that caught and fixed three visual bugs: plain
 home cards now use the shared blurb, Reversi blurb titles are readable, the
 reader no longer repeats the chapter title, and `/favicon.ico` no longer fills
-the diagnostics table. Remaining before the plan's final gate: an optional pass
-on required-tag SVG artwork, a checkbox sweep of the phase lists, and the next
-version bump.
+the diagnostics table. Round 4 fixed the last visual bug found by the walkthrough: the chapter
+iframe is a separate document, so Reversi readers kept dark text; iframe URLs
+now carry `&skin=...` and the chapter document themes text, links, notes and
+blockquotes accordingly (verified by a Reversi-reader screenshot). Remaining
+before the plan's final gate: an optional pass on required-tag SVG artwork, a
+checkbox sweep of the phase lists, and the next version bump.
 
 ---
 
