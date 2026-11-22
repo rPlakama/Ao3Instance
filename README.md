@@ -23,8 +23,13 @@ Features:
 ## What you get
 
 - A local cache that keeps reads working when AO3 is down.
+- AO3-shaped start page: Find your favorites, News from the cache, Continue
+  Reading, and the personal shortcuts row.
 - AO3-style pages: header/nav/footer, work blurbs, required-tag badges,
   browse filters, fandoms, dashboard, subscriptions, bookmarks, reading history.
+- Work Search modelled on AO3's form: any-field/title/creator/rating/warning/
+  category/fandom/characters/relationships/tags/language/word-count/single
+  chapter/kudos/comments plus sort and direction.
 - A reader with chapter jump and an **Entire Work** mode, plus classic and
   Reversi display skins (`POST /skin`).
 - Structured HTTP diagnostics at `/diagnostics` (All / Upstream / Inbound).

@@ -79,11 +79,13 @@ Limits and behaviour:
 
 ## Pages
 
-`/` home and open-work box · `/works` cached library with filters ·
+`/` AO3-shaped home (favorites, cached news, continue reading, open-work box) ·
+`/works` cached library with filters ·
 `/fandoms` A–Z directory · `/dashboard` statistics and shortcuts ·
 `/subscriptions`, `/bookmarks`, `/reading` local ledgers ·
 `/read/<id>` reader (chapter jump, Entire Work) · `/session` AO3 login/import ·
-`/audit` write ledger · `/diagnostics` HTTP failures, solver state and clear.
+`/search` AO3-shaped Work Search form · `/audit` write ledger ·
+`/diagnostics` HTTP failures, solver state and clear · `/about` instance notes.
 `/users/login`, `/works/search` and `/works/{id}` mirror AO3 URLs; uncached
 works show an offline miss card instead of fetching on a `GET`.
 

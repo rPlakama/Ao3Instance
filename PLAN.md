@@ -78,6 +78,17 @@ stay text. The `WorkFilter` gained an `author` facet. Diagnostics now also link 
 the reader, leaving uncached paths as text. With the crawl test in place, every
 rendered local entry is wired and guarded against regression.
 
+**1:1 start and search pass (2026-11-22):** the AO3 home and `/works/search`
+pages were captured live in Helium as references. The local start page is now a
+two-column AO3 layout (Find your favorites, News from the cache, Continue
+Reading, Open a work, personal shortcuts) with the AO3 four-item navigation and
+a new `/about`. Work Search was rebuilt as AO3's fieldset form with wired
+Any Field / Title / Creator / Rating / Warning / Category / Fandom / Characters
+/ Relationships / Additional Tags / Language / Word Count / Single Chapter /
+Kudos / Comments fields, sort direction and pagination, backed by an expanded
+`SearchFilter` over ranked FTS candidates. Desktop, mobile and Reversi renders
+were checked headlessly against the references.
+
 **Known deviations (documented, not blockers):** required-tag marks are
 styled text badges rather than SVG artwork; the skin is a single-operator
 global preference rather than a per-browser cookie; a release/version bump is
