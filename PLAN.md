@@ -47,11 +47,12 @@ the embedded 16 KB `ao3.css`, and `POST /skin` switching `data-skin` to
 is absent from the build closure.
 
 Round 2 closed the reader and search gaps: AO3-ordered work metadata, chapter
-jump, `?view_full_work=true` with a Chapter-by-Chapter toggle, bottom feedback
-actions, blurb-based search results, and the signed-out login dropdown.
-Remaining before the plan's final gate: comment-box polish (`Comment as
-<pseud>`), search result paging, a manual browser walkthrough in both skins,
-and the next version bump.
+preface heading and jump select, `?view_full_work=true` with a Chapter-by-Chapter
+toggle, bottom feedback actions, `Comment as <pseud>`, blurb-based search
+results, the signed-out login dropdown, an A–Z fandoms directory and the
+signed-in dashboard sidebar on every page. Remaining before the plan's final
+gate: search result paging, an optional final pass on the required-tag artwork,
+a manual browser walkthrough in both skins, and the next version bump.
 
 ---
 

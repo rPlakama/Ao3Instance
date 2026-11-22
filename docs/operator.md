@@ -77,6 +77,20 @@ Limits and behaviour:
 - Set `AO3I_FLARESOLVERR=off` to disable the whole path; `auto` stays quiet when
   the service is absent, `on` also warns about it in `/diagnostics`.
 
+## Pages
+
+`/` home and open-work box · `/works` cached library with filters ·
+`/fandoms` A–Z directory · `/dashboard` statistics and shortcuts ·
+`/subscriptions`, `/bookmarks`, `/reading` local ledgers ·
+`/read/<id>` reader (chapter jump, Entire Work) · `/session` AO3 login/import ·
+`/audit` write ledger · `/diagnostics` HTTP failures, solver state and clear.
+`/users/login`, `/works/search` and `/works/{id}` mirror AO3 URLs; uncached
+works show an offline miss card instead of fetching on a `GET`.
+
+Display skins: the footer switches Classic / Reversi with `POST /skin` (a
+single-operator global preference); with no explicit choice, Reversi follows the
+OS `prefers-color-scheme`.
+
 ## First use
 
 1. Open `http://127.0.0.1:8099/`.
