@@ -100,13 +100,48 @@ pub struct WorkSummary {
     /// Chapter to resume at, when a reading position is stored.
     pub progress_chapter: Option<i64>,
 }
-/// Optional filters for offline search; `sort = None` keeps FTS rank order.
+/// The AO3-style work search fields the local cache can actually answer.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct SearchFilter {
-    pub rating: Option<String>,
+    pub title: Option<String>,
+    pub creator: Option<String>,
     pub fandom: Option<String>,
+    pub characters: Option<String>,
+    pub relationships: Option<String>,
+    pub additional_tags: Option<String>,
+    pub rating: Option<String>,
+    pub warning: Option<String>,
+    pub category: Option<String>,
     pub language: Option<String>,
+    pub words_min: Option<u64>,
+    pub words_max: Option<u64>,
+    pub kudos_min: Option<u64>,
+    pub comments_min: Option<u64>,
+    pub single_chapter: bool,
+    /// `best_match` (default), `words`, `kudos`, `title`, `date`.
     pub sort: Option<String>,
+    /// `desc` (default) or `asc`.
+    pub direction: Option<String>,
+}
+
+impl SearchFilter {
+    pub fn has_filters(&self) -> bool {
+        self.title.is_some()
+            || self.creator.is_some()
+            || self.fandom.is_some()
+            || self.characters.is_some()
+            || self.relationships.is_some()
+            || self.additional_tags.is_some()
+            || self.rating.is_some()
+            || self.warning.is_some()
+            || self.category.is_some()
+            || self.language.is_some()
+            || self.words_min.is_some()
+            || self.words_max.is_some()
+            || self.kudos_min.is_some()
+            || self.comments_min.is_some()
+            || self.single_chapter
+    }
 }
 
 /// One page of offline search hits plus the total match count.

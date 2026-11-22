@@ -16,6 +16,7 @@ use crate::ao3::parse::{SpaceMode, percent_encode};
 /// Embedded stylesheet: `nix build` stays a self-contained single binary.
 pub const AO3_CSS: &str = include_str!("assets/ao3.css");
 
+mod about;
 mod audit;
 mod blurb;
 mod browse;
@@ -31,6 +32,7 @@ mod search;
 mod session;
 mod work;
 
+pub use about::about_page;
 pub use audit::{audit_page, challenge_error_page, confirm_page, error_page};
 pub use browse::{browse_page, filter_from};
 pub use chrome::{NavSection, PageContext, SolverSummary};

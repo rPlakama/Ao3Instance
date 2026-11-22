@@ -305,10 +305,23 @@ pub(super) async fn read_chapter(
 pub(super) struct SearchQuery {
     q: Option<String>,
     page: Option<i64>,
-    rating: Option<String>,
+    title: Option<String>,
+    creator: Option<String>,
     fandom: Option<String>,
+    characters: Option<String>,
+    relationships: Option<String>,
+    additional_tags: Option<String>,
+    rating: Option<String>,
+    warning: Option<String>,
+    category: Option<String>,
     language: Option<String>,
+    words_min: Option<String>,
+    words_max: Option<String>,
+    kudos_min: Option<String>,
+    comments_min: Option<String>,
+    single_chapter: Option<String>,
     sort: Option<String>,
+    direction: Option<String>,
 }
 
 pub(super) async fn search(
@@ -316,7 +329,25 @@ pub(super) async fn search(
     Query(query): Query<SearchQuery>,
 ) -> Handled<Html<String>> {
     let raw = query.q.unwrap_or_default();
-    let filter = render::search_filter_from(query.rating, query.fandom, query.language, query.sort);
+    let filter = render::search_filter_from(
+        query.title,
+        query.creator,
+        query.fandom,
+        query.characters,
+        query.relationships,
+        query.additional_tags,
+        query.rating,
+        query.warning,
+        query.category,
+        query.language,
+        query.words_min,
+        query.words_max,
+        query.kudos_min,
+        query.comments_min,
+        query.single_chapter,
+        query.sort,
+        query.direction,
+    );
     let result = state
         .store
         .search_works_filtered(&raw, &filter, query.page.unwrap_or(1), 20)

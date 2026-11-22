@@ -148,6 +148,7 @@ pub async fn router(config: &Config, store: Store) -> Result<Router> {
         .route("/works/search", get(reads::search))
         .route("/tags/{tag}/works", get(lists::tag_browse))
         .route("/fandoms", get(lists::fandoms))
+        .route("/about", get(lists::about))
         .route("/dashboard", get(lists::dashboard))
         .route("/subscriptions", get(lists::subscriptions))
         .route("/bookmarks", get(lists::bookmarks))

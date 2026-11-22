@@ -52,6 +52,7 @@ async fn every_offline_segment_renders_the_shared_chrome() {
         "/bookmarks",
         "/reading",
         "/tags/Test/works",
+        "/about",
     ] {
         let response = client
             .get(format!("{root}{path}"))

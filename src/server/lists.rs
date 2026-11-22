@@ -117,3 +117,8 @@ pub(super) async fn reading(State(state): State<Arc<AppState>>) -> Handled<Html<
     let page = super::page_context(&state, "Reading — AO3Instance", NavSection::Dashboard).await;
     Ok(Html(render::reading_page(&page, &entries)))
 }
+
+pub(super) async fn about(State(state): State<Arc<AppState>>) -> Handled<Html<String>> {
+    let page = super::page_context(&state, "About — AO3Instance", NavSection::About).await;
+    Ok(Html(render::about_page(&page)))
+}

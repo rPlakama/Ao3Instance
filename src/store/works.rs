@@ -223,10 +223,35 @@ impl Store {
         Ok(works)
     }
 
-    /// Ranked FTS hits narrowed by rating/fandom/language, then paged.
+    /// The recent works list with full rows, for the shared blurb card.
+    pub async fn list_works_detailed(&self, limit: i64) -> Result<Vec<StoredWork>> {
+        let mut works = Vec::new();
+        for summary in self.list_works(limit).await? {
+            if let Some(work) = self.get_work(&summary.ao3_id).await? {
+                works.push(work);
+            }
+        }
+        Ok(works)
+    }
+
+    /// One page of plain FTS hits (no extra filters), kept for callers that only
+    /// need ranked results.
+    pub async fn search_works_page(
+        &self,
+        query: &str,
+        page: i64,
+        per_page: i64,
+    ) -> Result<SearchPage> {
+        self.search_works_filtered(query, &SearchFilter::default(), page, per_page)
+            .await
+    }
+
+    /// AO3-style work search over the cache.
     ///
-    /// FTS ranking is preserved unless the user explicitly chooses another
-    /// order; the filter runs over the ranked candidates (capped at 1000).
+    /// A non-blank query starts from ranked FTS candidates; a blank query with
+    /// at least one filter starts from every cached work. Filters that the cache
+    /// does not model (hits/bookmarks/completion) are absent from
+    /// [`SearchFilter`] rather than accepted and ignored.
     pub async fn search_works_filtered(
         &self,
         query: &str,
@@ -236,69 +261,65 @@ impl Store {
     ) -> Result<SearchPage> {
         let per_page = per_page.clamp(1, 100);
         let page = page.max(1);
-        let Some(fts) = fts_query(query) else {
+        let query = query.trim();
+        let fts = fts_query(query);
+        let has_query = fts.is_some();
+        if !has_query && !filter.has_filters() {
             return Ok(SearchPage {
                 works: Vec::new(),
                 total: 0,
                 page,
                 per_page,
             });
+        }
+
+        let mut candidates: Vec<StoredWork> = if let Some(fts) = fts {
+            let ids: Vec<String> = sqlx::query_scalar(
+                "SELECT work_id FROM work_search WHERE work_search MATCH ?1
+                 ORDER BY rank LIMIT 1000",
+            )
+            .bind(&fts)
+            .fetch_all(&self.pool)
+            .await
+            .map_err(|e| Error::Store(format!("search candidates: {e}")))?;
+            let mut works = Vec::new();
+            for id in ids {
+                if let Some(work) = self.get_work(&id).await? {
+                    works.push(work);
+                }
+            }
+            works
+        } else {
+            self.all_works().await?
         };
-        let ids: Vec<String> = sqlx::query_scalar(
-            "SELECT work_id FROM work_search WHERE work_search MATCH ?1
-             ORDER BY rank LIMIT 1000",
-        )
-        .bind(&fts)
-        .fetch_all(&self.pool)
-        .await
-        .map_err(|e| Error::Store(format!("search candidates: {e}")))?;
 
-        let mut works = Vec::new();
-        for id in ids {
-            let Some(work) = self.get_work(&id).await? else {
-                continue;
-            };
-            if filter.rating.as_ref().is_some_and(|rating| {
-                !work
-                    .rating
-                    .as_deref()
-                    .is_some_and(|value| value.eq_ignore_ascii_case(rating))
-            }) || filter.language.as_ref().is_some_and(|language| {
-                !work
-                    .language
-                    .as_deref()
-                    .is_some_and(|value| value.eq_ignore_ascii_case(language))
-            }) || filter.fandom.as_ref().is_some_and(|fandom| {
-                !work
-                    .tags
-                    .fandoms
-                    .iter()
-                    .any(|value| value.eq_ignore_ascii_case(fandom))
-            }) {
-                continue;
+        candidates.retain(|work| search_matches(work, filter));
+
+        let ascending = filter.direction.as_deref() == Some("asc");
+        match filter.sort.as_deref().unwrap_or("best_match") {
+            "words" => candidates.sort_by_key(|work| work.word_count.unwrap_or(0)),
+            "kudos" => candidates.sort_by_key(|work| work.kudos.unwrap_or(0)),
+            "title" => candidates.sort_by_cached_key(|work| work.title.to_ascii_lowercase()),
+            "date" => candidates.sort_by_key(|work| work.fetched_at),
+            // Best match keeps the FTS rank order; a filter-only search is
+            // recent-first, which is the useful default for a local cache.
+            _ => {
+                if !has_query {
+                    candidates.sort_by_key(|work| std::cmp::Reverse(work.fetched_at));
+                }
             }
-            works.push(work);
+        }
+        let explicit_sort = filter
+            .sort
+            .as_deref()
+            .is_some_and(|sort| sort != "best_match");
+        if explicit_sort && !ascending {
+            candidates.reverse();
         }
 
-        match filter.sort.as_deref() {
-            Some("words_desc") => {
-                works.sort_by_key(|work| std::cmp::Reverse(work.word_count.unwrap_or(0)))
-            }
-            Some("kudos_desc") => {
-                works.sort_by_key(|work| std::cmp::Reverse(work.kudos.unwrap_or(0)));
-            }
-            Some("title_asc") => works.sort_by(|a, b| {
-                a.title
-                    .to_ascii_lowercase()
-                    .cmp(&b.title.to_ascii_lowercase())
-            }),
-            // Default: keep FTS rank order.
-            _ => {}
-        }
-
-        let total = works.len() as i64;
+        let total = candidates.len() as i64;
         let skip = usize::try_from((page - 1).saturating_mul(per_page)).unwrap_or(usize::MAX);
-        let works = works
+        let works = candidates
             .into_iter()
             .skip(skip)
             .take(per_page as usize)
@@ -309,67 +330,6 @@ impl Store {
             page,
             per_page,
         })
-    }
-
-    /// One page of FTS hits with the total, for the search UI.
-    pub async fn search_works_page(
-        &self,
-        query: &str,
-        page: i64,
-        per_page: i64,
-    ) -> Result<SearchPage> {
-        let per_page = per_page.clamp(1, 100);
-        let page = page.max(1);
-        let Some(fts) = fts_query(query) else {
-            return Ok(SearchPage {
-                works: Vec::new(),
-                total: 0,
-                page,
-                per_page,
-            });
-        };
-        let total: i64 =
-            sqlx::query_scalar("SELECT COUNT(*) FROM work_search WHERE work_search MATCH ?1")
-                .bind(&fts)
-                .fetch_one(&self.pool)
-                .await
-                .map_err(|e| Error::Store(format!("count search hits: {e}")))?;
-
-        let rows = sqlx::query(
-            "SELECT work_id FROM work_search WHERE work_search MATCH ?1
-             ORDER BY rank LIMIT ?2 OFFSET ?3",
-        )
-        .bind(&fts)
-        .bind(per_page)
-        .bind((page - 1).saturating_mul(per_page))
-        .fetch_all(&self.pool)
-        .await
-        .map_err(|e| Error::Store(format!("search page: {e}")))?;
-
-        let mut works = Vec::with_capacity(rows.len());
-        for row in rows {
-            let work_id: String = row.get("work_id");
-            if let Some(work) = self.get_work(&work_id).await? {
-                works.push(work);
-            }
-        }
-        Ok(SearchPage {
-            works,
-            total,
-            page,
-            per_page,
-        })
-    }
-
-    /// The recent works list with full rows, for the shared blurb card.
-    pub async fn list_works_detailed(&self, limit: i64) -> Result<Vec<StoredWork>> {
-        let mut works = Vec::new();
-        for summary in self.list_works(limit).await? {
-            if let Some(work) = self.get_work(&summary.ao3_id).await? {
-                works.push(work);
-            }
-        }
-        Ok(works)
     }
 
     /// Search hits with the full cached row, so the renderer can use the same
@@ -450,6 +410,62 @@ pub fn sha256_hex(bytes: &[u8]) -> String {
         out.push_str(&format!("{byte:02x}"));
     }
     out
+}
+
+/// One work against the search filters (case-insensitive substring matching,
+/// which is how AO3 treats free-text tag/creator fields in practice).
+fn search_matches(work: &StoredWork, filter: &SearchFilter) -> bool {
+    let contains = |value: &str, needle: &Option<String>| {
+        needle.as_deref().is_none_or(|needle| {
+            value
+                .to_ascii_lowercase()
+                .contains(&needle.to_ascii_lowercase())
+        })
+    };
+    let any_tag = |tags: &[String], needle: &Option<String>| {
+        needle.as_deref().is_none_or(|needle| {
+            tags.iter().any(|tag| {
+                tag.to_ascii_lowercase()
+                    .contains(&needle.to_ascii_lowercase())
+            })
+        })
+    };
+    let exact = |value: Option<&str>, needle: &Option<String>| {
+        needle
+            .as_deref()
+            .is_none_or(|needle| value.is_some_and(|value| value.eq_ignore_ascii_case(needle)))
+    };
+
+    contains(&work.title, &filter.title)
+        && (filter.creator.is_none()
+            || work.authors.iter().any(|author| {
+                filter.creator.as_deref().is_some_and(|needle| {
+                    author
+                        .to_ascii_lowercase()
+                        .contains(&needle.to_ascii_lowercase())
+                })
+            }))
+        && any_tag(&work.tags.fandoms, &filter.fandom)
+        && any_tag(&work.tags.characters, &filter.characters)
+        && any_tag(&work.tags.relationships, &filter.relationships)
+        && any_tag(&work.tags.additional, &filter.additional_tags)
+        && any_tag(&work.tags.warnings, &filter.warning)
+        && any_tag(&work.tags.categories, &filter.category)
+        && exact(work.rating.as_deref(), &filter.rating)
+        && exact(work.language.as_deref(), &filter.language)
+        && filter
+            .words_min
+            .is_none_or(|min| work.word_count.unwrap_or(0) >= min)
+        && filter
+            .words_max
+            .is_none_or(|max| work.word_count.unwrap_or(0) <= max)
+        && filter
+            .kudos_min
+            .is_none_or(|min| work.kudos.unwrap_or(0) >= min)
+        && filter
+            .comments_min
+            .is_none_or(|min| work.comment_count.unwrap_or(0) >= min)
+        && (!filter.single_chapter || work.chapter_count == 1)
 }
 
 /// One `works` row (the column list is repeated by `get_work`/`all_works`).

@@ -625,3 +625,152 @@ form.filters select {
     border: 1px solid var(--ao3-border-strong);
     border-radius: 0.25rem;
 }
+
+/* ---------- AO3-shaped start page ---------- */
+
+.home-grid {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    gap: 2.2rem;
+    margin-top: 1rem;
+}
+.home-grid h2 {
+    font-size: 1.45rem;
+    border-bottom: 1px solid var(--ao3-border);
+    padding-bottom: 0.35rem;
+    margin-bottom: 0.8rem;
+}
+.home-favorites, .home-news { min-width: 0; }
+ul.favorites {
+    list-style: none;
+    margin: 0 0 1rem;
+    padding: 0;
+}
+ul.favorites li {
+    padding: 0.5rem 0.7rem;
+    border-radius: 0.15rem;
+    line-height: 1.35;
+}
+ul.favorites li:nth-child(odd) {
+    background: var(--ao3-surface);
+}
+ul.favorites a { text-decoration: none; }
+ul.favorites a:hover { text-decoration: underline; }
+.home-subheading { margin: 1.2rem 0 0.4rem; font-size: 1rem; }
+.open-work.module {
+    margin-top: 1.4rem;
+    padding: 0.8rem;
+    border: 1px solid var(--ao3-border);
+    border-radius: 0.25rem;
+    background: var(--ao3-surface-soft);
+}
+.open-work h3 { margin: 0 0 0.5rem; font-size: 1rem; }
+.news-entry {
+    padding: 0 0 0.9rem;
+    margin-bottom: 0.9rem;
+    border-bottom: 1px solid var(--ao3-border);
+}
+.news-entry h3 { margin: 0 0 0.25rem; font-size: 1.05rem; }
+.news-entry h3 a { text-decoration: none; }
+.news-entry h3 a:hover { text-decoration: underline; }
+.news-entry p { margin: 0.4rem 0; }
+.read-more { text-align: right; margin-top: 0.2rem; }
+.heading-link {
+    float: right;
+    font-family: "Lucida Grande", Verdana, sans-serif;
+    font-size: 0.8rem;
+    font-weight: 400;
+}
+.home-bottom {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 2.2rem;
+    margin-top: 1.6rem;
+}
+.home-module {
+    border-top: 1px solid var(--ao3-border);
+    padding-top: 0.7rem;
+}
+.home-module h3 { margin: 0 0 0.3rem; font-size: 1.2rem; }
+
+/* ---------- AO3-shaped work search ---------- */
+
+ul.search-tabs {
+    list-style: none;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.3rem;
+    margin: 0 0 1rem;
+    padding: 0;
+}
+ul.search-tabs li a, ul.search-tabs li.active a {
+    display: inline-block;
+    padding: 0.3rem 0.7rem;
+    border: 1px solid var(--ao3-border-strong);
+    border-radius: 0.2rem;
+    text-decoration: none;
+    background: var(--ao3-surface-soft);
+}
+ul.search-tabs li.active a {
+    background: var(--ao3-surface);
+    border-color: var(--ao3-red);
+    font-weight: 700;
+}
+form.work-search { display: block; margin: 0 0 1rem; }
+form.work-search fieldset {
+    border: 1px solid var(--ao3-border-strong);
+    border-radius: 0.15rem;
+    margin: 0 0 1.2rem;
+    padding: 0.9rem 1rem 1.2rem;
+}
+form.work-search legend {
+    padding: 0.2rem 0.5rem;
+    border: 1px solid var(--ao3-border-strong);
+    border-radius: 0.15rem;
+    background: var(--ao3-surface);
+    font-family: Georgia, serif;
+    font-size: 0.95rem;
+}
+form.work-search .row {
+    display: grid;
+    grid-template-columns: 14rem minmax(0, 1fr);
+    gap: 1rem;
+    align-items: center;
+    padding: 0.35rem 0;
+    border-bottom: 1px solid var(--ao3-border);
+}
+form.work-search .row > label { color: var(--ao3-text); font-size: 0.85rem; }
+form.work-search .row input[type="text"],
+form.work-search .row input[type="search"],
+form.work-search .row input[type="number"],
+form.work-search .row select {
+    width: 100%;
+    max-width: 46rem;
+    padding: 0.35rem 0.5rem;
+    font: inherit;
+    color: var(--ao3-text);
+    background: var(--ao3-bg);
+    border: 1px solid var(--ao3-border-strong);
+    border-radius: 0.3rem;
+}
+form.work-search .row input.number { max-width: 7rem; }
+form.work-search .range { margin-right: 0.4rem; font-size: 0.85rem; }
+form.work-search .check { font-size: 0.85rem; }
+form.work-search .search-actions {
+    display: flex;
+    justify-content: flex-end;
+    margin: 0.2rem 0 0.6rem;
+}
+form.work-search fieldset > .search-actions:last-child { margin: 0.8rem 0 0; }
+
+@media (max-width: 62em) {
+    .home-grid, .home-bottom { grid-template-columns: 1fr; gap: 1.2rem; }
+    form.work-search .row { grid-template-columns: 1fr; gap: 0.2rem; }
+}
+
+
+form.work-search .check {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.45rem;
+}

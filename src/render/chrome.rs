@@ -17,6 +17,7 @@ pub enum NavSection {
     Fandoms,
     Browse,
     Search,
+    About,
     Dashboard,
     Session,
     Audit,
@@ -30,6 +31,7 @@ impl NavSection {
             Self::Fandoms => "Fandoms",
             Self::Browse => "Browse",
             Self::Search => "Search",
+            Self::About => "About",
             Self::Dashboard => "Dashboard",
             Self::Session => "Session",
             Self::Audit => "Audit",
@@ -43,6 +45,7 @@ impl NavSection {
             Self::Fandoms => "/fandoms",
             Self::Browse => "/works",
             Self::Search => "/search",
+            Self::About => "/about",
             Self::Dashboard => "/dashboard",
             Self::Session => "/session",
             Self::Audit => "/audit",
@@ -155,14 +158,10 @@ fn greeting(ctx: &PageContext) -> String {
 fn navigation(ctx: &PageContext) -> String {
     let mut items = String::new();
     for section in [
-        NavSection::Home,
         NavSection::Fandoms,
         NavSection::Browse,
         NavSection::Search,
-        NavSection::Dashboard,
-        NavSection::Session,
-        NavSection::Audit,
-        NavSection::Diagnostics,
+        NavSection::About,
     ] {
         let class = if section == ctx.active {
             " class=\"active\""
@@ -177,7 +176,6 @@ fn navigation(ctx: &PageContext) -> String {
     }
     format!(
         "<ul class=\"primary navigation\">{items}\
-         <li><a href=\"/#open-work\">Open Work</a></li>\
          <li id=\"search\"><form method=\"get\" action=\"/search\">\
          <input type=\"search\" name=\"q\" placeholder=\"Search cached works\" aria-label=\"Search cached works\">\
          <button type=\"submit\">Search</button></form></li></ul>"
@@ -303,11 +301,11 @@ mod tests {
 
     #[test]
     fn layout_renders_nav_active_state_and_escapes_the_title() {
-        let mut ctx = PageContext::new("A <title>", NavSection::Audit);
+        let mut ctx = PageContext::new("A <title>", NavSection::About);
         ctx.account = "reader<b>".into();
         let html = layout(&ctx, "<p>body</p>");
         assert!(html.contains("<title>A &lt;title&gt;</title>"), "{html}");
-        assert!(html.contains("li class=\"active\"><a href=\"/audit\">Audit"));
+        assert!(html.contains("li class=\"active\"><a href=\"/about\">About"));
         assert!(html.contains("Hi, reader&lt;b&gt;!"), "{html}");
         assert!(html.contains("/assets/ao3.css"), "{html}");
         assert!(html.contains("<p>body</p>"), "{html}");

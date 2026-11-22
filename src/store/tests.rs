@@ -624,7 +624,8 @@ async fn filtered_search_narrows_and_can_reorder() {
     assert_eq!(narrowed.works[0].ao3_id, "3");
 
     let by_words = SearchFilter {
-        sort: Some("words_desc".into()),
+        sort: Some("words".into()),
+        direction: Some("desc".into()),
         ..SearchFilter::default()
     };
     let sorted = store
@@ -637,6 +638,52 @@ async fn filtered_search_narrows_and_can_reorder() {
         .map(|work| work.ao3_id.as_str())
         .collect();
     assert_eq!(ids, vec!["2", "3", "1"]);
+
+    let by_title = SearchFilter {
+        title: Some("title 2".into()),
+        ..SearchFilter::default()
+    };
+    let titled = store
+        .search_works_filtered("Filtered", &by_title, 1, 20)
+        .await
+        .unwrap();
+    assert_eq!(titled.total, 1);
+    assert_eq!(titled.works[0].ao3_id, "2");
+
+    let words_range = SearchFilter {
+        words_min: Some(250),
+        words_max: Some(350),
+        ..SearchFilter::default()
+    };
+    let ranged = store
+        .search_works_filtered("Filtered", &words_range, 1, 20)
+        .await
+        .unwrap();
+    assert_eq!(ranged.total, 1);
+    assert_eq!(ranged.works[0].ao3_id, "2");
+
+    let single = SearchFilter {
+        single_chapter: true,
+        ..SearchFilter::default()
+    };
+    let singles = store
+        .search_works_filtered("Filtered", &single, 1, 20)
+        .await
+        .unwrap();
+    assert_eq!(singles.total, 0, "fixture works have two chapters");
+
+    let filter_only = SearchFilter {
+        fandom: Some("Other".into()),
+        ..SearchFilter::default()
+    };
+    let filtered_only = store
+        .search_works_filtered("", &filter_only, 1, 20)
+        .await
+        .unwrap();
+    assert_eq!(
+        filtered_only.total, 2,
+        "blank query + filter searches the cache"
+    );
 
     let blank = store
         .search_works_filtered("   ", &SearchFilter::default(), 1, 20)
