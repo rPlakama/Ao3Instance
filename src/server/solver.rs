@@ -215,6 +215,7 @@ pub(super) async fn diagnostics(
     };
     let errors = state.store.recent_http_errors(100, direction).await?;
     let events = state.store.recent_solver_events(20).await?;
+    let cached_works = state.store.cached_work_ids().await?;
     let status = state.solver_status.read().await.clone();
     let (send_cookies_allowed, clearance_expires_at) = {
         let session = state.session.lock().await;
@@ -241,6 +242,7 @@ pub(super) async fn diagnostics(
         clearance_expires_at,
         solves_last_hour,
         direction,
+        cached_works: &cached_works,
     };
     Ok(Html(diagnostics_page(&page, &view)))
 }

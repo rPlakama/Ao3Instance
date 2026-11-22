@@ -1,5 +1,7 @@
 //! Diagnostics page: recent HTTP failures and the solver's local state.
 
+use std::collections::HashSet;
+
 use super::chrome::{PageContext, layout};
 use super::escape;
 use crate::config::SolverMode;
@@ -18,6 +20,8 @@ pub struct DiagnosticsView<'a> {
     pub solves_last_hour: i64,
     /// `None` = all, otherwise `upstream` or `inbound`.
     pub direction: Option<&'a str>,
+    /// Cached works, so a logged `/works/<id>` path can link to the reader.
+    pub cached_works: &'a HashSet<String>,
 }
 
 pub fn diagnostics_page(ctx: &PageContext, view: &DiagnosticsView<'_>) -> String {
@@ -100,7 +104,7 @@ pub fn diagnostics_page(ctx: &PageContext, view: &DiagnosticsView<'_>) -> String
                 escape(&row.direction),
                 escape(&row.transport),
                 escape(&row.method),
-                escape(&row.path),
+                target_cell(&row.path, view.cached_works),
                 row.status
                     .map_or_else(|| "-".to_string(), |status| status.to_string()),
                 escape(&row.error_kind),
@@ -130,7 +134,7 @@ pub fn diagnostics_page(ctx: &PageContext, view: &DiagnosticsView<'_>) -> String
                 "<tr><td>{}</td><td>{}</td><td>{}</td><td>{}</td><td>{}</td></tr>",
                 escape(&format_utc(event.created_at)),
                 escape(&event.outcome),
-                escape(&event.target_path),
+                target_cell(&event.target_path, view.cached_works),
                 event
                     .status
                     .map_or_else(|| "-".to_string(), |status| status.to_string()),
@@ -143,4 +147,16 @@ pub fn diagnostics_page(ctx: &PageContext, view: &DiagnosticsView<'_>) -> String
     }
     body.push_str("<p><a href=\"/\">Back to the start</a></p>");
     layout(ctx, &body)
+}
+
+/// A logged path is an entry: link cached work paths to the local reader and
+/// leave everything else as text.
+fn target_cell(path: &str, cached_works: &HashSet<String>) -> String {
+    if let Some(rest) = path.strip_prefix("/works/") {
+        let id: String = rest.chars().take_while(char::is_ascii_digit).collect();
+        if !id.is_empty() && cached_works.contains(&id) {
+            return format!("<a href=\"/read/{id}\">{}</a>", escape(path));
+        }
+    }
+    escape(path)
 }

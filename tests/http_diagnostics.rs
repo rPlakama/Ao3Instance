@@ -12,7 +12,7 @@ mod support;
 use std::time::{Duration, Instant};
 
 use ao3instance::config::Config;
-use ao3instance::diag::format_line;
+use ao3instance::diag::{HttpDirection, HttpErrorEvent, Transport, format_line};
 use ao3instance::store::{HttpErrorRow, Store};
 use ao3instance::{db, server};
 use support::{Response, Server, harness::http};
@@ -259,6 +259,29 @@ async fn diagnostics_page_filters_directions_and_clears() {
     wait_for(&store, "upstream", 1).await;
     wait_for(&store, "inbound", 1).await;
 
+    // A cached work path and a cached solver target must become reader links.
+    support::harness::seed_work(&store).await;
+    let cached = HttpErrorEvent::new(
+        HttpDirection::Upstream,
+        Transport::Direct,
+        "GET",
+        "/works/12345?view_full_work=true",
+        "blocked_by_edge",
+        "refused",
+    )
+    .with_status(403);
+    store.record_http_error(&cached, 500).await.expect("row");
+    store
+        .record_solver_event(
+            "solved",
+            "/works/12345?view_full_work=true",
+            Some(200),
+            Some(10),
+            200,
+        )
+        .await
+        .expect("solver row");
+
     let client = http();
     let all = client
         .get(format!("{root}/diagnostics"))
@@ -267,6 +290,14 @@ async fn diagnostics_page_filters_directions_and_clears() {
         .expect("diagnostics");
     let all = all.text().await.expect("body");
     assert!(all.contains("/works/444?view_full_work=true"), "{all}");
+    assert!(
+        !all.contains("href=\"/read/444\""),
+        "uncached paths stay text: {all}"
+    );
+    assert!(
+        all.matches("href=\"/read/12345\"").count() >= 2,
+        "both the error row and the solver row link to the cached reader: {all}"
+    );
     assert!(all.contains("Recent solver outcomes"), "{all}");
 
     let inbound = client

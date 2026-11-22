@@ -12,6 +12,7 @@ mod support;
 use std::collections::BTreeSet;
 
 use ao3instance::config::Config;
+use ao3instance::diag::{HttpDirection, HttpErrorEvent, Transport};
 use ao3instance::store::Store;
 use ao3instance::{db, server};
 use scraper::{Html, Selector};
@@ -92,6 +93,43 @@ async fn every_rendered_local_link_resolves() {
     assert!(
         !audit.contains("href=\"/read/999999\""),
         "uncached audit targets stay text"
+    );
+
+    let diagnostics_event = HttpErrorEvent::new(
+        HttpDirection::Upstream,
+        Transport::Direct,
+        "GET",
+        "/works/12345?view_full_work=true",
+        "blocked_by_edge",
+        "refused",
+    )
+    .with_status(403);
+    store
+        .record_http_error(&diagnostics_event, 500)
+        .await
+        .expect("diagnostic row");
+    store
+        .record_solver_event(
+            "solved",
+            "/works/12345?view_full_work=true",
+            Some(200),
+            Some(10),
+            200,
+        )
+        .await
+        .expect("solver row");
+
+    let diagnostics = client
+        .get(format!("{root}/diagnostics"))
+        .send()
+        .await
+        .expect("diagnostics")
+        .text()
+        .await
+        .expect("body");
+    assert!(
+        diagnostics.contains("href=\"/read/12345\""),
+        "cached diagnostic targets link"
     );
 
     let anchor = Selector::parse("a[href]").expect("anchor selector");
