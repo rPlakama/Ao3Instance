@@ -7,4 +7,5 @@ pub mod jar;
 pub mod parse;
 pub mod pseuds;
 pub mod session;
+pub mod solver;
 pub mod work;

@@ -69,3 +69,48 @@ pub fn error_page(status: u16, message: &str) -> String {
         ),
     )
 }
+
+/// Error page for an edge block, with the explicit solve affordance when a
+/// host-provided solver is reachable. Still a 502: nothing is retried on its own.
+pub fn challenge_error_page(
+    status: u16,
+    work_id: &str,
+    solver_reachable: bool,
+    send_cookies_allowed: bool,
+) -> String {
+    let mut body = format!(
+        "<h2>Something went wrong</h2><div class=\"error\">HTTP {status}: AO3 refused the \
+         request (HTTP {status}); it may be a bot challenge.</div>"
+    );
+    if solver_reachable && !work_id.is_empty() {
+        body.push_str(
+            "<div class=\"continue\"><strong>A local FlareSolverr is available.</strong> \
+             It solves one page at a time in a real browser; this request is sent only when \
+             you press the button.</div>",
+        );
+        body.push_str(&format!(
+            "<form class=\"stack\" method=\"post\" action=\"/solve\">\
+             <input type=\"hidden\" name=\"target\" value=\"{id}\">\
+             <input type=\"hidden\" name=\"next\" value=\"/read/{id}\">",
+            id = escape(work_id)
+        ));
+        if send_cookies_allowed {
+            body.push_str(
+                "<label><input type=\"checkbox\" name=\"send_cookies\" value=\"1\"> \
+                 Send my AO3 session cookies to the local solver (needed for restricted or \
+                 adult works)</label>",
+            );
+        }
+        body.push_str("<button type=\"submit\">Solve &amp; cache this page</button></form>");
+    } else {
+        body.push_str(
+            "<p class=\"meta\">A host-provided FlareSolverr can help when it is reachable; \
+             check <a href=\"/diagnostics\">Diagnostics</a>.</p>",
+        );
+    }
+    body.push_str(
+        "<p><a href=\"/session#cookie-import\">Import fresh session cookies</a> · \
+         <a href=\"/diagnostics\">Diagnostics</a> · <a href=\"/\">Back to the start</a></p>",
+    );
+    layout("AO3Instance — edge block", &body)
+}

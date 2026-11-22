@@ -35,6 +35,7 @@ const LOAD_RETRY_DELAY: Duration = Duration::from_millis(25);
 /// Purpose strings. Every encryption names its use; decryption must name the same.
 pub const AAD_JAR: &[u8] = b"ao3/jar";
 pub const AAD_PASSWORD: &[u8] = b"ao3/password";
+pub const AAD_SOLVER: &[u8] = b"ao3/solver";
 
 /// A 256-bit key for encrypting secrets before they are written to disk.
 ///

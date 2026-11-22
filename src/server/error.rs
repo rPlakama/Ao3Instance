@@ -17,23 +17,56 @@ pub(super) enum AppError {
     Forbidden(String),
     NotFound,
     Upstream(String),
+    Unavailable(String),
+    /// Another solve is already running.
+    Conflict(String),
+    /// Local budget/cooldown, not an upstream limit.
+    TooManyRequests(String),
+    /// AO3's edge refused a work; the page renders the explicit solve card.
+    Blocked {
+        status: u16,
+        work_id: String,
+        solver_reachable: bool,
+        send_cookies_allowed: bool,
+    },
     Internal(String),
 }
 
 impl IntoResponse for AppError {
     fn into_response(self) -> Response {
-        let (status, message) = match self {
-            Self::BadRequest(message) => (StatusCode::BAD_REQUEST, message),
-            Self::Forbidden(message) => (StatusCode::FORBIDDEN, message),
-            Self::NotFound => (
+        match self {
+            Self::Blocked {
+                status,
+                work_id,
+                solver_reachable,
+                send_cookies_allowed,
+            } => (
+                StatusCode::BAD_GATEWAY,
+                Html(render::challenge_error_page(
+                    status,
+                    &work_id,
+                    solver_reachable,
+                    send_cookies_allowed,
+                )),
+            )
+                .into_response(),
+            Self::BadRequest(message) => html_error(StatusCode::BAD_REQUEST, &message),
+            Self::Forbidden(message) => html_error(StatusCode::FORBIDDEN, &message),
+            Self::NotFound => html_error(
                 StatusCode::NOT_FOUND,
-                "Not cached. Open the work from the start page first.".to_string(),
+                "Not cached. Open the work from the start page first.",
             ),
-            Self::Upstream(message) => (StatusCode::BAD_GATEWAY, message),
-            Self::Internal(message) => (StatusCode::INTERNAL_SERVER_ERROR, message),
-        };
-        (status, Html(render::error_page(status.as_u16(), &message))).into_response()
+            Self::Upstream(message) => html_error(StatusCode::BAD_GATEWAY, &message),
+            Self::Unavailable(message) => html_error(StatusCode::SERVICE_UNAVAILABLE, &message),
+            Self::Conflict(message) => html_error(StatusCode::CONFLICT, &message),
+            Self::TooManyRequests(message) => html_error(StatusCode::TOO_MANY_REQUESTS, &message),
+            Self::Internal(message) => html_error(StatusCode::INTERNAL_SERVER_ERROR, &message),
+        }
     }
+}
+
+fn html_error(status: StatusCode, message: &str) -> Response {
+    (status, Html(render::error_page(status.as_u16(), message))).into_response()
 }
 
 impl From<Error> for AppError {
@@ -71,6 +104,23 @@ impl From<Error> for AppError {
                 Self::Upstream(format!("Logout did not complete upstream: {message}"))
             }
             Error::Killed => Self::Internal("Upstream traffic is disabled by the operator".into()),
+            Error::SolverDisabled => Self::Unavailable(
+                "The local FlareSolverr fallback is disabled (AO3I_FLARESOLVERR=off).".into(),
+            ),
+            Error::SolverUnavailable(message) => Self::Unavailable(format!(
+                "The local FlareSolverr is unavailable: {message}. Is the host service running?"
+            )),
+            Error::SolverCaptcha => Self::Upstream(
+                "The local FlareSolverr hit a captcha it cannot solve; open the page in your \
+                 browser instead."
+                    .into(),
+            ),
+            Error::SolverFailed(message) => {
+                Self::Upstream(format!("The local FlareSolverr failed: {message}"))
+            }
+            Error::SolverBodyCap => Self::Upstream(
+                "The local FlareSolverr returned an oversized response; it was discarded.".into(),
+            ),
         }
     }
 }

@@ -17,6 +17,7 @@ use reqwest::{Method, RequestBuilder};
 use crate::ao3::jar::Jar;
 use crate::ao3::parse::{SpaceMode, percent_encode};
 use crate::consts;
+use crate::crypto::SecretString;
 use crate::diag::{HttpDirection, HttpErrorEvent, Transport, sanitize_path};
 use crate::error::{Error, Result};
 
@@ -83,6 +84,17 @@ impl fmt::Debug for Response {
     }
 }
 
+/// A Cloudflare clearance captured by a successful solver solve.
+///
+/// Cloudflare binds the clearance cookie to the browser's User-Agent, so the
+/// override and the cookie travel together and expire together. Only a scoped
+/// window uses them; the honest UA is restored the moment the window closes.
+pub struct Clearance {
+    pub user_agent: String,
+    pub cookie_header: SecretString,
+    pub expires_at: i64,
+}
+
 /// Receives every upstream HTTP failure. The server drains these into SQLite
 /// and stderr; `ao3::client` stays decoupled from `Store`.
 pub type ErrorSink = Arc<dyn Fn(&HttpErrorEvent) + Send + Sync>;
@@ -94,6 +106,9 @@ pub struct Client {
     spacing: Duration,
     last_request: Option<Instant>,
     sink: Option<ErrorSink>,
+    /// Honest identity for direct traffic (ADR-0002 §5).
+    user_agent: String,
+    clearance: Option<Clearance>,
 }
 
 impl Client {
@@ -105,7 +120,6 @@ impl Client {
             // Redirects are data: a 302 to /users/login means "logged out", and
             // following it silently would hide that.
             .redirect(reqwest::redirect::Policy::none())
-            .user_agent(user_agent)
             .build()
             .map_err(|e| Error::Network(format!("build http client: {e}")))?;
         Ok(Self {
@@ -115,6 +129,8 @@ impl Client {
             spacing,
             last_request: None,
             sink: None,
+            user_agent: user_agent.to_string(),
+            clearance: None,
         })
     }
 
@@ -138,6 +154,42 @@ impl Client {
     /// assert exactly which events a request produced.
     pub fn set_error_sink(&mut self, sink: ErrorSink) {
         self.sink = Some(sink);
+    }
+
+    /// The identity sent upstream: the honest UA, unless a fresh clearance
+    /// window is active (then the browser UA the cookie is bound to).
+    fn effective_user_agent(&self) -> &str {
+        match &self.clearance {
+            Some(clearance) => &clearance.user_agent,
+            None => &self.user_agent,
+        }
+    }
+
+    pub fn clearance(&self) -> Option<&Clearance> {
+        self.clearance.as_ref()
+    }
+
+    pub fn set_clearance(&mut self, user_agent: &str, cookie_header: &str, expires_at: i64) {
+        self.clearance = Some(Clearance {
+            user_agent: user_agent.to_string(),
+            cookie_header: SecretString::new(cookie_header),
+            expires_at,
+        });
+    }
+
+    pub fn clear_clearance(&mut self) {
+        self.clearance = None;
+    }
+
+    /// Drops the override once its window closed; called before every request.
+    fn prune_expired_clearance(&mut self, now: i64) {
+        if self
+            .clearance
+            .as_ref()
+            .is_some_and(|clearance| clearance.expires_at <= now)
+        {
+            self.clearance = None;
+        }
     }
 
     fn report(&self, event: HttpErrorEvent) {
@@ -193,10 +245,22 @@ impl Client {
         self.send(request, Method::DELETE, path).await
     }
 
-    fn request(&self, method: Method, path: &str) -> RequestBuilder {
+    fn request(&mut self, method: Method, path: &str) -> RequestBuilder {
+        self.prune_expired_clearance(crate::time::now_secs());
         let url = format!("{}{}", self.base_url, path);
-        let mut request = self.http.request(method, url).header(ACCEPT, ACCEPT_VALUE);
-        if let Some(cookie) = self.jar.cookie_header() {
+        let mut request = self
+            .http
+            .request(method, url)
+            .header(ACCEPT, ACCEPT_VALUE)
+            .header(reqwest::header::USER_AGENT, self.effective_user_agent());
+        let cookie = match (&self.clearance, self.jar.cookie_header()) {
+            (Some(clearance), Some(jar)) => {
+                Some(format!("{jar}; {}", clearance.cookie_header.expose()))
+            }
+            (Some(clearance), None) => Some(clearance.cookie_header.expose().to_string()),
+            (None, jar) => jar,
+        };
+        if let Some(cookie) = cookie {
             request = request.header(COOKIE, cookie);
         }
         request
@@ -335,6 +399,13 @@ impl Client {
         }
         let body = String::from_utf8_lossy(&bytes).into_owned();
         let latency_ms = elapsed_ms(started);
+
+        // A block while using a clearance means Cloudflare no longer trusts it;
+        // fall back to the honest identity rather than retrying with a stale
+        // browser UA on every later request.
+        if status == 403 {
+            self.clear_clearance();
+        }
 
         if status >= 400 {
             let mut event = HttpErrorEvent::new(

@@ -11,6 +11,7 @@ mod diag;
 mod error;
 mod reads;
 mod session;
+mod solver;
 mod writes;
 
 use std::sync::Arc;
@@ -24,7 +25,9 @@ use crate::ao3::governor::WriteGovernor;
 use crate::ao3::jar::Jar;
 use crate::ao3::pseuds::Pseud;
 use crate::ao3::session::AccountSession;
+use crate::ao3::solver::SolverStatus;
 use crate::config::Config;
+use crate::crypto::AAD_SOLVER;
 use crate::crypto::SecretKey;
 use crate::db;
 use crate::diag::HttpErrorEvent;
@@ -39,6 +42,10 @@ pub struct AppState {
     pub write_enabled: bool,
     /// Inbound 4xx/5xx events join the same queue as upstream client failures.
     pub diag_tx: tokio::sync::mpsc::Sender<HttpErrorEvent>,
+    /// Last solver probe result, refreshed by `/diagnostics/solver/probe`.
+    pub solver_status: tokio::sync::RwLock<SolverStatus>,
+    /// Single-flight guard: one solve (and one Chromium) at a time.
+    pub solver_lock: tokio::sync::Mutex<()>,
 }
 
 /// Builds the router. Split from [`run`] so tests can serve it on an ephemeral
@@ -58,6 +65,24 @@ pub async fn router(config: &Config, store: Store) -> Result<Router> {
     session
         .client_mut()
         .set_error_sink(diag::sink(diag_tx.clone()));
+
+    // Restore a still-valid Cloudflare clearance, if one was persisted.
+    if let Ok(Some(saved)) = store.load_solver_clearance().await
+        && saved.expires_at > crate::time::now_secs()
+    {
+        match key.decrypt(AAD_SOLVER, &saved.ciphertext) {
+            Ok(cookie_header) => {
+                session.restore_clearance(&saved.user_agent, &cookie_header, saved.expires_at);
+            }
+            Err(error) => {
+                eprintln!("stored solver clearance could not be decrypted: {error}");
+                if let Err(error) = store.clear_solver_clearance().await {
+                    eprintln!("could not clear solver clearance: {error}");
+                }
+            }
+        }
+    }
+    let solver_status = session.probe_solver().await;
 
     if let Some(saved) = store.load_session().await? {
         match Jar::decrypt(&key, &saved.jar_enc) {
@@ -81,6 +106,8 @@ pub async fn router(config: &Config, store: Store) -> Result<Router> {
         governor: WriteGovernor::new(config.min_request_spacing),
         write_enabled: config.write_enabled,
         diag_tx,
+        solver_status: tokio::sync::RwLock::new(solver_status),
+        solver_lock: tokio::sync::Mutex::new(()),
     });
     let app = Router::new()
         .route("/", get(reads::home))
@@ -107,6 +134,14 @@ pub async fn router(config: &Config, store: Store) -> Result<Router> {
         .route("/write/comment", post(writes::write_comment))
         .route("/write/bookmark", post(writes::write_bookmark))
         .route("/audit", get(writes::audit))
+        .route("/solve", post(solver::solve))
+        .route("/diagnostics", get(solver::diagnostics))
+        .route("/diagnostics/clear", post(solver::clear_logs))
+        .route("/diagnostics/solver/probe", post(solver::probe))
+        .route(
+            "/diagnostics/solver/clearance",
+            post(solver::clear_clearance),
+        )
         .route("/health", get(health))
         .with_state(state.clone())
         .layer(middleware::from_fn_with_state(state, diag::inbound));

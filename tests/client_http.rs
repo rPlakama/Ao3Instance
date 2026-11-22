@@ -280,3 +280,48 @@ async fn transport_failure_emits_network_event_without_status() {
         events[0].message
     );
 }
+
+#[tokio::test]
+async fn clearance_window_changes_ua_and_cookie_and_drops_on_403() {
+    let server = Server::start(vec![
+        ("GET /clearance", Response::ok("ok")),
+        ("GET /blocked", Response::new(403)),
+    ]);
+    let mut client = client(&server);
+    let now = ao3instance::time::now_secs();
+    client.set_clearance("Mozilla/5.0 solver", "cf_clearance=token", now + 60);
+
+    let response = client.get("/clearance").await.expect("get");
+    assert_eq!(response.status, 200);
+    let request = &server.requests()[0];
+    assert_eq!(request.header("user-agent"), Some("Mozilla/5.0 solver"));
+    assert_eq!(request.header("cookie"), Some("cf_clearance=token"));
+
+    // Cloudflare refused the claimed clearance: the window is over.
+    let blocked = client.get("/blocked").await.expect("403 is data");
+    assert_eq!(blocked.status, 403);
+    assert!(client.clearance().is_none());
+
+    // The next request is honest again and carries no clearance cookie.
+    let _ = client.get("/clearance").await.expect("get");
+    let requests = server.requests();
+    let request = requests.last().expect("request");
+    assert_eq!(request.header("user-agent"), Some("AO3Instance/test"));
+    assert_eq!(request.header("cookie"), None);
+}
+
+#[tokio::test]
+async fn expired_clearance_is_ignored_before_the_request() {
+    let server = Server::start(vec![("GET /clearance", Response::ok("ok"))]);
+    let mut client = client(&server);
+    client.set_clearance(
+        "Mozilla/5.0 solver",
+        "cf_clearance=stale",
+        ao3instance::time::now_secs() - 1,
+    );
+
+    let _ = client.get("/clearance").await.expect("get");
+    let request = &server.requests()[0];
+    assert_eq!(request.header("user-agent"), Some("AO3Instance/test"));
+    assert_eq!(request.header("cookie"), None);
+}

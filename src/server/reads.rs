@@ -60,6 +60,18 @@ pub(super) async fn open_work(
         return Ok(Redirect::to(&format!("/read/{id}")));
     }
     let html = fetch_work_html(&state, &id).await?;
+    cache_work_html(&state, &id, html, existing).await
+}
+
+/// Parses and stores one freshly fetched page, then redirects to the reader.
+/// Shared by the direct `/open` path and the solver fallback so both cache the
+/// same way.
+pub(super) async fn cache_work_html(
+    state: &AppState,
+    id: &str,
+    html: String,
+    existing: Option<crate::store::StoredWork>,
+) -> Handled<Redirect> {
     let mut page = match parse_work_page(&html) {
         Ok(page) => page,
         Err(Error::UpstreamChanged(_)) if looks_like_adult_gate(&html) => {
@@ -80,12 +92,12 @@ pub(super) async fn open_work(
     };
     // The id in our URL is authoritative: the page's links may be relative or
     // (for synthetic fixtures) point elsewhere.
-    page.ao3_id = id.clone();
+    page.ao3_id = id.to_string();
     let content_hash = sha256_hex(html.as_bytes());
     match existing {
         Some(work) if work.content_hash == content_hash => {
             // Same bytes upstream: record the check, do not rewrite the cache.
-            state.store.touch_checked(&id).await?;
+            state.store.touch_checked(id).await?;
             Ok(Redirect::to(&format!("/read/{id}?checked=1")))
         }
         Some(_) => {
@@ -103,6 +115,11 @@ pub(super) async fn fetch_work_html(state: &AppState, id: &str) -> Handled<Strin
     // One request, user-initiated; `view_full_work` asks AO3 for all chapters in
     // a single page (ADR-0002: no crawling, no paging picks).
     let path = format!("/works/{id}?view_full_work=true");
+    let (solver_reachable, send_cookies_allowed) = {
+        let reachable = state.solver_status.read().await.reachable;
+        let session = state.session.lock().await;
+        (reachable, session.solver_may_receive_cookies())
+    };
     let mut session = state.session.lock().await;
     let response = session
         .client_mut()
@@ -115,10 +132,12 @@ pub(super) async fn fetch_work_html(state: &AppState, id: &str) -> Handled<Strin
         429 => Err(AppError::Upstream(
             "AO3 is rate limiting this instance; wait a minute and retry.".into(),
         )),
-        403 | 503 => Err(AppError::Upstream(format!(
-            "AO3 refused the request (HTTP {}); it may be a bot challenge.",
-            response.status
-        ))),
+        403 | 503 => Err(AppError::Blocked {
+            status: response.status,
+            work_id: id.to_string(),
+            solver_reachable,
+            send_cookies_allowed,
+        }),
         302 | 303 => Err(AppError::Upstream(
             "AO3 redirected this work (restricted or login-gated). Sign in on the Session page."
                 .into(),
@@ -273,7 +292,7 @@ fn looks_like_login_gate(html: &str) -> bool {
 }
 
 /// Accepts a bare id or any URL containing `/works/<id>`.
-fn normalize_work_id(input: &str) -> Option<String> {
+pub(super) fn normalize_work_id(input: &str) -> Option<String> {
     let trimmed = input.trim();
     if trimmed.is_empty() {
         return None;

@@ -46,6 +46,16 @@ pub enum Error {
     BlockedByEdge { status: u16 },
     /// A page did not have the shape the parser expects.
     UpstreamChanged(String),
+    /// The host-provided FlareSolverr fallback is disabled by configuration.
+    SolverDisabled,
+    /// The local solver service is unreachable or did not answer.
+    SolverUnavailable(String),
+    /// The solver reported a captcha it cannot solve automatically.
+    SolverCaptcha,
+    /// The solver answered with an error or an unusable solution.
+    SolverFailed(String),
+    /// The solver's HTML exceeded the same body cap as direct responses.
+    SolverBodyCap,
 }
 
 impl fmt::Display for Error {
@@ -84,6 +94,18 @@ impl fmt::Display for Error {
                 write!(f, "upstream blocked the request (HTTP {status})")
             }
             Self::UpstreamChanged(msg) => write!(f, "upstream page changed: {msg}"),
+            Self::SolverDisabled => write!(f, "the local FlareSolverr fallback is disabled"),
+            Self::SolverUnavailable(msg) => {
+                write!(f, "local FlareSolverr unavailable: {msg}")
+            }
+            Self::SolverCaptcha => {
+                write!(
+                    f,
+                    "local FlareSolverr hit a captcha it cannot solve automatically"
+                )
+            }
+            Self::SolverFailed(msg) => write!(f, "local FlareSolverr failed: {msg}"),
+            Self::SolverBodyCap => write!(f, "local FlareSolverr returned an oversized response"),
         }
     }
 }

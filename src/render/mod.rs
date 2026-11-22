@@ -13,12 +13,14 @@ use std::collections::HashSet;
 
 mod audit;
 mod chrome;
+mod diagnostics;
 mod home;
 mod search;
 mod session;
 mod work;
 
-pub use audit::{audit_page, confirm_page, error_page};
+pub use audit::{audit_page, challenge_error_page, confirm_page, error_page};
+pub use diagnostics::{DiagnosticsView, diagnostics_page};
 pub use home::home_page;
 pub use search::search_page;
 pub use session::session_page;

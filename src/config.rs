@@ -37,6 +37,52 @@ pub struct Config {
     pub log_http_errors: bool,
     /// Maximum rows retained in `http_error_log`.
     pub http_log_retention: i64,
+    /// Optional host-provided FlareSolverr fallback (Phase 2.5).
+    pub solver: SolverConfig,
+}
+
+/// When the host-provided solver may be used.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SolverMode {
+    /// Probe and offer the fallback when reachable; silent when absent.
+    Auto,
+    /// Same as `Auto`, but surface "configured but unreachable" in the UI.
+    On,
+    /// Never probe, never contact.
+    Off,
+}
+
+impl std::fmt::Display for SolverMode {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            Self::Auto => "auto",
+            Self::On => "on",
+            Self::Off => "off",
+        })
+    }
+}
+
+/// Solver endpoint settings, validated at startup.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SolverConfig {
+    pub mode: SolverMode,
+    /// Origin only, e.g. `http://127.0.0.1:8191`.
+    pub origin: String,
+    pub allow_remote: bool,
+    pub send_cookies: bool,
+    pub max_timeout_ms: u64,
+}
+
+impl Default for SolverConfig {
+    fn default() -> Self {
+        Self {
+            mode: SolverMode::Auto,
+            origin: consts::FLARESOLVERR_DEFAULT_URL.to_string(),
+            allow_remote: false,
+            send_cookies: false,
+            max_timeout_ms: consts::FLARESOLVERR_MAX_TIMEOUT_MS,
+        }
+    }
 }
 
 impl Config {
@@ -64,6 +110,11 @@ impl Config {
         let mut db_file: Option<PathBuf> = None;
         let mut log_http_errors = true;
         let mut http_log_retention = consts::HTTP_ERROR_LOG_RETENTION;
+        let mut solver_mode = SolverMode::Auto;
+        let mut solver_url = consts::FLARESOLVERR_DEFAULT_URL.to_string();
+        let mut solver_allow_remote = false;
+        let mut solver_send_cookies = false;
+        let mut solver_max_timeout = consts::FLARESOLVERR_MAX_TIMEOUT_MS;
         let mut xdg_config_home: Option<PathBuf> = None;
         let mut home: Option<PathBuf> = None;
 
@@ -114,6 +165,38 @@ impl Config {
                 "LOG_HTTP_ERRORS" => {
                     log_http_errors = parse_bool("AO3I_LOG_HTTP_ERRORS", &value)?;
                 }
+                "FLARESOLVERR" => {
+                    solver_mode = match value.trim().to_ascii_lowercase().as_str() {
+                        "auto" | "" => SolverMode::Auto,
+                        "on" => SolverMode::On,
+                        "off" => SolverMode::Off,
+                        other => {
+                            return Err(Error::Config(format!(
+                                "AO3I_FLARESOLVERR expects auto, on or off, got {other:?}"
+                            )));
+                        }
+                    };
+                }
+                "FLARESOLVERR_URL" => solver_url = value,
+                "FLARESOLVERR_ALLOW_REMOTE" => {
+                    solver_allow_remote = parse_bool("AO3I_FLARESOLVERR_ALLOW_REMOTE", &value)?;
+                }
+                "FLARESOLVERR_SEND_COOKIES" => {
+                    solver_send_cookies = parse_bool("AO3I_FLARESOLVERR_SEND_COOKIES", &value)?;
+                }
+                "FLARESOLVERR_MAX_TIMEOUT_MS" => {
+                    let timeout: u64 = value.trim().parse().map_err(|_| {
+                        Error::Config(format!(
+                            "AO3I_FLARESOLVERR_MAX_TIMEOUT_MS expects milliseconds, got {value:?}"
+                        ))
+                    })?;
+                    if !(5_000..=180_000).contains(&timeout) {
+                        return Err(Error::Config(format!(
+                            "AO3I_FLARESOLVERR_MAX_TIMEOUT_MS must be 5000..=180000, got {timeout}"
+                        )));
+                    }
+                    solver_max_timeout = timeout;
+                }
                 "HTTP_LOG_RETENTION" => {
                     let retention: i64 = value.trim().parse().map_err(|_| {
                         Error::Config(format!(
@@ -147,6 +230,14 @@ impl Config {
         let key_file = key_file.unwrap_or_else(|| data_dir.join("key"));
         let db_file = db_file.unwrap_or_else(|| data_dir.join(consts::DB_FILE_NAME));
 
+        let solver = SolverConfig {
+            mode: solver_mode,
+            origin: parse_solver_origin(&solver_url, solver_allow_remote)?,
+            allow_remote: solver_allow_remote,
+            send_cookies: solver_send_cookies,
+            max_timeout_ms: solver_max_timeout,
+        };
+
         Ok(Self {
             base_url,
             data_dir,
@@ -159,8 +250,87 @@ impl Config {
             db_file,
             log_http_errors,
             http_log_retention,
+            solver,
         })
     }
+}
+
+/// Validates the solver origin: `http(s)://host[:port]`, no path or credentials,
+/// and loopback-only unless the operator opted into a remote host.
+fn parse_solver_origin(value: &str, allow_remote: bool) -> Result<String> {
+    let trimmed = value.trim().trim_end_matches('/');
+    let Some((scheme, rest)) = trimmed.split_once("://") else {
+        return Err(Error::Config(format!(
+            "AO3I_FLARESOLVERR_URL must be an http(s) origin, got {value:?}"
+        )));
+    };
+    if !matches!(scheme, "http" | "https") {
+        return Err(Error::Config(format!(
+            "AO3I_FLARESOLVERR_URL must use http or https, got {scheme:?}"
+        )));
+    }
+    if rest.is_empty() || rest.contains(['/', '?', '#', '@']) {
+        return Err(Error::Config(format!(
+            "AO3I_FLARESOLVERR_URL must be an origin without a path, got {value:?}"
+        )));
+    }
+
+    let (host, port) = split_host_port(rest)?;
+    if port == Some(0) {
+        return Err(Error::Config(
+            "AO3I_FLARESOLVERR_URL port must not be zero".into(),
+        ));
+    }
+    if !allow_remote {
+        let loopback = host.eq_ignore_ascii_case("localhost")
+            || host
+                .parse::<std::net::IpAddr>()
+                .is_ok_and(|address| address.is_loopback());
+        if !loopback {
+            return Err(Error::Config(format!(
+                "AO3I_FLARESOLVERR_URL host {host:?} is not loopback; \
+                 set AO3I_FLARESOLVERR_ALLOW_REMOTE=1 only if the service is \
+                 reachable on a private address"
+            )));
+        }
+    }
+
+    Ok(format!("{scheme}://{rest}"))
+}
+
+/// Splits `host`, `host:port` or `[::1]:port` without a URL crate.
+fn split_host_port(rest: &str) -> Result<(&str, Option<u16>)> {
+    if let Some(stripped) = rest.strip_prefix('[') {
+        let Some(end) = stripped.find(']') else {
+            return Err(Error::Config(format!(
+                "AO3I_FLARESOLVERR_URL has an unterminated IPv6 host: {rest:?}"
+            )));
+        };
+        let host = &stripped[..end];
+        let remainder = &stripped[end + 1..];
+        let port = match remainder.strip_prefix(':') {
+            Some(port) => Some(parse_port(port)?),
+            None if remainder.is_empty() => None,
+            None => {
+                return Err(Error::Config(format!(
+                    "AO3I_FLARESOLVERR_URL has trailing characters: {remainder:?}"
+                )));
+            }
+        };
+        return Ok((host, port));
+    }
+    match rest.split_once(':') {
+        Some((host, port)) => Ok((host, Some(parse_port(port)?))),
+        None => Ok((rest, None)),
+    }
+}
+
+fn parse_port(port: &str) -> Result<u16> {
+    port.parse::<u16>().map_err(|_| {
+        Error::Config(format!(
+            "AO3I_FLARESOLVERR_URL has an invalid port: {port:?}"
+        ))
+    })
 }
 
 fn parse_bool(name: &str, value: &str) -> Result<bool> {
@@ -246,6 +416,84 @@ mod tests {
         assert_eq!(c.db_file, PathBuf::from("/srv/ao3i/db.sqlite"));
         assert!(!c.log_http_errors);
         assert_eq!(c.http_log_retention, 42);
+    }
+
+    #[test]
+    fn solver_overrides_apply() {
+        let c = cfg(&[
+            ("AO3I_FLARESOLVERR", "off"),
+            ("AO3I_FLARESOLVERR_URL", "http://127.0.0.1:9999/"),
+            ("AO3I_FLARESOLVERR_SEND_COOKIES", "true"),
+            ("AO3I_FLARESOLVERR_MAX_TIMEOUT_MS", "90000"),
+        ]);
+        assert_eq!(c.solver.mode, SolverMode::Off);
+        assert_eq!(c.solver.origin, "http://127.0.0.1:9999");
+        assert!(c.solver.send_cookies);
+        assert_eq!(c.solver.max_timeout_ms, 90_000);
+
+        let remote = cfg(&[
+            ("AO3I_FLARESOLVERR", "on"),
+            ("AO3I_FLARESOLVERR_URL", "https://localhost:8191"),
+            ("AO3I_FLARESOLVERR_ALLOW_REMOTE", "1"),
+        ]);
+        assert_eq!(remote.solver.mode, SolverMode::On);
+        assert_eq!(remote.solver.origin, "https://localhost:8191");
+        assert!(remote.solver.allow_remote);
+    }
+
+    #[test]
+    fn solver_settings_are_validated() {
+        for mode in ["sometimes", "yes"] {
+            assert!(
+                matches!(
+                    Config::from_pairs([
+                        ("XDG_CONFIG_HOME", "/tmp/x-dir"),
+                        ("AO3I_FLARESOLVERR", mode),
+                    ]),
+                    Err(Error::Config(_))
+                ),
+                "mode {mode:?} must be rejected"
+            );
+        }
+        for url in [
+            "ftp://127.0.0.1:8191",
+            "127.0.0.1:8191",
+            "http://127.0.0.1:8191/v1",
+            "http://127.0.0.1:8191/?x=1",
+            "http://user:pass@127.0.0.1:8191",
+            "http://10.1.2.3:8191",
+            "http://[::1",
+            "http://127.0.0.1:notaport",
+            "http://127.0.0.1:0",
+        ] {
+            assert!(
+                matches!(
+                    Config::from_pairs([
+                        ("XDG_CONFIG_HOME", "/tmp/x-dir"),
+                        ("AO3I_FLARESOLVERR_URL", url),
+                    ]),
+                    Err(Error::Config(_))
+                ),
+                "url {url:?} must be rejected"
+            );
+        }
+        let lan = cfg(&[
+            ("AO3I_FLARESOLVERR_URL", "http://10.1.2.3:8191"),
+            ("AO3I_FLARESOLVERR_ALLOW_REMOTE", "on"),
+        ]);
+        assert_eq!(lan.solver.origin, "http://10.1.2.3:8191");
+        for timeout in ["4999", "180001", "soon"] {
+            assert!(
+                matches!(
+                    Config::from_pairs([
+                        ("XDG_CONFIG_HOME", "/tmp/x-dir"),
+                        ("AO3I_FLARESOLVERR_MAX_TIMEOUT_MS", timeout),
+                    ]),
+                    Err(Error::Config(_))
+                ),
+                "timeout {timeout:?} must be rejected"
+            );
+        }
     }
 
     #[test]

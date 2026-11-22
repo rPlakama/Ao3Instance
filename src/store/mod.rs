@@ -6,6 +6,7 @@
 
 mod errors;
 mod session;
+mod solver;
 #[cfg(test)]
 mod tests;
 mod works;
@@ -115,4 +116,5 @@ impl Store {
 
 pub(super) use crate::time::now_secs;
 pub use errors::HttpErrorRow;
+pub use solver::{SolverEventRow, StoredClearance};
 pub use works::sha256_hex;

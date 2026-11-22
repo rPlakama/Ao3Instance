@@ -50,3 +50,20 @@ pub const MIN_REQUEST_SPACING: Duration = Duration::from_secs(2);
 
 /// Rows kept in `http_error_log` before the oldest are pruned.
 pub const HTTP_ERROR_LOG_RETENTION: i64 = 500;
+
+/// Host-provided FlareSolverr endpoint (Phase 2.5). Never a build input.
+pub const FLARESOLVERR_DEFAULT_URL: &str = "http://127.0.0.1:8191";
+/// Liveness probe budget: the service is local, so this is generous.
+pub const FLARESOLVERR_PROBE_TIMEOUT: Duration = Duration::from_secs(2);
+/// Whole solve budget, including Chromium startup.
+pub const FLARESOLVERR_SOLVE_TIMEOUT: Duration = Duration::from_secs(120);
+/// Default FlareSolverr `maxTimeout` (challenge-solving budget).
+pub const FLARESOLVERR_MAX_TIMEOUT_MS: u64 = 60_000;
+/// Minimum gap between two solves, even when the operator clicks again.
+pub const FLARESOLVERR_COOLDOWN: Duration = Duration::from_secs(300);
+/// Hard cap on successful solves per rolling hour.
+pub const FLARESOLVERR_MAX_SOLVES_PER_HOUR: i64 = 6;
+/// How long a Cloudflare clearance cookie is considered usable.
+pub const FLARESOLVERR_CLEARANCE_TTL: Duration = Duration::from_secs(1_800);
+/// Solver events kept in SQLite before pruning.
+pub const SOLVER_EVENT_RETENTION: i64 = 200;
