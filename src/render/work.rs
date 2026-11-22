@@ -385,8 +385,8 @@ fn meta_row(label: &str, tags: &[String]) -> String {
         .iter()
         .map(|tag| {
             format!(
-                "<a class=\"tag\" href=\"/works?tag={}\">{}</a>",
-                percent_encode(tag, SpaceMode::Percent20),
+                "<a class=\"tag\" href=\"{}\">{}</a>",
+                super::tag_href(tag),
                 escape(tag)
             )
         })

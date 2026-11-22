@@ -49,8 +49,9 @@ pub(super) fn notice_text(key: &str) -> Option<&'static str> {
 }
 pub(super) async fn audit(State(state): State<Arc<AppState>>) -> Handled<Html<String>> {
     let entries = state.store.recent_audit(100).await?;
+    let cached = state.store.cached_work_ids().await?;
     let page = super::page_context(&state, "Audit — AO3Instance", NavSection::Audit).await;
-    Ok(Html(render::audit_page(&page, &entries)))
+    Ok(Html(render::audit_page(&page, &entries, &cached)))
 }
 pub(super) async fn redirect_after_write(
     state: &AppState,

@@ -2,7 +2,6 @@
 
 use super::chrome::{PageContext, layout};
 use super::escape;
-use crate::ao3::parse::{SpaceMode, percent_encode};
 use crate::store::{BookmarkEntry, CacheStats, ReadingEntry, SubscriptionEntry};
 
 pub fn dashboard_page(
@@ -70,13 +69,7 @@ pub fn dashboard_page(
                         .to_string(),
                 ),
                 "Tag" => (
-                    format!(
-                        "/works?tag={}",
-                        percent_encode(
-                            entry.title.as_deref().unwrap_or(&entry.target_id),
-                            SpaceMode::Percent20
-                        )
-                    ),
+                    crate::render::tag_href(entry.title.as_deref().unwrap_or(&entry.target_id)),
                     entry
                         .title
                         .as_deref()

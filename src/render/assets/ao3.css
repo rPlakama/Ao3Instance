@@ -601,3 +601,27 @@ ul.required-tags li.warning-choose { background: #b8860b; }
 
 
 ul.required-tags a { color: inherit; text-decoration: none; }
+
+
+form.filters {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.6rem;
+    align-items: flex-end;
+    margin: 0.8rem 0 1rem;
+}
+form.filters label {
+    display: grid;
+    gap: 0.2rem;
+    font-size: 0.8rem;
+    color: var(--ao3-muted);
+}
+form.filters input[type="search"],
+form.filters select {
+    padding: 0.35rem 0.45rem;
+    font: inherit;
+    color: var(--ao3-text);
+    background: var(--ao3-bg);
+    border: 1px solid var(--ao3-border-strong);
+    border-radius: 0.25rem;
+}

@@ -33,19 +33,13 @@ pub fn required_tags(work: &StoredWork) -> String {
     let warning_href = if no_warnings {
         None
     } else {
-        warnings.first().map(|warning| {
-            format!(
-                "/works?tag={}",
-                percent_encode(warning, SpaceMode::Percent20)
-            )
-        })
+        warnings.first().map(|warning| super::tag_href(warning))
     };
-    let category_href = work.tags.categories.first().map(|category| {
-        format!(
-            "/works?tag={}",
-            percent_encode(category, SpaceMode::Percent20)
-        )
-    });
+    let category_href = work
+        .tags
+        .categories
+        .first()
+        .map(|category| super::tag_href(category));
     let rating_href = work.rating.as_deref().map(|rating| {
         format!(
             "/works?rating={}",

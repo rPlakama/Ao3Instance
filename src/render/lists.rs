@@ -41,8 +41,8 @@ pub fn subscriptions_page(ctx: &PageContext, entries: &[SubscriptionEntry]) -> S
                     escape(title)
                 ),
                 "Tag" => format!(
-                    "<a href=\"/works?tag={}\">{}</a>",
-                    percent_encode(title, SpaceMode::Percent20),
+                    "<a href=\"{}\">{}</a>",
+                    super::tag_href(title),
                     escape(title)
                 ),
                 _ => escape(title),

@@ -1,6 +1,8 @@
 //! Cached work rows, full-text search and the local reading position.
 
-use super::{SearchPage, Store, StoredChapter, StoredWork, TagGroups, WorkSummary, now_secs};
+use super::{
+    SearchFilter, SearchPage, Store, StoredChapter, StoredWork, TagGroups, WorkSummary, now_secs,
+};
 use crate::ao3::work::WorkPage;
 use sqlx::Row;
 
@@ -91,6 +93,15 @@ impl Store {
             .await
             .map_err(|e| Error::Store(format!("commit upsert: {e}")))?;
         Ok(())
+    }
+
+    /// Cached work ids, for deciding whether an audit target can link locally.
+    pub async fn cached_work_ids(&self) -> Result<std::collections::HashSet<String>> {
+        let rows: Vec<String> = sqlx::query_scalar("SELECT ao3_id FROM works")
+            .fetch_all(&self.pool)
+            .await
+            .map_err(|e| Error::Store(format!("cached work ids: {e}")))?;
+        Ok(rows.into_iter().collect())
     }
 
     /// Number of cached works, for the chrome footer.
@@ -210,6 +221,94 @@ impl Store {
             });
         }
         Ok(works)
+    }
+
+    /// Ranked FTS hits narrowed by rating/fandom/language, then paged.
+    ///
+    /// FTS ranking is preserved unless the user explicitly chooses another
+    /// order; the filter runs over the ranked candidates (capped at 1000).
+    pub async fn search_works_filtered(
+        &self,
+        query: &str,
+        filter: &SearchFilter,
+        page: i64,
+        per_page: i64,
+    ) -> Result<SearchPage> {
+        let per_page = per_page.clamp(1, 100);
+        let page = page.max(1);
+        let Some(fts) = fts_query(query) else {
+            return Ok(SearchPage {
+                works: Vec::new(),
+                total: 0,
+                page,
+                per_page,
+            });
+        };
+        let ids: Vec<String> = sqlx::query_scalar(
+            "SELECT work_id FROM work_search WHERE work_search MATCH ?1
+             ORDER BY rank LIMIT 1000",
+        )
+        .bind(&fts)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| Error::Store(format!("search candidates: {e}")))?;
+
+        let mut works = Vec::new();
+        for id in ids {
+            let Some(work) = self.get_work(&id).await? else {
+                continue;
+            };
+            if filter.rating.as_ref().is_some_and(|rating| {
+                !work
+                    .rating
+                    .as_deref()
+                    .is_some_and(|value| value.eq_ignore_ascii_case(rating))
+            }) || filter.language.as_ref().is_some_and(|language| {
+                !work
+                    .language
+                    .as_deref()
+                    .is_some_and(|value| value.eq_ignore_ascii_case(language))
+            }) || filter.fandom.as_ref().is_some_and(|fandom| {
+                !work
+                    .tags
+                    .fandoms
+                    .iter()
+                    .any(|value| value.eq_ignore_ascii_case(fandom))
+            }) {
+                continue;
+            }
+            works.push(work);
+        }
+
+        match filter.sort.as_deref() {
+            Some("words_desc") => {
+                works.sort_by_key(|work| std::cmp::Reverse(work.word_count.unwrap_or(0)))
+            }
+            Some("kudos_desc") => {
+                works.sort_by_key(|work| std::cmp::Reverse(work.kudos.unwrap_or(0)));
+            }
+            Some("title_asc") => works.sort_by(|a, b| {
+                a.title
+                    .to_ascii_lowercase()
+                    .cmp(&b.title.to_ascii_lowercase())
+            }),
+            // Default: keep FTS rank order.
+            _ => {}
+        }
+
+        let total = works.len() as i64;
+        let skip = usize::try_from((page - 1).saturating_mul(per_page)).unwrap_or(usize::MAX);
+        let works = works
+            .into_iter()
+            .skip(skip)
+            .take(per_page as usize)
+            .collect();
+        Ok(SearchPage {
+            works,
+            total,
+            page,
+            per_page,
+        })
     }
 
     /// One page of FTS hits with the total, for the search UI.

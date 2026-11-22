@@ -1,6 +1,6 @@
 //! Home / splash page.
 
-use super::blurb::work_blurb;
+use super::blurb::{author_links_from, work_blurb};
 use super::chrome::{PageContext, layout};
 use super::escape;
 use crate::store::{StoredWork, WorkSummary};
@@ -57,9 +57,10 @@ pub fn home_page(
             let chapter = work.progress_chapter.unwrap_or(1);
             body.push_str(&format!(
                 "<li><a href=\"/read/{id}?chapter={chapter}\">{title}</a> \
-                 <span class=\"meta\">· continue ch. {chapter}</span></li>",
+                 <span class=\"meta\">· by {authors} · continue ch. {chapter}</span></li>",
                 id = escape(&work.ao3_id),
                 title = escape(&work.title),
+                authors = author_links_from(&work.authors),
             ));
         }
         body.push_str("</ul>");

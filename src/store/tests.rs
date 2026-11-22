@@ -582,3 +582,67 @@ async fn search_pages_report_totals_and_offsets() {
 
     drop(std::fs::remove_dir_all(&dir));
 }
+
+#[tokio::test]
+async fn filtered_search_narrows_and_can_reorder() {
+    let (store, dir) = test_store("search-filtered").await;
+    let cases = [
+        ("1", "Explicit", "Fandom", 100),
+        ("2", "Mature", "Other", 300),
+        ("3", "Explicit", "Other", 200),
+    ];
+    for (id, rating, fandom, words) in cases {
+        let mut work = page();
+        work.ao3_id = id.into();
+        work.title = format!("Filtered Title {id}");
+        work.rating = Some(rating.into());
+        work.fandoms = vec![fandom.into()];
+        work.word_count = Some(words);
+        store.upsert_work(&work, id).await.unwrap();
+    }
+
+    let rating = SearchFilter {
+        rating: Some("explicit".into()),
+        ..SearchFilter::default()
+    };
+    let explicit = store
+        .search_works_filtered("Filtered", &rating, 1, 20)
+        .await
+        .unwrap();
+    assert_eq!(explicit.total, 2);
+
+    let both = SearchFilter {
+        rating: Some("Explicit".into()),
+        fandom: Some("other".into()),
+        ..SearchFilter::default()
+    };
+    let narrowed = store
+        .search_works_filtered("Filtered", &both, 1, 20)
+        .await
+        .unwrap();
+    assert_eq!(narrowed.total, 1);
+    assert_eq!(narrowed.works[0].ao3_id, "3");
+
+    let by_words = SearchFilter {
+        sort: Some("words_desc".into()),
+        ..SearchFilter::default()
+    };
+    let sorted = store
+        .search_works_filtered("Filtered", &by_words, 1, 20)
+        .await
+        .unwrap();
+    let ids: Vec<&str> = sorted
+        .works
+        .iter()
+        .map(|work| work.ao3_id.as_str())
+        .collect();
+    assert_eq!(ids, vec!["2", "3", "1"]);
+
+    let blank = store
+        .search_works_filtered("   ", &SearchFilter::default(), 1, 20)
+        .await
+        .unwrap();
+    assert_eq!(blank.total, 0);
+
+    drop(std::fs::remove_dir_all(&dir));
+}

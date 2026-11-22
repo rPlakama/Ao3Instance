@@ -72,8 +72,8 @@ fn tag_items(tags: &[String], class: &str) -> String {
     let mut out = String::new();
     for tag in tags {
         out.push_str(&format!(
-            "<li class=\"{class}\"><a class=\"tag\" href=\"/works?tag={}\">{}</a></li>",
-            percent_encode(tag, SpaceMode::Percent20),
+            "<li class=\"{class}\"><a class=\"tag\" href=\"{}\">{}</a></li>",
+            super::tag_href(tag),
             escape(tag)
         ));
     }
@@ -82,10 +82,14 @@ fn tag_items(tags: &[String], class: &str) -> String {
 
 /// Author names as local-filter links; the byline is an entry too.
 pub(super) fn author_links(work: &StoredWork) -> String {
-    if work.authors.is_empty() {
+    author_links_from(&work.authors)
+}
+
+pub(super) fn author_links_from(authors: &[String]) -> String {
+    if authors.is_empty() {
         return "Anonymous".to_string();
     }
-    work.authors
+    authors
         .iter()
         .map(|author| {
             format!(

@@ -100,6 +100,15 @@ pub struct WorkSummary {
     /// Chapter to resume at, when a reading position is stored.
     pub progress_chapter: Option<i64>,
 }
+/// Optional filters for offline search; `sort = None` keeps FTS rank order.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct SearchFilter {
+    pub rating: Option<String>,
+    pub fandom: Option<String>,
+    pub language: Option<String>,
+    pub sort: Option<String>,
+}
+
 /// One page of offline search hits plus the total match count.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SearchPage {

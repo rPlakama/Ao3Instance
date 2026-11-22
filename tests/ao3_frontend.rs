@@ -252,6 +252,37 @@ async fn seeded_cache_renders_browse_fandoms_and_dashboard() {
     let search = search.text().await.expect("body");
     assert!(search.contains("work blurb group"), "{search}");
     assert!(search.contains("required-tags"), "{search}");
+    assert!(
+        search.contains("name=\"rating\""),
+        "filters are wired: {search}"
+    );
+    assert!(search.contains("name=\"fandom\""), "{search}");
+
+    let filtered = client
+        .get(format!("{root}/search?q=Mirror&rating=Explicit"))
+        .send()
+        .await
+        .expect("filtered search");
+    assert!(
+        filtered
+            .text()
+            .await
+            .expect("body")
+            .contains("PLACEHOLDER: The Map and the Mirror")
+    );
+
+    let excluded = client
+        .get(format!("{root}/search?q=Mirror&rating=Mature"))
+        .send()
+        .await
+        .expect("excluded search");
+    assert!(
+        excluded
+            .text()
+            .await
+            .expect("body")
+            .contains("0 cached matches")
+    );
 
     let home = client.get(&root).send().await.expect("home");
     let home = home.text().await.expect("body");

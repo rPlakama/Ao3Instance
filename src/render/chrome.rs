@@ -234,7 +234,7 @@ fn footer(ctx: &PageContext) -> String {
          <div><h4>Diagnostics</h4><ul>\
          <li><a href=\"/diagnostics\">HTTP diagnostics</a></li>\
          <li><a href=\"/audit\">Write audit</a></li>\
-         <li>{solver_state}</li></ul></div>\
+         <li><a href=\"/diagnostics\">{solver_state}</a></li></ul></div>\
          <div><h4>Display</h4><ul>\
          <li><form class=\"inline\" method=\"post\" action=\"/skin\">\
          <input type=\"hidden\" name=\"skin\" value=\"default\">\

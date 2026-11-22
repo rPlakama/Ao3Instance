@@ -305,6 +305,10 @@ pub(super) async fn read_chapter(
 pub(super) struct SearchQuery {
     q: Option<String>,
     page: Option<i64>,
+    rating: Option<String>,
+    fandom: Option<String>,
+    language: Option<String>,
+    sort: Option<String>,
 }
 
 pub(super) async fn search(
@@ -312,12 +316,20 @@ pub(super) async fn search(
     Query(query): Query<SearchQuery>,
 ) -> Handled<Html<String>> {
     let raw = query.q.unwrap_or_default();
+    let filter = render::search_filter_from(query.rating, query.fandom, query.language, query.sort);
     let result = state
         .store
-        .search_works_page(&raw, query.page.unwrap_or(1), 20)
+        .search_works_filtered(&raw, &filter, query.page.unwrap_or(1), 20)
+        .await?;
+    let (account, _) = session_identity(&state).await;
+    let facets = state
+        .store
+        .browse_works(&account, &crate::store::WorkFilter::default())
         .await?;
     let page = super::page_context(&state, "Search — AO3Instance", NavSection::Search).await;
-    Ok(Html(render::search_page(&page, &raw, &result)))
+    Ok(Html(render::search_page(
+        &page, &raw, &result, &facets, &filter,
+    )))
 }
 
 #[derive(Deserialize)]

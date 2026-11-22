@@ -11,6 +11,8 @@
 
 use std::collections::HashSet;
 
+use crate::ao3::parse::{SpaceMode, percent_encode};
+
 /// Embedded stylesheet: `nix build` stays a self-contained single binary.
 pub const AO3_CSS: &str = include_str!("assets/ao3.css");
 
@@ -38,9 +40,14 @@ pub use fandoms::fandoms_page;
 pub use home::home_page;
 pub use lists::{bookmarks_page, reading_page, subscriptions_page};
 pub use not_cached::not_cached_page;
-pub use search::search_page;
+pub use search::{filter_from as search_filter_from, search_page};
 pub use session::{logout_confirm_page, session_page};
 pub use work::{ReadContext, chapter_document, read_page};
+
+/// AO3-shaped local tag URL: `/tags/<encoded>/works`.
+pub(crate) fn tag_href(tag: &str) -> String {
+    format!("/tags/{}/works", percent_encode(tag, SpaceMode::Percent20))
+}
 
 /// Minimal HTML text escaping for values interpolated into our own templates.
 pub fn escape(text: &str) -> String {

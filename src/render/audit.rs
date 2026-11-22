@@ -38,7 +38,11 @@ pub fn confirm_page(
 
 /// Recent write actions, newest first. No secrets: the ledger stores targets and
 /// outcomes, never credentials or payloads.
-pub fn audit_page(ctx: &PageContext, entries: &[crate::store::AuditEntry]) -> String {
+pub fn audit_page(
+    ctx: &PageContext,
+    entries: &[crate::store::AuditEntry],
+    cached_works: &std::collections::HashSet<String>,
+) -> String {
     let mut body = String::from("<h2>Audit log</h2>");
     if entries.is_empty() {
         body.push_str("<p class=\"muted\">No writes recorded yet.</p>");
@@ -48,11 +52,19 @@ pub fn audit_page(ctx: &PageContext, entries: &[crate::store::AuditEntry]) -> St
              <th>target</th><th>outcome</th></tr></thead><tbody>",
         );
         for entry in entries {
+            let target = entry
+                .target
+                .strip_prefix("Work ")
+                .filter(|id| cached_works.contains(*id))
+                .map_or_else(
+                    || escape(&entry.target),
+                    |id| format!("<a href=\"/read/{id}\">{}</a>", escape(&entry.target)),
+                );
             body.push_str(&format!(
                 "<tr><td>{}</td><td>{}</td><td>{}</td><td>{}</td></tr>",
                 escape(&format_utc(entry.created_at)),
                 escape(&entry.action),
-                escape(&entry.target),
+                target,
                 escape(&entry.outcome),
             ));
         }

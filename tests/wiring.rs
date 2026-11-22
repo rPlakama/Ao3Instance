@@ -60,6 +60,40 @@ async fn every_rendered_local_link_resolves() {
         "/users/logout/confirm",
     ];
 
+    let cached_intent = store
+        .record_intent("someone", "kudos", "Work", "12345")
+        .await
+        .expect("intent");
+    store
+        .finish_intent(cached_intent, "done", "kudos-given", None)
+        .await
+        .expect("audit row");
+    let uncached_intent = store
+        .record_intent("someone", "kudos", "Work", "999999")
+        .await
+        .expect("intent");
+    store
+        .finish_intent(uncached_intent, "failed", "failed", None)
+        .await
+        .expect("audit row");
+
+    let audit = client
+        .get(format!("{root}/audit"))
+        .send()
+        .await
+        .expect("audit")
+        .text()
+        .await
+        .expect("body");
+    assert!(
+        audit.contains("href=\"/read/12345\""),
+        "cached target links"
+    );
+    assert!(
+        !audit.contains("href=\"/read/999999\""),
+        "uncached audit targets stay text"
+    );
+
     let anchor = Selector::parse("a[href]").expect("anchor selector");
     let mut targets: BTreeSet<String> = BTreeSet::new();
     for page in pages {
@@ -87,9 +121,7 @@ async fn every_rendered_local_link_resolves() {
     }
 
     assert!(
-        targets
-            .iter()
-            .any(|target| target.starts_with("/works?tag=")),
+        targets.iter().any(|target| target.starts_with("/tags/")),
         "tag entries are wired: {targets:?}"
     );
     assert!(
@@ -168,7 +200,7 @@ async fn non_work_subscriptions_never_point_at_reader_urls() {
         .await
         .expect("body");
     assert!(
-        subscriptions.contains("/works?tag=fluff"),
+        subscriptions.contains("/tags/fluff/works"),
         "tag subscriptions link to the tag filter"
     );
     assert!(
