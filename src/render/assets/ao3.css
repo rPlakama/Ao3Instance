@@ -565,3 +565,22 @@ ul.required-tags li.status-complete { background: #2e7d32; }
 ul.required-tags li.status-wip { background: #1565c0; }
 
 ul.required-tags li.warning-choose { background: #b8860b; }
+
+
+/* ---------- splash ---------- */
+
+.splash {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 1.2rem;
+    margin: 0.4rem 0 1rem;
+    padding: 1rem 1.1rem;
+    border: 1px solid var(--ao3-border);
+    border-radius: 0.25rem;
+    background: var(--ao3-surface-soft);
+}
+.splash h2 { margin-top: 0; }
+#open-work { flex: 1 1 20rem; }
+#open-work form.open { margin: 0; }

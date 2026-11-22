@@ -100,6 +100,15 @@ pub struct WorkSummary {
     /// Chapter to resume at, when a reading position is stored.
     pub progress_chapter: Option<i64>,
 }
+/// One page of offline search hits plus the total match count.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SearchPage {
+    pub works: Vec<StoredWork>,
+    pub total: i64,
+    pub page: i64,
+    pub per_page: i64,
+}
+
 #[derive(Clone)]
 pub struct Store {
     pool: SqlitePool,

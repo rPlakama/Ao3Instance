@@ -147,6 +147,16 @@ async fn aliases_are_offline_and_uncached_works_stay_a_miss() {
             .contains("id=\"cookie-import\"")
     );
 
+    let logout = client
+        .get(format!("{root}/users/logout/confirm"))
+        .send()
+        .await
+        .expect("logout confirm");
+    assert_eq!(logout.status(), 200);
+    let logout = logout.text().await.expect("body");
+    assert!(logout.contains("Log out?"), "{logout}");
+    assert!(logout.contains("action=\"/session/logout\""), "{logout}");
+
     let missing = client
         .get(format!("{root}/works/999999"))
         .send()

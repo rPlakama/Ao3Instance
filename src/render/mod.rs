@@ -39,7 +39,7 @@ pub use home::home_page;
 pub use lists::{bookmarks_page, reading_page, subscriptions_page};
 pub use not_cached::not_cached_page;
 pub use search::search_page;
-pub use session::session_page;
+pub use session::{logout_confirm_page, session_page};
 pub use work::{ReadContext, chapter_document, read_page};
 
 /// Minimal HTML text escaping for values interpolated into our own templates.

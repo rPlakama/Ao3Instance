@@ -1,6 +1,6 @@
 //! Cached work rows, full-text search and the local reading position.
 
-use super::{Store, StoredChapter, StoredWork, TagGroups, WorkSummary, now_secs};
+use super::{SearchPage, Store, StoredChapter, StoredWork, TagGroups, WorkSummary, now_secs};
 use crate::ao3::work::WorkPage;
 use sqlx::Row;
 
@@ -210,6 +210,56 @@ impl Store {
             });
         }
         Ok(works)
+    }
+
+    /// One page of FTS hits with the total, for the search UI.
+    pub async fn search_works_page(
+        &self,
+        query: &str,
+        page: i64,
+        per_page: i64,
+    ) -> Result<SearchPage> {
+        let per_page = per_page.clamp(1, 100);
+        let page = page.max(1);
+        let Some(fts) = fts_query(query) else {
+            return Ok(SearchPage {
+                works: Vec::new(),
+                total: 0,
+                page,
+                per_page,
+            });
+        };
+        let total: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM work_search WHERE work_search MATCH ?1")
+                .bind(&fts)
+                .fetch_one(&self.pool)
+                .await
+                .map_err(|e| Error::Store(format!("count search hits: {e}")))?;
+
+        let rows = sqlx::query(
+            "SELECT work_id FROM work_search WHERE work_search MATCH ?1
+             ORDER BY rank LIMIT ?2 OFFSET ?3",
+        )
+        .bind(&fts)
+        .bind(per_page)
+        .bind((page - 1).saturating_mul(per_page))
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| Error::Store(format!("search page: {e}")))?;
+
+        let mut works = Vec::with_capacity(rows.len());
+        for row in rows {
+            let work_id: String = row.get("work_id");
+            if let Some(work) = self.get_work(&work_id).await? {
+                works.push(work);
+            }
+        }
+        Ok(SearchPage {
+            works,
+            total,
+            page,
+            per_page,
+        })
     }
 
     /// Search hits with the full cached row, so the renderer can use the same

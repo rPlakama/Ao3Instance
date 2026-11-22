@@ -130,6 +130,7 @@ pub async fn router(config: &Config, store: Store) -> Result<Router> {
         .route("/session/probe", post(session::session_probe))
         .route("/session/adult", post(session::session_adult))
         .route("/session/logout", post(session::session_logout))
+        .route("/users/logout/confirm", get(session::logout_confirm))
         .route("/write/preview", get(writes::write_preview))
         .route("/write/subscribe", post(writes::write_subscribe))
         .route("/write/unsubscribe", post(writes::write_unsubscribe))

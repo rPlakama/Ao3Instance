@@ -253,3 +253,9 @@ pub(super) async fn skin(
     *state.skin.write().await = skin.to_string();
     Ok(Redirect::to("/"))
 }
+
+pub(super) async fn logout_confirm(State(state): State<Arc<AppState>>) -> Handled<Html<String>> {
+    let page = super::page_context(&state, "Log out — AO3Instance", NavSection::Session).await;
+    let account = state.session.lock().await.account().to_string();
+    Ok(Html(render::logout_confirm_page(&page, &account)))
+}

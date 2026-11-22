@@ -140,8 +140,7 @@ fn greeting(ctx: &PageContext) -> String {
          <li><a href=\"/audit\">Write audit</a></li>\
          <li><a href=\"/diagnostics\">Diagnostics</a></li>\
          <li><a href=\"/session\">Session &amp; preferences</a></li>\
-         <li><form class=\"inline\" method=\"post\" action=\"/session/logout\">\
-         <button type=\"submit\">Log out of AO3</button></form></li>\
+         <li><a href=\"/users/logout/confirm\">Log out of AO3</a></li>\
          </ul></div></details>",
         account = escape(&ctx.account),
         state = escape(&ctx.session_state),

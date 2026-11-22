@@ -529,3 +529,45 @@ async fn browse_and_local_lists_read_only_from_the_cache() {
 
     drop(std::fs::remove_dir_all(&dir));
 }
+
+#[tokio::test]
+async fn search_pages_report_totals_and_offsets() {
+    let (store, dir) = test_store("search-pages").await;
+    for index in 1..=3 {
+        let mut work = page();
+        work.ao3_id = index.to_string();
+        work.title = format!("Shared Title {index}");
+        store
+            .upsert_work(&work, &format!("hash-{index}"))
+            .await
+            .unwrap();
+    }
+
+    let first = store.search_works_page("Shared", 1, 2).await.unwrap();
+    assert_eq!(first.total, 3);
+    assert_eq!(first.works.len(), 2);
+    assert_eq!(first.page, 1);
+    assert_eq!(first.per_page, 2);
+
+    let second = store.search_works_page("Shared", 2, 2).await.unwrap();
+    assert_eq!(second.total, 3);
+    assert_eq!(second.works.len(), 1);
+    let first_ids: Vec<&str> = first
+        .works
+        .iter()
+        .map(|work| work.ao3_id.as_str())
+        .collect();
+    assert!(
+        !first_ids.contains(&second.works[0].ao3_id.as_str()),
+        "pages must not overlap"
+    );
+
+    let none = store.search_works_page("NoSuchToken", 1, 20).await.unwrap();
+    assert_eq!(none.total, 0);
+    assert!(none.works.is_empty());
+
+    let blank = store.search_works_page("   ", 1, 20).await.unwrap();
+    assert_eq!(blank.total, 0);
+
+    drop(std::fs::remove_dir_all(&dir));
+}

@@ -51,8 +51,7 @@ pub fn session_page(
              <button type=\"submit\">Verify session now</button></form></li>\
              <li><form class=\"inline\" method=\"post\" action=\"/session/adult\">\
              <button type=\"submit\">Enable adult content</button></form></li>\
-             <li><form class=\"inline\" method=\"post\" action=\"/session/logout\">\
-             <button type=\"submit\">Log out of AO3</button></form></li></ul>",
+             <li><a href=\"/users/logout/confirm\">Log out of AO3</a></li></ul>",
         );
     }
     if let Some(notice) = notice {
@@ -99,6 +98,24 @@ pub fn session_page(
          <label>Password <input type=\"password\" name=\"password\" required autocomplete=\"current-password\"></label>\
          <label><input type=\"checkbox\" name=\"adult\" value=\"1\"> This account may read adult content</label>\
          <button type=\"submit\">Sign in</button></form>",
+    );
+    layout(ctx, &body)
+}
+
+/// AO3-style logout confirmation: the destructive action needs a second click.
+pub fn logout_confirm_page(ctx: &PageContext, account: &str) -> String {
+    let who = if account.is_empty() {
+        "the local AO3 session".to_string()
+    } else {
+        format!("the session for <strong>{}</strong>", escape(account))
+    };
+    let body = format!(
+        "<h2>Log out?</h2>\
+         <div class=\"flash caution\">This clears {who} from this instance and asks AO3 \
+         to end it upstream. Cached works and reading progress are not affected.</div>\
+         <form class=\"inline\" method=\"post\" action=\"/session/logout\">\
+         <button type=\"submit\">Log out of AO3</button></form>\
+         <p><a href=\"/\">Cancel</a> · <a href=\"/session\">Back to session</a></p>"
     );
     layout(ctx, &body)
 }

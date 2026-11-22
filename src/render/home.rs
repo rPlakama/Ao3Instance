@@ -23,6 +23,30 @@ pub fn home_page(ctx: &PageContext, works: &[WorkSummary], flash: Option<&str>) 
             escape(flash)
         ));
     }
+    let continuing: Vec<&WorkSummary> = works
+        .iter()
+        .filter(|work| work.progress_chapter.is_some())
+        .take(6)
+        .collect();
+    if !continuing.is_empty() {
+        body.push_str("<h2>Continue Reading</h2><ul class=\"works\">");
+        for work in continuing {
+            let chapter = work.progress_chapter.unwrap_or(1);
+            let authors = if work.authors.is_empty() {
+                "Anonymous".to_string()
+            } else {
+                work.authors.join(", ")
+            };
+            body.push_str(&format!(
+                "<li><a href=\"/read/{id}?chapter={chapter}\">{title}</a> \
+                 <span class=\"meta\">{authors} · chapter {chapter}</span></li>",
+                id = escape(&work.ao3_id),
+                title = escape(&work.title),
+                authors = escape(&authors),
+            ));
+        }
+        body.push_str("</ul>");
+    }
     if works.is_empty() {
         body.push_str(
             "<p class=\"muted\">Nothing cached yet. Paste a work id or URL above; \

@@ -290,6 +290,7 @@ pub(super) async fn read_chapter(
 #[derive(Deserialize)]
 pub(super) struct SearchQuery {
     q: Option<String>,
+    page: Option<i64>,
 }
 
 pub(super) async fn search(
@@ -297,9 +298,12 @@ pub(super) async fn search(
     Query(query): Query<SearchQuery>,
 ) -> Handled<Html<String>> {
     let raw = query.q.unwrap_or_default();
-    let works = state.store.search_works_detailed(&raw, 50).await?;
+    let result = state
+        .store
+        .search_works_page(&raw, query.page.unwrap_or(1), 20)
+        .await?;
     let page = super::page_context(&state, "Search — AO3Instance", NavSection::Search).await;
-    Ok(Html(render::search_page(&page, &raw, &works)))
+    Ok(Html(render::search_page(&page, &raw, &result)))
 }
 
 #[derive(Deserialize)]
