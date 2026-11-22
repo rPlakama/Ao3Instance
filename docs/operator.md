@@ -8,6 +8,8 @@ This page is for whoever runs it.
 - Nix (flakes enabled). There is no other supported build path.
 - A writable data directory (defaults to `$XDG_CONFIG_HOME/ao3instance`).
 - Outbound HTTPS to archiveofourown.org (and to the sandbox if `AO3I_BASE_URL` is set).
+- *Optional:* a host-provided FlareSolverr service for edge challenges. It is
+  **not** a build dependency: the app works, builds and tests with it absent.
 
 ## Run
 
@@ -34,9 +36,46 @@ and must not be exposed to the open internet as-is.
 | `AO3I_USER_AGENT` | built-in | **set a project URL + contact before public use** |
 | `AO3I_WRITE_ENABLED` | `false` | master switch for all POST/PATCH/DELETE |
 | `AO3I_MIN_SPACING_MS` | `2000` | floor between upstream requests |
+| `AO3I_LOG_HTTP_ERRORS` | `true` | one structured HTTP-error line on stderr |
+| `AO3I_HTTP_LOG_RETENTION` | `500` | rows kept in `http_error_log` |
+| `AO3I_FLARESOLVERR` | `auto` | `auto` \| `on` \| `off` for the optional fallback |
+| `AO3I_FLARESOLVERR_URL` | `http://127.0.0.1:8191` | solver origin; loopback-only unless `ALLOW_REMOTE` |
+| `AO3I_FLARESOLVERR_ALLOW_REMOTE` | `false` | permit a non-loopback solver host (container/bridge) |
+| `AO3I_FLARESOLVERR_SEND_COOKIES` | `false` | allow the AO3 jar to reach the solver (still per-solve opt-in) |
+| `AO3I_FLARESOLVERR_MAX_TIMEOUT_MS` | `60000` | challenge-solving budget, `5000..=180000` |
 
 `AO3I_KEY_FILE` and `AO3I_DATA_DIR` cannot be set from a `.env` for security
 reasons; the app reads environment variables only.
+
+## Optional: Cloudflare fallback (host-provided FlareSolverr)
+
+AO3's edge sometimes answers a read with `403`/`503`. With this service running,
+the error page offers an explicit **Solve & cache this page** button. The app
+never starts, installs or requires FlareSolverr; it only calls the local `/v1`
+API.
+
+On NixOS, one line makes it available to the system:
+
+```nix
+services.flaresolverr.enable = true;   # default port 8191, firewall stays closed
+```
+
+(or run `ghcr.io/flaresolverr/flaresolverr` published to `127.0.0.1:8191`).
+**Never expose port 8191 to a network**: the API can drive a browser anywhere
+its host can reach. A container/bridge address needs
+`AO3I_FLARESOLVERR_ALLOW_REMOTE=true`; the default only accepts loopback.
+
+Limits and behaviour:
+
+- One solve at a time, 5 min cooldown, 6 successful solves per rolling hour.
+- Reads only. Writes never go through the solver.
+- The AO3 session is sent to the browser only when both
+  `AO3I_FLARESOLVERR_SEND_COOKIES=true` and the user ticks the per-solve box.
+- The returned clearance is encrypted at rest and dropped on the next `403`;
+  it is never displayed. `/diagnostics` shows reachability, version, clearance
+  age and recent outcomes (never the cookie).
+- Set `AO3I_FLARESOLVERR=off` to disable the whole path; `auto` stays quiet when
+  the service is absent, `on` also warns about it in `/diagnostics`.
 
 ## First use
 
@@ -88,7 +127,10 @@ shows exactly what was done.
 | symptom | cause | action |
 | --- | --- | --- |
 | `AO3 is rate limiting this instance` (429) | too many requests from your IP | wait for `Retry-After`; the client parks the action |
-| `AO3 refused the request (403/503)` | bot challenge / edge block | stop for a while; do not hammer; the UA must be identifiable |
+| `AO3 refused the request (403/503)` | bot challenge / edge block | stop for a while; do not hammer; if intended, use the solve card or check `/diagnostics` |
+| "local FlareSolverr is unavailable" | host service not running / wrong port | start `services.flaresolverr` or check `AO3I_FLARESOLVERR_URL` |
+| "hit a captcha it cannot solve" | Cloudflare captcha | open the page in a real browser; import fresh cookies |
+| 429 from `/solve` | local cooldown or hourly budget | wait; the message says how long |
 | Adult-content gate message | no `view_adult` consent in the session | Session → Enable adult content (requires a session) |
 | Restricted work message | no signed-in session | Session → import cookies |
 | `Session is not usable; re-authenticate` | cookie expired or incomplete | re-import cookies |
@@ -97,6 +139,9 @@ shows exactly what was done.
 | `AO3 did not show a pseud to comment with` | pseud page drift or wrong account | verify `GET /users/<you>/pseuds` in the browser |
 
 ## Limitations (documented, not bugs)
+
+- The FlareSolverr fallback is for reads only, one page per explicit click; it is
+  not a crawler and cannot be enabled for writes.
 
 - Chapter-level reading progress only; no scroll/block anchor yet (I7 refinement).
 - Bookmarks and comments are created, not edited or deleted from the app.

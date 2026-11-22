@@ -7,6 +7,43 @@
 
 ---
 
+## Progress (2026-11-22)
+
+Implemented and gate-verified (module limits, clippy `-D warnings`, full test
+suite):
+
+- **Phase 1 — done.** `src/render/` and `src/server/` module trees, plus the
+  store and session splits; every source file is back under the 800-LOC
+  invariant with no behavioural change.
+- **Phase 2 — done.** `0008_http_error_log`, `AO3I_LOG_HTTP_ERRORS` /
+  `AO3I_HTTP_LOG_RETENTION`, `src/diag.rs` (path sanitization, credential
+  redaction, single-line format), upstream client events, inbound middleware, a
+  bounded writer into SQLite, `/diagnostics`, and `tests/http_diagnostics.rs`.
+- **Phase 2.5 — done.** Host-provided FlareSolverr: validated loopback config,
+  `ao3::solver` client, explicit `POST /solve` with 5-min cooldown + 6/hour
+  budget + single-flight, AO3-only cookie merge, scoped UA/clearance window
+  (dropped on 403), AES-GCM clearance persistence (`0009`), `solver_event`
+  ledger, challenge card, `tests/flaresolverr.rs`, ADR-0007, operator docs, and
+  `scripts/check-no-solver-build-dep.sh`. `flake.nix` is untouched and
+  `nix build` needs no solver.
+- **Phase 3 — baseline done.** Embedded `ao3.css`, `PageContext` header/nav/
+  footer, blurbs, 2×2 required-tag badges, Reversi toggle (`POST /skin`) and the
+  `/assets/ao3.css` route.
+- **Phase 4 — partially done.** Home, session, reader, search, audit and
+  diagnostics restyled; offline browse, fandoms, dashboard, subscriptions,
+  bookmarks and reading pages with `WorkFilter`/`Store::list_*`; anchored by
+  `tests/ao3_frontend.rs` and `tests/http_diagnostics.rs`.
+- **Phase 5 — partially done.** Operator guide, failure matrix, ADR-0007 and the
+  build-dependency gate are written; the binary and compiled assets build in
+  Nix without the solver.
+
+Remaining before the plan's final gate: per-segment pixel parity (work-meta
+ordering, chapter jump/`view_full_work`, feedback box), search pagination,
+the `/diagnostics` direction filter, and the final `nix build` + manual
+walkthrough sign-off after the next version bump.
+
+---
+
 ## 0. Architectural Constraints & Invariants
 
 Every task below must preserve the repository's existing contracts:

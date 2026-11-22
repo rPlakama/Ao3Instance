@@ -9,7 +9,11 @@ typed outcome and, where marked, an integration test.
 | AO3 unreachable (new work) | connect error | 502 "request failed", nothing cached | — | same |
 | Search offline | local FTS only | cached hits; explicit empty state | — | `search_and_refresh` |
 | 429 rate limit | HTTP 429 / `Retry-After` | "rate limiting … retry after Ns" | write: failed | `writes_comments::spam_and_rate_limits…` |
-| 403 / 503 edge block | status | "refused the request; may be a bot challenge" | write: failed | `failure_matrix::blocked_upstream_is_explained` |
+| 403 / 503 edge block | status | "refused the request; may be a bot challenge"; solve card if the solver is reachable | write: failed | `failure_matrix::blocked_upstream_is_explained` |
+| Challenge solved | explicit `POST /solve` | page cached, reader opens; one page per click | `solver_event`: solved | `flaresolverr::solve_caches_the_page…` |
+| Solver absent | connect error on `/v1` | page still explains the block; `/solve` → 503 | `solver_event`: unavailable | `flaresolverr::absent_solver_degrades…` |
+| Solver captcha | `status:"error"` message | "hit a captcha it cannot solve" | `solver_event`: captcha | `flaresolverr::captcha_is_typed…` |
+| Solve budget / cooldown | local counters | 429 with the exact wait | — | `flaresolverr::solve_caches…` (cooldown) |
 | CSRF expired | 302 `/auth_error` | "AO3 rejected the CSRF token; verify the session" | write: failed | `writes_kudos_reading::reading_flag_csrf_failure…` |
 | Logged out | 302 `/users/login` | "session is not usable" | write: failed | `session_flow::probe_recognises_logged_out…` |
 | Incomplete jar | 302 `/lost_cookie` | "cookie jar incomplete" | — | `session_flow::probe_recognises_incomplete…` |
@@ -23,6 +27,7 @@ typed outcome and, where marked, an integration test.
 | Duplicate subscription / bookmark / kudos | local receipt/ledger | "already … according to the local ledger" | — | `writes`, `writes_bookmarks`, `writes_kudos_reading` |
 | Writes disabled | `AO3I_WRITE_ENABLED` | 403 "writes are disabled" | — | `writes::writes_require_the_switch…` |
 | Upstream HTML drift | parser returns `UpstreamChanged` | 502 "upstream page changed: …" | — | parser tests |
+| Any upstream/inbound 4xx/5xx | diagnostics middleware | normal page, redacted row at `/diagnostics` | `http_error_log` | `tests/http_diagnostics.rs` |
 | Stale cache | `fetched_at` > 7 days | "checked … (N days ago — stale)" | — | `render::tests` |
 
 Principles: a read never hangs on upstream (cached answer or typed miss); a write is
