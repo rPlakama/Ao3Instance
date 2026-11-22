@@ -229,6 +229,12 @@ pub(super) async fn read_work(
     } else {
         None
     };
+    let comment_as = if can_write {
+        let session = state.session.lock().await;
+        session.pseud().map(|pseud| pseud.name.clone())
+    } else {
+        None
+    };
     let page = super::page_context(
         &state,
         &format!("{} — AO3Instance", work.title),
@@ -249,6 +255,7 @@ pub(super) async fn read_work(
             bookmarked,
             reading_state: reading_state.as_deref(),
             full_work,
+            comment_as: comment_as.as_deref(),
         },
     )))
 }

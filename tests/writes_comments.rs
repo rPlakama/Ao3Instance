@@ -68,6 +68,7 @@ async fn comment_is_discovered_confirmed_posted_and_audited() {
         .text()
         .await
         .expect("body");
+    assert!(reader.contains("Comment as"), "AO3 comment box label");
     assert!(reader.contains("Comment on this work"), "{reader}");
 
     // Preview discovers the default pseud and shows the exact text.

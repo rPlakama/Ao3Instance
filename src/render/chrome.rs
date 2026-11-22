@@ -185,6 +185,32 @@ fn navigation(ctx: &PageContext) -> String {
     )
 }
 
+fn dashboard_nav(active: NavSection) -> String {
+    let links = [
+        (NavSection::Dashboard, "Dashboard", "/dashboard"),
+        (NavSection::Browse, "Cached library", "/works"),
+        (NavSection::Fandoms, "Fandoms", "/fandoms"),
+        (NavSection::Session, "Session & preferences", "/session"),
+        (NavSection::Audit, "Write audit", "/audit"),
+        (NavSection::Diagnostics, "HTTP diagnostics", "/diagnostics"),
+    ];
+    let mut items = String::new();
+    items.push_str(
+        "<li><a href=\"/subscriptions\">Subscriptions</a></li>\
+                    <li><a href=\"/bookmarks\">Bookmarks</a></li>\
+                    <li><a href=\"/reading\">Marked for later &amp; history</a></li>",
+    );
+    for (section, label, href) in links {
+        let class = if section == active {
+            " class=\"active\""
+        } else {
+            ""
+        };
+        items.push_str(&format!("<li{class}><a href=\"{href}\">{label}</a></li>"));
+    }
+    format!("<aside id=\"dashboard\"><h3>Dashboard</h3><ul>{items}</ul></aside>")
+}
+
 fn footer(ctx: &PageContext) -> String {
     let write_state = if ctx.write_enabled {
         "writes enabled"
@@ -234,11 +260,16 @@ pub(super) fn layout(ctx: &PageContext, body: &str) -> String {
          <body><header id=\"header\"><div class=\"header-inner\">\
          <h1 class=\"heading\"><a href=\"/\">AO3Instance<sup>local</sup></a></h1>\
          <div id=\"greeting\">{greeting}</div></div>{nav}</header>\
-         <div id=\"inner\"><main id=\"main\">{body}</main></div>{footer}</body></html>",
+         <div id=\"inner\">{sidebar}<main id=\"main\">{body}</main></div>{footer}</body></html>",
         title = escape(&ctx.title),
         skin = escape(&ctx.skin),
         greeting = greeting(ctx),
         nav = navigation(ctx),
+        sidebar = if ctx.account.is_empty() {
+            String::new()
+        } else {
+            dashboard_nav(ctx.active)
+        },
         footer = footer(ctx),
     )
 }

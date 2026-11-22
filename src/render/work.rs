@@ -19,6 +19,8 @@ pub struct ReadContext<'a> {
     pub reading_state: Option<&'a str>,
     /// `?view_full_work=true`: render every cached chapter stacked.
     pub full_work: bool,
+    /// Pseud name for the comment box, once this session discovered one.
+    pub comment_as: Option<&'a str>,
 }
 
 pub fn read_page(
@@ -37,6 +39,7 @@ pub fn read_page(
         bookmarked,
         reading_state,
         full_work,
+        comment_as,
     } = *ctx;
     let authors = if work.authors.is_empty() {
         "Anonymous".to_string()
@@ -68,6 +71,13 @@ pub fn read_page(
     }
     if let Some(words) = work.word_count {
         meta_rows.push_str(&format!("<dt>Words:</dt><dd>{words}</dd>"));
+    }
+    meta_rows.push_str(&format!(
+        "<dt>Chapters:</dt><dd>{}</dd>",
+        work.chapter_count
+    ));
+    if let Some(comments) = work.comment_count {
+        meta_rows.push_str(&format!("<dt>Comments:</dt><dd>{comments}</dd>"));
     }
     if let Some(kudos) = work.kudos {
         meta_rows.push_str(&format!("<dt>Kudos:</dt><dd>{kudos}</dd>"));
@@ -254,6 +264,11 @@ pub fn read_page(
         match chapter {
             Some(chapter) => {
                 body.push_str(&format!(
+                    "<div class=\"chapter preface group\"><h3 class=\"title\">Chapter {}: {}</h3></div>",
+                    position + 1,
+                    escape(chapter.title.as_deref().unwrap_or(""))
+                ));
+                body.push_str(&format!(
                     "<iframe class=\"chapter\" sandbox referrerpolicy=\"no-referrer\" \
                      title=\"Chapter {} of {}\" src=\"/read/{}/chapter/{}?v={}\"></iframe>",
                     position + 1,
@@ -294,14 +309,16 @@ pub fn read_page(
     }
     body.push_str("</div>");
     if can_write {
+        let commenter = comment_as.map_or_else(|| "your AO3 pseud".to_string(), escape);
         body.push_str(&format!(
             "<details class=\"comment\"><summary>Comment on this work</summary>\
              <form class=\"stack\" method=\"post\" action=\"/write/comment/preview\">\
-             <input type=\"hidden\" name=\"target_id\" value=\"{}\">\
-             <label>Comment (max 10000 characters — it will be public on AO3)\
+             <input type=\"hidden\" name=\"target_id\" value=\"{id}\">\
+             <p class=\"meta\">Comment as <strong>{commenter}</strong> · it will be public on AO3</p>\
+             <label>Comment (max 10000 characters)\
              <textarea name=\"content\" rows=\"6\" maxlength=\"10000\" required></textarea></label>\
              <button type=\"submit\">Preview comment</button></form></details>",
-            escape(&work.ao3_id)
+            id = escape(&work.ao3_id)
         ));
     }
     body.push_str("</div>");
