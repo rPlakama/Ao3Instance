@@ -1,0 +1,49 @@
+name: CI
+
+on:
+  push:
+    branches: [master, main]
+  pull_request:
+    branches: [master, main]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  lint-and-test:
+    name: clippy + tests (nix dev shell)
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Nix
+        uses: cachix/install-nix-action@v31
+        with:
+          extra_nix_config: |
+            experimental-features = nix-command flakes
+
+      - name: Cache Rust build
+        uses: Swatinem/rust-cache@v2
+        with:
+          # The toolchain itself comes from the flake; this only persists the
+          # cargo registry and target/ between runs.
+          workspaces: ". -> target"
+          key: clippy-${{ hashFiles('Cargo.lock') }}
+
+      # The flake dev shell is the single source of truth for the toolchain
+      # (rustc, cargo, clippy, openssl, pkg-config), exactly as in MUSIKA.
+      - name: Format
+        run: nix develop --command cargo fmt --check
+
+      - name: Clippy (warnings are errors)
+        run: nix develop --command cargo clippy --all-targets -- -D warnings
+
+      - name: Tests
+        run: nix develop --command cargo test
+
+      # The AO3 reference clone is gitignored; this gate skips cleanly in CI.
+      - name: AO3 route drift gate
+        run: sh scripts/check-ao3-routes.sh

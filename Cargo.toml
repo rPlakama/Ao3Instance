@@ -1,0 +1,55 @@
+[package]
+name = "ao3instance"
+version = "0.1.0"
+edition = "2024"
+description = "Offline-capable AO3 reader and write client"
+
+[profile.release]
+lto = "fat"
+codegen-units = 1
+strip = "symbols"
+
+[lints.rust]
+unsafe_op_in_unsafe_fn = "warn"
+
+# Inherited verbatim from MUSIKA's rationale (Cargo.toml:26-59 there): every
+# deny below paid for itself at least once.
+[lints.clippy]
+# unsafe hygiene — the secret store zeroizes through raw pointers
+undocumented_unsafe_blocks = "deny"
+multiple_unsafe_ops_per_block = "deny"
+
+# every suppression says why; prefer #[expect] so stale ones fail
+allow_attributes_without_reason = "deny"
+
+# panics in request paths
+unwrap_used = "deny"
+expect_used = "warn"
+
+# swallowed results
+let_underscore_must_use = "warn"
+unused_result_ok = "deny"
+
+# enum drift protection (SessionState, Outcome, Error)
+match_wildcard_for_single_variants = "deny"
+wildcard_enum_match_arm = "warn"
+
+# cheap perf / honest signatures
+or_fun_call = "warn"
+redundant_clone = "warn"
+needless_pass_by_ref_mut = "warn"
+unused_async = "warn"
+
+# free insurance
+dbg_macro = "deny"
+todo = "deny"
+unimplemented = "deny"
+mem_forget = "warn"
+
+[dependencies]
+libc = "0.2"
+openssl = "0.10"
+reqwest = { version = "0.13", features = ["json", "gzip"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "time"] }

@@ -1,0 +1,23 @@
+W1 gate run (final) — 2026-11-22T14:48:24-03:00
+toolchain: rustc 1.98.1, cargo 1.98.0 (nix dev shell, nixpkgs 151fa4e8)
+
+== cargo test
+test result: ok. 46 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.06s
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.31s
+test result: ok. 25 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.04s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+== cargo clippy --all-targets -- -D warnings
+exit=0
+
+== cargo fmt --check
+exit=0
+
+== scripts/check-ao3-routes.sh
+
+== 41 passed, 0 failed
+
+== nix build
+exit=0
+store: /nix/store/6mfm32cb3x5gfgfxqsvmhihrb10kj22i-ao3instance-0.1.0
+note: whitelisted source filter (otwarchive/, .cargo-home/, .nix-cache/ excluded)

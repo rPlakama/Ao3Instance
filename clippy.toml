@@ -1,0 +1,5 @@
+# Tests predate the strict production lints: assertions and fixtures may
+# unwrap/expect. Production code is still held to Cargo.toml's [lints.clippy].
+# (Inherited from MUSIKA's clippy.toml.)
+allow-unwrap-in-tests = true
+allow-expect-in-tests = true
