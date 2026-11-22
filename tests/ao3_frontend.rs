@@ -218,6 +218,32 @@ async fn seeded_cache_renders_browse_fandoms_and_dashboard() {
         "every cached chapter is stacked: {full}"
     );
 
+    let cached_alias = client
+        .get(format!("{root}/works/12345"))
+        .send()
+        .await
+        .expect("cached work alias");
+    assert_eq!(cached_alias.status(), 200);
+    assert!(
+        cached_alias
+            .text()
+            .await
+            .expect("body")
+            .contains("PLACEHOLDER: The Map and the Mirror")
+    );
+
+    let chapter_alias = client
+        .get(format!("{root}/works/12345/chapters/2"))
+        .send()
+        .await
+        .expect("chapter alias");
+    assert_eq!(
+        chapter_alias.status(),
+        200,
+        "redirect followed by the client"
+    );
+    assert!(chapter_alias.text().await.expect("body").contains("iframe"));
+
     let search = client
         .get(format!("{root}/search?q=Mirror"))
         .send()
