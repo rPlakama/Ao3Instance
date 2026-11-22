@@ -271,6 +271,27 @@ The fault matrix in ADR-0005 is the acceptance test for W6.
 | **W5** | comments (top-level + reply) | rate limit, spam, duplicate, frozen, moderation all typed; no auto-retry |
 | **W6** | failure injection + sandbox suite + kill switch + operator docs | ADR-0005 fault matrix passes; `AO3I_WRITE_ENABLED=false` blocks all writes |
 
+### W3 status — partial (2026-11-22): session + progress
+
+**Landed:**
+- AO3 session in the app: `/session` page with cookie import (default), optional
+  password login, verify-now, logout, adult-content opt-in; the jar is persisted
+  **encrypted** (AES-256-GCM, `sessions` table) and restored on startup without a
+  network probe (`AccountSession::restore`); every upstream read now goes through
+  that session's client.
+- Login outcomes surfaced: rejection, CSRF expiry, pwned-password redirect and
+  canonical-login recovery (from W1) are mapped to human messages.
+- Adult interstitial and login gates are recognised and explained instead of
+  being reported as parser drift.
+- Chapter-anchored reading progress: saved from the reader, shown on the start
+  page as "continue ch. N", offered as a resume banner when reading elsewhere.
+- Tests: 106 total; new `tests/session_and_progress.rs` (persist/use session,
+  progress/resume, adult gate). Evidence: `notes/gates/w3.txt`.
+
+**Remaining W3:** password at rest + automatic re-login after expiry (today:
+re-authenticate), scroll/block anchor for I7 (today: chapter anchor), local
+search/offline index, conditional refresh/follow.
+
 ### W2 / M1 status — complete (2026-11-22)
 
 **Landed:** work-page parser (`src/ao3/work.rs`, selectors traced to the pinned clone), SQLite

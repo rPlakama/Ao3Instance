@@ -50,7 +50,7 @@ async fn app_opens_a_work_from_a_mock_upstream() {
 
     let pool = db::open(&config.db_file).await.expect("db");
     let store = Store::new(pool.clone());
-    let app = server::router(&config, store).expect("router");
+    let app = server::router(&config, store).await.expect("router");
 
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
         .await
@@ -183,7 +183,9 @@ async fn unknown_cached_work_is_a_clean_404() {
     ])
     .expect("config");
     let pool = db::open(&config.db_file).await.expect("db");
-    let app = server::router(&config, Store::new(pool.clone())).expect("router");
+    let app = server::router(&config, Store::new(pool.clone()))
+        .await
+        .expect("router");
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
         .await
         .expect("bind");

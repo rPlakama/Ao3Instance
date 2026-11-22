@@ -1,0 +1,40 @@
+W3 gate run (session + progress chunk) — 2026-11-22
+toolchain: rustc 1.98.1, cargo 1.98.0 (nix dev shell)
+
+== cargo test (106 total)
+lib        64 passed
+client_http 7 passed
+server_smoke 2 passed
+session_and_progress 3 passed   (new: session persist/use, progress resume, adult gate)
+session_flow 25 passed
+work_parse   5 passed
+doc-tests    0
+== cargo clippy --all-targets -- -D warnings: clean
+== cargo fmt --check: clean
+
+== application opens (real binary, temp config, unreachable upstream on purpose)
+/            200 · landing page + works list + Session link
+/session     200 · import form, password form, adult opt-in, state chip
+/health      200 · ok
+POST /session/import (upstream unreachable) -> 200 on /session with a readable
+  "Session import failed" error; no live archiveofourown.org request was made.
+
+== what the new integration tests prove
+1. imported_session_is_persisted_and_used_for_fetches
+   - POST /session/import verifies against the mock AO3 (probe + CSRF token)
+   - jar is stored ENCRYPTED (ciphertext does not contain the cookie value) and
+     decrypts back with the 0600 key file
+   - POST /open for a work carries `_otwarchive_session=s1` in the upstream Cookie header
+2. progress_is_saved_listed_and_offered_as_resume
+   - POST /progress stores chapter 2; / shows "continue ch. 2";
+     /read/12345?chapter=1 shows "You were at chapter 2" + Resume link
+3. adult_gate_is_explained_not_reported_as_drift
+   - AO3's adult interstitial surfaces "enable adult content" advice (502) instead
+     of the generic parser-drift error
+
+== known limits of this chunk
+- restricted/adult works: the UI explains and stores view_adult consent in the jar,
+  but a real end-to-end read still needs a live/sandbox AO3 session (429 from this host).
+- password persistence for automatic re-login is NOT stored yet (no custody);
+  session renewal currently means signing in again. Tracked as remaining W3.
+- progress is chapter-anchored; scroll/block anchoring (I7) is remaining W3.

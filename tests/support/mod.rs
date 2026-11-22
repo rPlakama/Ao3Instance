@@ -86,6 +86,25 @@ impl Response {
     }
 }
 
+/// A unique, cleaned-up-later temp directory for a test.
+pub fn temp_dir(tag: &str) -> std::path::PathBuf {
+    let dir = std::env::temp_dir().join(format!("ao3i-test-{}-{tag}", std::process::id()));
+    std::fs::create_dir_all(&dir).expect("temp dir");
+    dir
+}
+
+/// Serves a router on an ephemeral port; returns base URL and the task handle.
+pub async fn serve(app: axum::Router) -> (String, tokio::task::JoinHandle<()>) {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind app");
+    let addr = listener.local_addr().expect("app addr");
+    let handle = tokio::spawn(async move {
+        drop(axum::serve(listener, app).await);
+    });
+    (format!("http://{addr}"), handle)
+}
+
 type Routes = HashMap<String, Vec<Response>>;
 
 pub struct Server {

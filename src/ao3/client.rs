@@ -106,6 +106,10 @@ impl Client {
         self.jar = jar;
     }
 
+    pub fn jar_mut(&mut self) -> &mut Jar {
+        &mut self.jar
+    }
+
     pub async fn get(&mut self, path: &str) -> Result<Response> {
         let request = self.request(Method::GET, path);
         self.send(request).await

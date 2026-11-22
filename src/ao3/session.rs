@@ -111,6 +111,29 @@ impl AccountSession {
         &self.client
     }
 
+    pub fn client_mut(&mut self) -> &mut Client {
+        &mut self.client
+    }
+
+    /// Restores a persisted jar without touching the network.
+    ///
+    /// The jar is only proven by the first real read (or an explicit
+    /// [`AccountSession::probe`]), so the state is `Imported` — never `Active`.
+    pub fn restore(&mut self, account: &str, jar: Jar) -> Result<SessionState> {
+        self.ensure_alive()?;
+        let account = validate_account(account)?;
+        self.account = account.to_string();
+        self.csrf = None;
+        if !jar.is_complete() {
+            self.client.set_jar(Jar::new());
+            self.state = SessionState::SessionIncomplete;
+            return Ok(self.state);
+        }
+        self.client.set_jar(jar);
+        self.state = SessionState::Imported;
+        Ok(self.state)
+    }
+
     /// The masked CSRF token for mutating requests, if the session has one.
     pub fn csrf_token(&self) -> Result<&str> {
         self.csrf

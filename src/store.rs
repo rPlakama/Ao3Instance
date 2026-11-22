@@ -55,6 +55,8 @@ pub struct WorkSummary {
     pub title: String,
     pub authors: Vec<String>,
     pub chapter_count: i64,
+    /// Chapter to resume at, when a reading position is stored.
+    pub progress_chapter: Option<i64>,
 }
 
 #[derive(Clone)]
@@ -216,8 +218,10 @@ impl Store {
 
     pub async fn list_works(&self, limit: i64) -> Result<Vec<WorkSummary>> {
         let rows = sqlx::query(
-            "SELECT ao3_id, title, authors_json, chapter_count FROM works
-             ORDER BY fetched_at DESC, ao3_id DESC LIMIT ?1",
+            "SELECT w.ao3_id, w.title, w.authors_json, w.chapter_count, p.chapter_idx AS progress_chapter
+             FROM works w
+             LEFT JOIN progress p ON p.work_id = w.ao3_id AND p.account_id = 'local'
+             ORDER BY w.fetched_at DESC, w.ao3_id DESC LIMIT ?1",
         )
         .bind(limit)
         .fetch_all(&self.pool)
@@ -233,9 +237,79 @@ impl Store {
                 title: row.get("title"),
                 authors,
                 chapter_count: row.get("chapter_count"),
+                progress_chapter: row.get("progress_chapter"),
             });
         }
         Ok(works)
+    }
+}
+
+impl Store {
+    // ---- persisted AO3 session (encrypted jar) ----
+
+    pub async fn save_session(&self, account: &str, jar_enc: &str) -> Result<()> {
+        sqlx::query(
+            "INSERT INTO sessions (account_id, jar_enc, updated_at) VALUES (?1, ?2, ?3)
+             ON CONFLICT(account_id) DO UPDATE SET
+               jar_enc = excluded.jar_enc,
+               updated_at = excluded.updated_at",
+        )
+        .bind(account)
+        .bind(jar_enc)
+        .bind(now_secs())
+        .execute(&self.pool)
+        .await
+        .map_err(|e| Error::Store(format!("save session: {e}")))?;
+        Ok(())
+    }
+
+    /// Most recently saved session: `(account, encrypted jar)`.
+    pub async fn load_session(&self) -> Result<Option<(String, String)>> {
+        let row = sqlx::query(
+            "SELECT account_id, jar_enc FROM sessions ORDER BY updated_at DESC LIMIT 1",
+        )
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(|e| Error::Store(format!("load session: {e}")))?;
+        Ok(row.map(|row| (row.get("account_id"), row.get("jar_enc"))))
+    }
+
+    pub async fn delete_session(&self) -> Result<()> {
+        sqlx::query("DELETE FROM sessions")
+            .execute(&self.pool)
+            .await
+            .map_err(|e| Error::Store(format!("delete session: {e}")))?;
+        Ok(())
+    }
+
+    // ---- reading progress (chapter anchor) ----
+
+    pub async fn save_progress(&self, work_id: &str, chapter_idx: i64) -> Result<()> {
+        sqlx::query(
+            "INSERT INTO progress (account_id, work_id, chapter_idx, updated_at)
+             VALUES ('local', ?1, ?2, ?3)
+             ON CONFLICT(account_id, work_id) DO UPDATE SET
+               chapter_idx = excluded.chapter_idx,
+               updated_at = excluded.updated_at",
+        )
+        .bind(work_id)
+        .bind(chapter_idx)
+        .bind(now_secs())
+        .execute(&self.pool)
+        .await
+        .map_err(|e| Error::Store(format!("save progress: {e}")))?;
+        Ok(())
+    }
+
+    pub async fn get_progress(&self, work_id: &str) -> Result<Option<i64>> {
+        let row = sqlx::query(
+            "SELECT chapter_idx FROM progress WHERE account_id = 'local' AND work_id = ?1",
+        )
+        .bind(work_id)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(|e| Error::Store(format!("get progress: {e}")))?;
+        Ok(row.map(|row| row.get("chapter_idx")))
     }
 }
 
@@ -350,6 +424,30 @@ mod tests {
         let works = store.list_works(10).await.unwrap();
         assert_eq!(works.len(), 2);
         assert_eq!(works[0].ao3_id, "2");
+
+        store.pool().close().await;
+        drop(std::fs::remove_dir_all(dir));
+    }
+
+    #[tokio::test]
+    async fn session_and_progress_round_trip() {
+        let (store, dir) = test_store("session").await;
+        assert!(store.load_session().await.unwrap().is_none());
+
+        store.save_session("someone", "ciphertext-1").await.unwrap();
+        store.save_session("someone", "ciphertext-2").await.unwrap();
+        let (account, jar) = store.load_session().await.unwrap().expect("session");
+        assert_eq!(account, "someone");
+        assert_eq!(jar, "ciphertext-2");
+        store.delete_session().await.unwrap();
+        assert!(store.load_session().await.unwrap().is_none());
+
+        store.upsert_work(&page(), "h").await.unwrap();
+        assert!(store.get_progress("123").await.unwrap().is_none());
+        store.save_progress("123", 2).await.unwrap();
+        assert_eq!(store.get_progress("123").await.unwrap(), Some(2));
+        let works = store.list_works(10).await.unwrap();
+        assert_eq!(works[0].progress_chapter, Some(2));
 
         store.pool().close().await;
         drop(std::fs::remove_dir_all(dir));

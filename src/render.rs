@@ -62,6 +62,17 @@ h2.title { margin:.2rem 0 0; font-size:1.9rem; line-height:1.25; }
 .toolbar a:hover { color:var(--accent); }
 iframe.chapter { width:100%; border:0; background:transparent; min-height:70vh; }
 footer.site { padding:1rem 1.5rem; border-top:1px solid var(--line); color:var(--muted); font-size:.8rem; }
+form.stack { display:grid; gap:.6rem; max-width:32rem; margin:1rem 0 2rem; }
+form.stack label { font-size:.85rem; color:var(--muted); }
+form.stack input[type=text], form.stack input[type=password] { padding:.55rem .7rem; font:inherit; color:inherit; background:transparent; border:1px solid var(--line); border-radius:6px; }
+form.stack button, form.save button { padding:.55rem 1rem; font:inherit; border:1px solid var(--accent); background:var(--accent); color:#fff; border-radius:6px; cursor:pointer; }
+form.inline { display:flex; flex-wrap:wrap; gap:.5rem; align-items:center; margin:1rem 0; }
+form.inline button { padding:.4rem .8rem; font:inherit; border:1px solid var(--line); background:transparent; color:inherit; border-radius:6px; cursor:pointer; }
+.state { display:inline-block; padding:.1rem .5rem; border-radius:999px; font-size:.78rem; border:1px solid var(--line); }
+.state.active { border-color:#2e7d32; color:#2e7d32; }
+.state.imported { border-color:#b8860b; color:#b8860b; }
+.notice { border:1px solid #2e7d32; color:#2e7d32; padding:.7rem 1rem; border-radius:6px; margin:1rem 0; }
+.continue { margin:.6rem 0; padding:.6rem .9rem; border:1px dashed var(--line); border-radius:6px; font-size:.92rem; }
 "#;
 
 fn layout(title: &str, body: &str) -> String {
@@ -86,6 +97,9 @@ pub fn home_page(works: &[WorkSummary], error: Option<&str>) -> String {
     if let Some(error) = error {
         body.push_str(&format!("<div class=\"error\">{}</div>", escape(error)));
     }
+    body.push_str(
+        "<div class=\"meta\"><a href=\"/session\">Session</a> · cached works stay readable offline</div>",
+    );
     if works.is_empty() {
         body.push_str(
             "<p class=\"muted\">Nothing cached yet. Paste a work id or URL above; \
@@ -99,13 +113,21 @@ pub fn home_page(works: &[WorkSummary], error: Option<&str>) -> String {
             } else {
                 work.authors.join(", ")
             };
+            let continue_at = match work.progress_chapter {
+                Some(chapter) => format!(
+                    " · <a href=\"/read/{}?chapter={chapter}\">continue ch. {chapter}</a>",
+                    escape(&work.ao3_id)
+                ),
+                None => String::new(),
+            };
             body.push_str(&format!(
                 "<li><a href=\"/read/{id}\">{title}</a>\
-                 <div class=\"meta\">{authors} · {chapters} chapter(s)</div></li>",
+                 <div class=\"meta\">{authors} · {chapters} chapter(s){continue_at}</div></li>",
                 id = escape(&work.ao3_id),
                 title = escape(&work.title),
                 authors = escape(&authors),
                 chapters = work.chapter_count,
+                continue_at = continue_at,
             ));
         }
         body.push_str("</ul>");
@@ -124,7 +146,12 @@ fn tag_chips(tags: &[String], class: &str) -> String {
     out
 }
 
-pub fn read_page(work: &StoredWork, chapters: &[StoredChapter], current: i64) -> String {
+pub fn read_page(
+    work: &StoredWork,
+    chapters: &[StoredChapter],
+    current: i64,
+    progress: Option<i64>,
+) -> String {
     let authors = if work.authors.is_empty() {
         "Anonymous".to_string()
     } else {
@@ -181,6 +208,16 @@ pub fn read_page(work: &StoredWork, chapters: &[StoredChapter], current: i64) ->
         .position(|chapter| chapter.idx == current)
         .unwrap_or(0);
 
+    if let Some(continue_at) = progress
+        && continue_at != current
+    {
+        body.push_str(&format!(
+            "<div class=\"continue\">You were at chapter {continue_at}. \
+             <a href=\"/read/{}?chapter={continue_at}\">Resume</a></div>",
+            escape(&work.ao3_id)
+        ));
+    }
+
     let mut toolbar = String::from("<div class=\"toolbar\">");
     toolbar.push_str(&format!(
         "<span>Chapter {} of {}</span>",
@@ -208,6 +245,14 @@ pub fn read_page(work: &StoredWork, chapters: &[StoredChapter], current: i64) ->
     ));
     toolbar.push_str("</div>");
     body.push_str(&toolbar);
+    body.push_str(&format!(
+        "<form class=\"save\" method=\"post\" action=\"/progress\">\
+         <input type=\"hidden\" name=\"work_id\" value=\"{}\">\
+         <input type=\"hidden\" name=\"chapter\" value=\"{}\">\
+         <button type=\"submit\">Save this chapter as my place</button></form>",
+        escape(&work.ao3_id),
+        current
+    ));
 
     match chapter {
         Some(chapter) => {
@@ -264,6 +309,90 @@ pub fn chapter_document(work_title: &str, chapter: &StoredChapter) -> String {
          </head><body>{body}</body></html>",
         escape(work_title)
     )
+}
+
+/// Session management: AO3 login, cookie import, verification, adult opt-in.
+#[allow(
+    clippy::too_many_arguments,
+    reason = "server-rendered form with independent state fields"
+)]
+pub fn session_page(
+    account: &str,
+    state: &str,
+    jar_complete: bool,
+    adult_enabled: bool,
+    notice: Option<&str>,
+    error: Option<&str>,
+) -> String {
+    let mut body = String::new();
+    body.push_str(&format!(
+        "<h2>AO3 session</h2><p class=\"meta\">State: <span class=\"state {class}\">{state}</span> \
+         {account}</p>",
+        class = if state == "active" {
+            "active"
+        } else {
+            "imported"
+        },
+        account = if account.is_empty() {
+            String::new()
+        } else {
+            format!("· signed in as {}", crate::render::escape(account))
+        },
+    ));
+    if !account.is_empty() {
+        body.push_str(&format!(
+            "<p class=\"meta\">Cookie jar: {}. Adult content: {}.</p>",
+            if jar_complete {
+                "complete"
+            } else {
+                "incomplete (needs user_credentials)"
+            },
+            if adult_enabled {
+                "enabled"
+            } else {
+                "not enabled"
+            },
+        ));
+        body.push_str(
+            "<form class=\"inline\" method=\"post\" action=\"/session/probe\">\
+             <button type=\"submit\">Verify session now</button></form>\
+             <form class=\"inline\" method=\"post\" action=\"/session/adult\">\
+             <button type=\"submit\">Enable adult content</button></form>\
+             <form class=\"inline\" method=\"post\" action=\"/session/logout\">\
+             <button type=\"submit\">Log out of AO3</button></form>",
+        );
+    }
+    if let Some(notice) = notice {
+        body.push_str(&format!("<div class=\"notice\">{}</div>", escape(notice)));
+    }
+    if let Some(error) = error {
+        body.push_str(&format!("<div class=\"error\">{}</div>", escape(error)));
+    }
+
+    body.push_str(
+        "<h3>Import cookies (recommended: no password custody)</h3>\
+         <p class=\"meta\">In your browser, sign in to archiveofourown.org, open DevTools → \
+         Application → Cookies, and copy the values of <code>_otwarchive_session</code> and \
+         <code>user_credentials</code>. They are stored encrypted (AES-256-GCM) with a key \
+         only this server can read.</p>\
+         <form class=\"stack\" method=\"post\" action=\"/session/import\">\
+         <label>AO3 login <input type=\"text\" name=\"account\" required autocomplete=\"username\"></label>\
+         <label>_otwarchive_session <input type=\"text\" name=\"session_cookie\" required></label>\
+         <label>user_credentials <input type=\"text\" name=\"credentials_cookie\" required></label>\
+         <label><input type=\"checkbox\" name=\"adult\" value=\"1\"> This account may read adult content</label>\
+         <button type=\"submit\">Import session</button></form>",
+    );
+    body.push_str(
+        "<h3>Sign in with a password</h3>\
+         <p class=\"meta\">Optional. The password is encrypted at rest and used only to \
+         renew the AO3 session; import is safer.</p>\
+         <form class=\"stack\" method=\"post\" action=\"/session/login\">\
+         <label>AO3 login or email <input type=\"text\" name=\"account\" required autocomplete=\"username\"></label>\
+         <label>Password <input type=\"password\" name=\"password\" required autocomplete=\"current-password\"></label>\
+         <label><input type=\"checkbox\" name=\"adult\" value=\"1\"> This account may read adult content</label>\
+         <button type=\"submit\">Sign in</button></form>",
+    );
+    layout("Session — AO3Instance", &body)
 }
 
 pub fn error_page(status: u16, message: &str) -> String {
