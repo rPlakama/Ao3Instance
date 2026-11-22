@@ -38,6 +38,7 @@ pub struct StoredWork {
     pub kudos: Option<u64>,
     pub comment_count: Option<u64>,
     pub chapter_count: usize,
+    pub content_hash: String,
     pub fetched_at: i64,
 }
 
@@ -162,7 +163,7 @@ impl Store {
     pub async fn get_work(&self, ao3_id: &str) -> Result<Option<StoredWork>> {
         let row = sqlx::query(
             "SELECT ao3_id, title, authors_json, summary, tags_json, rating, language,
-                    word_count, kudos, comment_count, chapter_count, fetched_at
+                    word_count, kudos, comment_count, chapter_count, content_hash, fetched_at
              FROM works WHERE ao3_id = ?1",
         )
         .bind(ao3_id)
@@ -191,6 +192,7 @@ impl Store {
             kudos: row.get::<Option<i64>, _>("kudos").map(|v| v as u64),
             comment_count: row.get::<Option<i64>, _>("comment_count").map(|v| v as u64),
             chapter_count: row.get::<i64, _>("chapter_count") as usize,
+            content_hash: row.get("content_hash"),
             fetched_at: row.get("fetched_at"),
         }))
     }
@@ -245,6 +247,54 @@ impl Store {
 }
 
 impl Store {
+    /// Full-text search over cached works. Returns recent-first ties broken by
+    /// rank; an empty query is an empty result, never "everything".
+    pub async fn search_works(&self, query: &str, limit: i64) -> Result<Vec<WorkSummary>> {
+        let Some(fts) = fts_query(query) else {
+            return Ok(Vec::new());
+        };
+        let rows = sqlx::query(
+            "SELECT w.ao3_id, w.title, w.authors_json, w.chapter_count,
+                    p.chapter_idx AS progress_chapter
+             FROM work_search
+             JOIN works w ON w.ao3_id = work_search.work_id
+             LEFT JOIN progress p ON p.work_id = w.ao3_id AND p.account_id = 'local'
+             WHERE work_search MATCH ?1
+             ORDER BY rank
+             LIMIT ?2",
+        )
+        .bind(fts)
+        .bind(limit)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| Error::Store(format!("search works: {e}")))?;
+
+        let mut works = Vec::with_capacity(rows.len());
+        for row in rows {
+            let authors_json: String = row.get("authors_json");
+            let authors: Vec<String> = serde_json::from_str(&authors_json).unwrap_or_default();
+            works.push(WorkSummary {
+                ao3_id: row.get("ao3_id"),
+                title: row.get("title"),
+                authors,
+                chapter_count: row.get("chapter_count"),
+                progress_chapter: row.get("progress_chapter"),
+            });
+        }
+        Ok(works)
+    }
+
+    /// Records that a work was checked upstream without changing its content.
+    pub async fn touch_checked(&self, ao3_id: &str) -> Result<()> {
+        sqlx::query("UPDATE works SET fetched_at = ?2 WHERE ao3_id = ?1")
+            .bind(ao3_id)
+            .bind(now_secs())
+            .execute(&self.pool)
+            .await
+            .map_err(|e| Error::Store(format!("touch checked: {e}")))?;
+        Ok(())
+    }
+
     // ---- persisted AO3 session (encrypted jar) ----
 
     pub async fn save_session(&self, account: &str, jar_enc: &str) -> Result<()> {
@@ -310,6 +360,21 @@ impl Store {
         .await
         .map_err(|e| Error::Store(format!("get progress: {e}")))?;
         Ok(row.map(|row| row.get("chapter_idx")))
+    }
+}
+
+/// Quotes user input for FTS5: every whitespace token becomes a quoted prefix
+/// term, so syntax characters are data, not query operators. `None` for blank.
+fn fts_query(raw: &str) -> Option<String> {
+    let tokens: Vec<String> = raw
+        .split_whitespace()
+        .filter(|token| !token.is_empty())
+        .map(|token| format!("\"{}\"*", token.replace('"', "\"\"")))
+        .collect();
+    if tokens.is_empty() {
+        None
+    } else {
+        Some(tokens.join(" "))
     }
 }
 
@@ -451,6 +516,94 @@ mod tests {
 
         store.pool().close().await;
         drop(std::fs::remove_dir_all(dir));
+    }
+
+    #[tokio::test]
+    async fn search_finds_title_author_and_tags() {
+        let (store, dir) = test_store("search").await;
+        store.upsert_work(&page(), "h1").await.unwrap();
+        let mut other = page();
+        other.ao3_id = "999".into();
+        other.title = "Another Story".into();
+        other.authors = vec!["secondwriter".into()];
+        other.additional_tags = vec!["Angst".into()];
+        store.upsert_work(&other, "h2").await.unwrap();
+
+        let by_title = store.search_works("Test", 10).await.unwrap();
+        assert_eq!(by_title.len(), 1);
+        assert_eq!(by_title[0].ao3_id, "123");
+
+        let by_author = store.search_works("secondwriter", 10).await.unwrap();
+        assert_eq!(by_author[0].ao3_id, "999");
+
+        let by_tag = store.search_works("angst", 10).await.unwrap();
+        assert_eq!(by_tag[0].ao3_id, "999");
+
+        // No results, blank query, and FTS syntax characters as data.
+        assert!(
+            store
+                .search_works("nothingmatchesthis", 10)
+                .await
+                .unwrap()
+                .is_empty()
+        );
+        assert!(store.search_works("   ", 10).await.unwrap().is_empty());
+        assert!(
+            store
+                .search_works("\"; DROP TABLE works; --", 10)
+                .await
+                .unwrap()
+                .is_empty()
+        );
+
+        // Update triggers keep the index in step.
+        let mut renamed = page();
+        renamed.title = "Renamed Work".into();
+        renamed.authors = vec!["writer2".into()];
+        store.upsert_work(&renamed, "h3").await.unwrap();
+        assert_eq!(store.search_works("Renamed", 10).await.unwrap().len(), 1);
+        // Both the old title and the old author are gone from the index.
+        assert!(store.search_works("Test", 10).await.unwrap().is_empty());
+        assert!(store.search_works("tester", 10).await.unwrap().is_empty());
+
+        store.pool().close().await;
+        drop(std::fs::remove_dir_all(dir));
+    }
+
+    #[tokio::test]
+    async fn touch_checked_moves_fetched_at_forward() {
+        let (store, dir) = test_store("touch").await;
+        store.upsert_work(&page(), "h1").await.unwrap();
+        let before = store
+            .get_work("123")
+            .await
+            .unwrap()
+            .expect("work")
+            .fetched_at;
+        sqlx::query("UPDATE works SET fetched_at = 1")
+            .execute(store.pool())
+            .await
+            .unwrap();
+        store.touch_checked("123").await.unwrap();
+        let after = store
+            .get_work("123")
+            .await
+            .unwrap()
+            .expect("work")
+            .fetched_at;
+        assert!(after > 1 && after >= before);
+        store.pool().close().await;
+        drop(std::fs::remove_dir_all(dir));
+    }
+
+    #[test]
+    fn fts_query_quotes_tokens() {
+        assert_eq!(
+            fts_query("hello world").as_deref(),
+            Some("\"hello\"* \"world\"*")
+        );
+        assert_eq!(fts_query("a\"b").as_deref(), Some("\"a\"\"b\"*"));
+        assert_eq!(fts_query("  "), None);
     }
 
     #[test]

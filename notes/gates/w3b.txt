@@ -1,0 +1,39 @@
+W3b gate run (local search + conditional refresh) — 2026-11-22
+toolchain: rustc 1.98.1, cargo 1.98.0 (nix dev shell)
+
+== cargo test (113 total)
+lib          68 passed
+client_http   7 passed
+search_and_refresh 3 passed   (new: FTS search, unchanged refresh, changed refresh)
+server_smoke  2 passed
+session_and_progress 3 passed
+session_flow 25 passed
+work_parse    5 passed
+doc-tests     0
+== cargo clippy --all-targets -- -D warnings: clean
+== cargo fmt --check: clean
+
+== application opens (real binary, temp config)
+/                    200 · landing page with SEARCH form + open-work form
+/search?q=anything   200 · empty-state hint ("Nothing cached matches…")
+/health              200 · ok
+
+== what the new integration tests prove
+1. search_covers_title_author_and_tags_over_the_cache
+   - FTS5 index over cached works: tag hit returns only that work; author hit works;
+     blank query and misses render cleanly; FTS syntax characters are data
+     ("\"; DROP TABLE works; --" returns 200 and the works table survives)
+2. refresh_with_unchanged_content_only_touches_the_check_time
+   - refresh fetches AO3 once (2 upstream requests total: open + refresh), compares
+     sha256 content_hash, keeps the cache, moves fetched_at forward, and the page
+     says "no changes since the cached copy"
+3. refresh_with_changed_content_updates_cache_and_search
+   - changed upstream content updates title/chapters, shows "Updated from AO3.",
+     and the FTS trigger drops the old title tokens while indexing the new ones
+   - reader shows "checked <UTC timestamp>"; copies older than 7 days are labelled stale
+
+== design notes
+- FTS5 table + INSERT/UPDATE/DELETE triggers: one writer (works), no app-side
+  reindex step to forget; migration backfills pre-existing cache rows.
+- Search input is quoted token-by-token with prefix matching, so user text is
+  data, never FTS syntax.

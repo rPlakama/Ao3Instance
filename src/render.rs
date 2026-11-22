@@ -90,7 +90,10 @@ fn layout(title: &str, body: &str) -> String {
 
 pub fn home_page(works: &[WorkSummary], error: Option<&str>) -> String {
     let mut body = String::from(
-        "<form class=\"open\" method=\"post\" action=\"/open\">\
+        "<form class=\"open\" method=\"get\" action=\"/search\">\
+         <input name=\"q\" placeholder=\"Search cached works (title, author, tag)\">\
+         <button type=\"submit\">Search</button></form>\
+         <form class=\"open\" method=\"post\" action=\"/open\">\
          <input name=\"id\" placeholder=\"AO3 work id or URL (e.g. 12345678)\" autofocus required>\
          <button type=\"submit\">Open work</button></form>",
     );
@@ -135,6 +138,55 @@ pub fn home_page(works: &[WorkSummary], error: Option<&str>) -> String {
     layout("AO3Instance", &body)
 }
 
+/// Search results over the local cache.
+pub fn search_page(query: &str, works: &[WorkSummary]) -> String {
+    let mut body = format!(
+        "<h2>Search</h2><form class=\"open\" method=\"get\" action=\"/search\">\
+         <input name=\"q\" value=\"{}\" placeholder=\"title, author or tag\">\
+         <button type=\"submit\">Search</button></form>",
+        escape(query)
+    );
+    if query.trim().is_empty() {
+        body.push_str("<p class=\"muted\">Search the works cached on this instance.</p>");
+    } else if works.is_empty() {
+        body.push_str(&format!(
+            "<p class=\"muted\">Nothing cached matches “{}”. Open the work from the start \
+             page first; offline search only covers what has been cached.</p>",
+            escape(query)
+        ));
+    } else {
+        body.push_str(&format!(
+            "<p class=\"meta\">{} match(es)</p><ul class=\"works\">",
+            works.len()
+        ));
+        for work in works {
+            let authors = if work.authors.is_empty() {
+                "Anonymous".to_string()
+            } else {
+                work.authors.join(", ")
+            };
+            let continue_at = match work.progress_chapter {
+                Some(chapter) => format!(
+                    " · <a href=\"/read/{}?chapter={chapter}\">continue ch. {chapter}</a>",
+                    escape(&work.ao3_id)
+                ),
+                None => String::new(),
+            };
+            body.push_str(&format!(
+                "<li><a href=\"/read/{id}\">{title}</a>\
+                 <div class=\"meta\">{authors} · {chapters} chapter(s){continue_at}</div></li>",
+                id = escape(&work.ao3_id),
+                title = escape(&work.title),
+                authors = escape(&authors),
+                chapters = work.chapter_count,
+                continue_at = continue_at,
+            ));
+        }
+        body.push_str("</ul>");
+    }
+    layout("Search — AO3Instance", &body)
+}
+
 fn tag_chips(tags: &[String], class: &str) -> String {
     let mut out = String::new();
     for tag in tags {
@@ -151,6 +203,7 @@ pub fn read_page(
     chapters: &[StoredChapter],
     current: i64,
     progress: Option<i64>,
+    notice: Option<&str>,
 ) -> String {
     let authors = if work.authors.is_empty() {
         "Anonymous".to_string()
@@ -158,6 +211,9 @@ pub fn read_page(
         work.authors.join(", ")
     };
     let mut body = String::new();
+    if let Some(notice) = notice {
+        body.push_str(&format!("<div class=\"notice\">{}</div>", escape(notice)));
+    }
     body.push_str(&format!(
         "<h2 class=\"title\">{}</h2><div class=\"byline\">by {}</div>",
         escape(&work.title),
@@ -177,9 +233,8 @@ pub fn read_page(
     if let Some(kudos) = work.kudos {
         facts.push(format!("{kudos} kudos"));
     }
-    if !facts.is_empty() {
-        body.push_str(&format!("<div class=\"meta\">{}</div>", facts.join(" · ")));
-    }
+    facts.push(checked_label(work.fetched_at));
+    body.push_str(&format!("<div class=\"meta\">{}</div>", facts.join(" · ")));
 
     let mut tags = String::new();
     tags.push_str(&tag_chips(&work.tags.warnings, "warning"));
@@ -245,6 +300,13 @@ pub fn read_page(
     ));
     toolbar.push_str("</div>");
     body.push_str(&toolbar);
+    body.push_str(&format!(
+        "<form class=\"inline\" method=\"post\" action=\"/open\">\
+         <input type=\"hidden\" name=\"id\" value=\"{}\">\
+         <input type=\"hidden\" name=\"refresh\" value=\"1\">\
+         <button type=\"submit\">Refresh from AO3</button></form>",
+        escape(&work.ao3_id)
+    ));
     body.push_str(&format!(
         "<form class=\"save\" method=\"post\" action=\"/progress\">\
          <input type=\"hidden\" name=\"work_id\" value=\"{}\">\
@@ -395,6 +457,61 @@ pub fn session_page(
     layout("Session — AO3Instance", &body)
 }
 
+/// How long before a cached copy is labelled stale.
+const STALE_AFTER_SECS: i64 = 7 * 86_400;
+
+fn now_secs() -> i64 {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0)
+}
+
+/// `YYYY-MM-DD HH:MM UTC` without pulling a date crate.
+fn format_utc(unix: i64) -> String {
+    let days = unix.div_euclid(86_400);
+    let seconds = unix.rem_euclid(86_400);
+    let (year, month, day) = civil_from_days(days);
+    format!(
+        "{year:04}-{month:02}-{day:02} {:02}:{:02} UTC",
+        seconds / 3_600,
+        (seconds % 3_600) / 60
+    )
+}
+
+fn checked_label(fetched_at: i64) -> String {
+    let age = now_secs().saturating_sub(fetched_at);
+    if age > STALE_AFTER_SECS {
+        format!(
+            "checked {} ({} days ago — stale)",
+            format_utc(fetched_at),
+            age / 86_400
+        )
+    } else {
+        format!("checked {}", format_utc(fetched_at))
+    }
+}
+
+/// Inverse of the day-count algorithm: days since 1970-01-01 → (year, month, day).
+fn civil_from_days(days: i64) -> (i64, i64, i64) {
+    let z = days + 719_468;
+    let era = if z >= 0 { z } else { z - 146_096 } / 146_097;
+    let day_of_era = z - era * 146_097;
+    let year_of_era =
+        (day_of_era - day_of_era / 1_460 + day_of_era / 36_524 - day_of_era / 146_096) / 365;
+    let year = year_of_era + era * 400;
+    let day_of_year = day_of_era - (365 * year_of_era + year_of_era / 4 - year_of_era / 100);
+    let month_prime = (5 * day_of_year + 2) / 153;
+    let day = day_of_year - (153 * month_prime + 2) / 5 + 1;
+    let month = if month_prime < 10 {
+        month_prime + 3
+    } else {
+        month_prime - 9
+    };
+    (if month <= 2 { year + 1 } else { year }, month, day)
+}
+
 pub fn error_page(status: u16, message: &str) -> String {
     layout(
         "AO3Instance — error",
@@ -433,6 +550,13 @@ mod tests {
         let clean = sanitize(r#"<p><em>ok</em> <a href="https://example.org">link</a></p>"#);
         assert!(clean.contains("<em>"));
         assert!(clean.contains("https://example.org"));
+    }
+
+    #[test]
+    fn utc_formatting_matches_known_dates() {
+        assert_eq!(format_utc(0), "1970-01-01 00:00 UTC");
+        assert_eq!(format_utc(1_795_348_800), "2026-11-22 12:00 UTC");
+        assert_eq!(format_utc(1_795_392_000), "2026-11-23 00:00 UTC");
     }
 
     #[test]

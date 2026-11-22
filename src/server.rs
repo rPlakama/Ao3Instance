@@ -123,6 +123,7 @@ pub async fn router(config: &Config, store: Store) -> Result<Router> {
         .route("/open", post(open_work))
         .route("/read/{id}", get(read_work))
         .route("/read/{id}/chapter/{idx}", get(read_chapter))
+        .route("/search", get(search))
         .route("/progress", post(save_progress))
         .route("/session", get(session_page))
         .route("/session/import", post(session_import))
@@ -176,8 +177,9 @@ async fn open_work(
             "Expected an AO3 work id (e.g. 12345678) or a /works/<id> URL.".into(),
         ));
     };
+    let existing = state.store.get_work(&id).await?;
     // Cache first: re-opening a cached work is an offline read, not a fetch.
-    if form.refresh.is_none() && state.store.get_work(&id).await?.is_some() {
+    if form.refresh.is_none() && existing.is_some() {
         return Ok(Redirect::to(&format!("/read/{id}")));
     }
     let html = fetch_work_html(&state, &id).await?;
@@ -202,11 +204,22 @@ async fn open_work(
     // The id in our URL is authoritative: the page's links may be relative or
     // (for synthetic fixtures) point elsewhere.
     page.ao3_id = id.clone();
-    state
-        .store
-        .upsert_work(&page, &sha256_hex(html.as_bytes()))
-        .await?;
-    Ok(Redirect::to(&format!("/read/{id}")))
+    let content_hash = sha256_hex(html.as_bytes());
+    match existing {
+        Some(work) if work.content_hash == content_hash => {
+            // Same bytes upstream: record the check, do not rewrite the cache.
+            state.store.touch_checked(&id).await?;
+            Ok(Redirect::to(&format!("/read/{id}?checked=1")))
+        }
+        Some(_) => {
+            state.store.upsert_work(&page, &content_hash).await?;
+            Ok(Redirect::to(&format!("/read/{id}?updated=1")))
+        }
+        None => {
+            state.store.upsert_work(&page, &content_hash).await?;
+            Ok(Redirect::to(&format!("/read/{id}")))
+        }
+    }
 }
 
 async fn fetch_work_html(state: &AppState, id: &str) -> Handled<String> {
@@ -242,6 +255,10 @@ async fn fetch_work_html(state: &AppState, id: &str) -> Handled<String> {
 #[derive(Deserialize)]
 struct ReadQuery {
     chapter: Option<i64>,
+    /// Set by a refresh that found no upstream change.
+    checked: Option<String>,
+    /// Set by a refresh that stored a new version.
+    updated: Option<String>,
 }
 
 async fn read_work(
@@ -256,7 +273,16 @@ async fn read_work(
         .chapter
         .or(progress)
         .unwrap_or_else(|| chapters.first().map(|chapter| chapter.idx).unwrap_or(1));
-    Ok(Html(render::read_page(&work, &chapters, current, progress)))
+    let notice = if query.checked.is_some() {
+        Some("Checked AO3 — no changes since the cached copy.")
+    } else if query.updated.is_some() {
+        Some("Updated from AO3.")
+    } else {
+        None
+    };
+    Ok(Html(render::read_page(
+        &work, &chapters, current, progress, notice,
+    )))
 }
 
 async fn read_chapter(
@@ -284,6 +310,20 @@ async fn read_chapter(
         HeaderValue::from_static("nosniff"),
     );
     Ok(response)
+}
+
+#[derive(Deserialize)]
+struct SearchQuery {
+    q: Option<String>,
+}
+
+async fn search(
+    State(state): State<Arc<AppState>>,
+    Query(query): Query<SearchQuery>,
+) -> Handled<Html<String>> {
+    let raw = query.q.unwrap_or_default();
+    let works = state.store.search_works(&raw, 50).await?;
+    Ok(Html(render::search_page(&raw, &works)))
 }
 
 #[derive(Deserialize)]

@@ -287,10 +287,18 @@ The fault matrix in ADR-0005 is the acceptance test for W6.
   page as "continue ch. N", offered as a resume banner when reading elsewhere.
 - Tests: 106 total; new `tests/session_and_progress.rs` (persist/use session,
   progress/resume, adult gate). Evidence: `notes/gates/w3.txt`.
+- **Local search**: FTS5 index over cached works (title, authors, tags) kept in
+  sync by triggers; `/search` page; input is quoted token-wise so it is data,
+  never FTS syntax. `tests/search_and_refresh.rs`, `notes/gates/w3b.txt`.
+- **Conditional refresh**: "Refresh from AO3" compares the cached `content_hash`;
+  unchanged → cache kept and `fetched_at` moves with a "no changes" notice;
+  changed → upsert + the FTS triggers follow. Reader shows the check time and
+  labels copies older than 7 days as stale.
+- Tests: 113 total. Evidence: `notes/gates/w3b.txt`.
 
 **Remaining W3:** password at rest + automatic re-login after expiry (today:
-re-authenticate), scroll/block anchor for I7 (today: chapter anchor), local
-search/offline index, conditional refresh/follow.
+re-authenticate), scroll/block anchor for I7 (today: chapter anchor), series
+follow/scheduled refresh.
 
 ### W2 / M1 status — complete (2026-11-22)
 

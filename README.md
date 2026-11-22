@@ -33,5 +33,6 @@ Configuration (environment, read once at startup): `AO3I_BIND`, `AO3I_PORT`,
 `AO3I_WRITE_ENABLED`, `AO3I_MIN_SPACING_MS`. See `docs/write-client-plan.md`.
 
 Current state: M1 vertical slice (open → cache → read) plus AO3 session management
-(cookie import or password login, encrypted jar) and chapter-level reading progress/resume. Tests: `nix develop -c cargo test`.
+(cookie import or password login, encrypted jar), chapter-level reading progress/resume,
+local full-text search over the cache, and conditional refresh from AO3. Tests: `nix develop -c cargo test`.
 Design and decisions: `docs/init-audit.md`, `docs/ao3-write-api.md`, `docs/adr/`.
