@@ -51,6 +51,8 @@ pub struct AppState {
     pub solver_status: tokio::sync::RwLock<SolverStatus>,
     /// Single-flight guard: one solve (and one Chromium) at a time.
     pub solver_lock: tokio::sync::Mutex<()>,
+    /// Global display preference (`default` or `reversi`).
+    pub skin: tokio::sync::RwLock<String>,
 }
 
 /// Builds the router. Split from [`run`] so tests can serve it on an ephemeral
@@ -113,6 +115,7 @@ pub async fn router(config: &Config, store: Store) -> Result<Router> {
         diag_tx,
         solver_status: tokio::sync::RwLock::new(solver_status),
         solver_lock: tokio::sync::Mutex::new(()),
+        skin: tokio::sync::RwLock::new("default".to_string()),
     });
     let app = Router::new()
         .route("/", get(reads::home))
@@ -148,9 +151,10 @@ pub async fn router(config: &Config, store: Store) -> Result<Router> {
         .route("/subscriptions", get(lists::subscriptions))
         .route("/bookmarks", get(lists::bookmarks))
         .route("/reading", get(lists::reading))
-        .route("/works/{id}", get(reads::read_work))
+        .route("/works/{id}", get(reads::work_alias))
         .route("/works/{id}/chapters/{idx}", get(reads::chapter_alias))
         .route("/assets/ao3.css", get(stylesheet))
+        .route("/skin", post(session::skin))
         .route("/solve", post(solver::solve))
         .route("/diagnostics", get(solver::diagnostics))
         .route("/diagnostics/clear", post(solver::clear_logs))
@@ -221,6 +225,7 @@ pub(super) async fn page_context(state: &AppState, title: &str, active: NavSecti
         )
     };
     let cached_count = state.store.count_works().await.unwrap_or(0);
+    let skin = state.skin.read().await.clone();
     let solver = {
         let status = state.solver_status.read().await;
         SolverSummary {
@@ -234,6 +239,7 @@ pub(super) async fn page_context(state: &AppState, title: &str, active: NavSecti
         .with_write_enabled(state.write_enabled)
         .with_cached_count(cached_count)
         .with_solver(solver)
+        .with_skin(skin)
 }
 
 /// The account and whether its session can act, for read/write handlers.

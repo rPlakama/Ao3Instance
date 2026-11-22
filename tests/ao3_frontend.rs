@@ -153,6 +153,13 @@ async fn aliases_are_offline_and_uncached_works_stay_a_miss() {
         .await
         .expect("uncached alias");
     assert_eq!(missing.status(), 404, "GET must never fetch upstream");
+    assert!(
+        missing
+            .text()
+            .await
+            .expect("body")
+            .contains("Not cached yet")
+    );
 
     // Opening an uncached work with the upstream refused is a typed 502, quickly.
     let started = std::time::Instant::now();
@@ -251,6 +258,59 @@ async fn seeded_cache_renders_browse_fandoms_and_dashboard() {
             .expect("list page");
         assert_eq!(response.status(), 200, "{path}");
     }
+
+    handle.abort();
+    drop(std::fs::remove_dir_all(dir));
+}
+
+#[tokio::test]
+async fn skin_toggle_persists_and_required_tags_render() {
+    let dir = support::temp_dir("frontend-skin");
+    let (root, store, handle) = serve(&dir).await;
+    support::harness::seed_work(&store).await;
+    let client = http();
+
+    let home = client.get(&root).send().await.expect("home");
+    assert!(
+        home.text()
+            .await
+            .expect("body")
+            .contains("data-skin=\"default\"")
+    );
+
+    let toggled = client
+        .post(format!("{root}/skin"))
+        .header("content-type", "application/x-www-form-urlencoded")
+        .body("skin=reversi")
+        .send()
+        .await
+        .expect("skin post");
+    assert_eq!(toggled.status(), 200);
+    let home = client.get(&root).send().await.expect("home again");
+    assert!(
+        home.text()
+            .await
+            .expect("body")
+            .contains("data-skin=\"reversi\"")
+    );
+
+    let bad = client
+        .post(format!("{root}/skin"))
+        .header("content-type", "application/x-www-form-urlencoded")
+        .body("skin=neon")
+        .send()
+        .await
+        .expect("bad skin");
+    assert_eq!(bad.status(), 400);
+
+    let browse = client
+        .get(format!("{root}/works"))
+        .send()
+        .await
+        .expect("browse");
+    let body = browse.text().await.expect("body");
+    assert!(body.contains("class=\"required-tags\""), "{body}");
+    assert!(body.contains("rating-e"), "explicit rating badge: {body}");
 
     handle.abort();
     drop(std::fs::remove_dir_all(dir));

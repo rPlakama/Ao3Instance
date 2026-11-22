@@ -150,6 +150,26 @@ pub(super) async fn fetch_work_html(state: &AppState, id: &str) -> Handled<Strin
     }
 }
 
+/// `GET /works/<id>` is the AO3-shaped alias: cached works read like `/read/<id>`,
+/// uncached ones get an offline miss page with an explicit open button.
+pub(super) async fn work_alias(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<String>,
+    Query(query): Query<ReadQuery>,
+) -> Handled<Response> {
+    if state.store.get_work(&id).await?.is_none() {
+        let page =
+            super::page_context(&state, "Not cached — AO3Instance", NavSection::Browse).await;
+        return Ok((
+            axum::http::StatusCode::NOT_FOUND,
+            Html(render::not_cached_page(&page, &id)),
+        )
+            .into_response());
+    }
+    let html = read_work(State(state), Path(id), Query(query)).await?;
+    Ok(html.into_response())
+}
+
 /// `/works/<id>/chapters/<idx>` → the reader's chapter query form.
 pub(super) async fn chapter_alias(Path((id, idx)): Path<(String, i64)>) -> Redirect {
     Redirect::to(&format!("/read/{id}?chapter={idx}"))

@@ -28,7 +28,7 @@
 }
 
 @media (prefers-color-scheme: dark) {
-    :root {
+    :root:not([data-skin="default"]) {
         --ao3-red: #d9534f;
         --ao3-red-dark: #900;
         --ao3-bg: #333;
@@ -46,6 +46,25 @@
         --ao3-error-border: #d9534f;
         --ao3-caution-bg: #6b5a12;
     }
+}
+
+:root[data-skin="reversi"] {
+    --ao3-red: #d9534f;
+    --ao3-red-dark: #900;
+    --ao3-bg: #333;
+    --ao3-surface: #222;
+    --ao3-surface-soft: #2b2b2b;
+    --ao3-border: #444;
+    --ao3-border-strong: #555;
+    --ao3-text: #eee;
+    --ao3-muted: #b8b8b8;
+    --ao3-link: #f3f3f3;
+    --ao3-link-visited: #ccc;
+    --ao3-notice-bg: #24323d;
+    --ao3-notice-border: #38566b;
+    --ao3-error-bg: #3d2424;
+    --ao3-error-border: #d9534f;
+    --ao3-caution-bg: #6b5a12;
 }
 
 * { box-sizing: border-box; }
@@ -511,3 +530,38 @@ ul.pagination.actions { justify-content: center; }
     .browse-grid { flex-direction: column; }
     #work-filters.filters { flex-basis: auto; width: 100%; order: 0; }
 }
+
+
+/* ---------- required tags (2x2) ---------- */
+
+ul.required-tags {
+    list-style: none;
+    margin: 0.35rem 0;
+    padding: 0;
+    display: grid;
+    grid-template-columns: repeat(2, 1.6rem);
+    gap: 0.15rem;
+}
+ul.required-tags li {
+    width: 1.6rem;
+    height: 1.6rem;
+    display: grid;
+    place-items: center;
+    border-radius: 0.2rem;
+    font-size: 0.72rem;
+    font-weight: 700;
+    color: #fff;
+    background: #777;
+}
+ul.required-tags li.rating-g { background: #2e7d32; }
+ul.required-tags li.rating-t { background: #b8860b; }
+ul.required-tags li.rating-m { background: #d2691e; }
+ul.required-tags li.rating-e { background: var(--ao3-red); }
+ul.required-tags li.rating-nr { background: #888; }
+ul.required-tags li.warning-yes { background: var(--ao3-red); }
+ul.required-tags li.warning-no { background: #777; }
+ul.required-tags li.category { background: #455a64; font-size: 0.62rem; }
+ul.required-tags li.status-complete { background: #2e7d32; }
+ul.required-tags li.status-wip { background: #1565c0; }
+
+ul.required-tags li.warning-choose { background: #b8860b; }

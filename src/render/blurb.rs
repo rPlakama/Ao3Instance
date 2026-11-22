@@ -1,5 +1,6 @@
 //! The AO3 work-card component shared by home, search and browse.
 
+use super::icons::required_tags;
 use super::{escape, sanitize};
 use crate::store::StoredWork;
 
@@ -45,7 +46,7 @@ pub fn work_blurb(work: &StoredWork, progress: Option<i64>) -> String {
     format!(
         "<article class=\"work blurb group\"><div class=\"header module\">\
          <h4 class=\"heading\"><a href=\"/read/{id}\">{title}</a></h4>\
-         <div class=\"byline\">by {authors}</div>{rating}</div>\
+         <div class=\"byline\">by {authors}</div>{required}{rating}</div>\
          <ul class=\"tags commas\">{tags}</ul>{summary}{resume}\
          <dl class=\"stats\">\
          <dt>Words:</dt><dd>{words}</dd>\
@@ -57,6 +58,7 @@ pub fn work_blurb(work: &StoredWork, progress: Option<i64>) -> String {
          Open on AO3</a></p></article>",
         id = escape(&work.ao3_id),
         title = escape(&work.title),
+        required = required_tags(work),
         authors = escape(&authors),
         words = work.word_count.unwrap_or(0),
         chapters = work.chapter_count,

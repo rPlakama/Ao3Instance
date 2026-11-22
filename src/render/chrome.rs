@@ -69,6 +69,8 @@ pub struct PageContext {
     pub write_enabled: bool,
     pub cached_count: i64,
     pub solver: SolverSummary,
+    /// `default` or `reversi`; rendered as `data-skin` on <html>.
+    pub skin: String,
 }
 
 impl PageContext {
@@ -84,6 +86,7 @@ impl PageContext {
                 mode: "auto".to_string(),
                 ..SolverSummary::default()
             },
+            skin: "default".to_string(),
         }
     }
 
@@ -105,6 +108,11 @@ impl PageContext {
 
     pub fn with_solver(mut self, solver: SolverSummary) -> Self {
         self.solver = solver;
+        self
+    }
+
+    pub fn with_skin(mut self, skin: impl Into<String>) -> Self {
+        self.skin = skin.into();
         self
     }
 }
@@ -193,7 +201,12 @@ fn footer(ctx: &PageContext) -> String {
          <li><a href=\"/audit\">Write audit</a></li>\
          <li>{solver_state}</li></ul></div>\
          <div><h4>Display</h4><ul>\
-         <li>Reversi follows your OS dark mode</li>\
+         <li><form class=\"inline\" method=\"post\" action=\"/skin\">\
+         <input type=\"hidden\" name=\"skin\" value=\"default\">\
+         <button type=\"submit\">Classic</button></form>\
+         <form class=\"inline\" method=\"post\" action=\"/skin\">\
+         <input type=\"hidden\" name=\"skin\" value=\"reversi\">\
+         <button type=\"submit\">Reversi</button></form></li>\
          <li><a href=\"/\">Back to the start</a></li>\
          <li>Content belongs to its authors</li></ul></div>\
          </div></footer>",
@@ -205,7 +218,7 @@ fn footer(ctx: &PageContext) -> String {
 /// The one document skeleton. `body` is already-escaped markup from a segment.
 pub(super) fn layout(ctx: &PageContext, body: &str) -> String {
     format!(
-        "<!DOCTYPE html>\n<html lang=\"en\"><head><meta charset=\"utf-8\">\
+        "<!DOCTYPE html>\n<html lang=\"en\" data-skin=\"{skin}\"><head><meta charset=\"utf-8\">\
          <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\
          <title>{title}</title><link rel=\"stylesheet\" href=\"/assets/ao3.css\"></head>\
          <body><header id=\"header\"><div class=\"header-inner\">\
@@ -213,6 +226,7 @@ pub(super) fn layout(ctx: &PageContext, body: &str) -> String {
          <div id=\"greeting\">{greeting}</div></div>{nav}</header>\
          <div id=\"inner\"><main id=\"main\">{body}</main></div>{footer}</body></html>",
         title = escape(&ctx.title),
+        skin = escape(&ctx.skin),
         greeting = greeting(ctx),
         nav = navigation(ctx),
         footer = footer(ctx),

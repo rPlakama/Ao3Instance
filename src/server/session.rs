@@ -230,3 +230,26 @@ mod tests {
         assert!(cookie_value("a\r\nb").is_err());
     }
 }
+
+#[derive(Deserialize)]
+pub(super) struct SkinForm {
+    skin: String,
+}
+
+/// Single-operator display preference; the cookie-free global is deliberate.
+pub(super) async fn skin(
+    State(state): State<Arc<AppState>>,
+    Form(form): Form<SkinForm>,
+) -> Handled<Redirect> {
+    let skin = match form.skin.trim() {
+        "reversi" => "reversi",
+        "default" => "default",
+        other => {
+            return Err(AppError::BadRequest(format!(
+                "unknown skin {other:?}; expected default or reversi"
+            )));
+        }
+    };
+    *state.skin.write().await = skin.to_string();
+    Ok(Redirect::to("/"))
+}
