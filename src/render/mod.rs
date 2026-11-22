@@ -15,17 +15,26 @@ use std::collections::HashSet;
 pub const AO3_CSS: &str = include_str!("assets/ao3.css");
 
 mod audit;
+mod blurb;
+mod browse;
 mod chrome;
+mod dashboard;
 mod diagnostics;
+mod fandoms;
 mod home;
+mod lists;
 mod search;
 mod session;
 mod work;
 
 pub use audit::{audit_page, challenge_error_page, confirm_page, error_page};
+pub use browse::{browse_page, filter_from};
 pub use chrome::{NavSection, PageContext, SolverSummary};
+pub use dashboard::dashboard_page;
 pub use diagnostics::{DiagnosticsView, diagnostics_page};
+pub use fandoms::fandoms_page;
 pub use home::home_page;
+pub use lists::{bookmarks_page, reading_page, subscriptions_page};
 pub use search::search_page;
 pub use session::session_page;
 pub use work::{ReadContext, chapter_document, read_page};

@@ -14,7 +14,10 @@ const STALE_AFTER_SECS: i64 = 7 * 86_400;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum NavSection {
     Home,
+    Fandoms,
+    Browse,
     Search,
+    Dashboard,
     Session,
     Audit,
     Diagnostics,
@@ -24,7 +27,10 @@ impl NavSection {
     fn label(self) -> &'static str {
         match self {
             Self::Home => "Home",
+            Self::Fandoms => "Fandoms",
+            Self::Browse => "Browse",
             Self::Search => "Search",
+            Self::Dashboard => "Dashboard",
             Self::Session => "Session",
             Self::Audit => "Audit",
             Self::Diagnostics => "Diagnostics",
@@ -34,7 +40,10 @@ impl NavSection {
     fn href(self) -> &'static str {
         match self {
             Self::Home => "/",
+            Self::Fandoms => "/fandoms",
+            Self::Browse => "/works",
             Self::Search => "/search",
+            Self::Dashboard => "/dashboard",
             Self::Session => "/session",
             Self::Audit => "/audit",
             Self::Diagnostics => "/diagnostics",
@@ -109,7 +118,7 @@ fn greeting(ctx: &PageContext) -> String {
         "<details class=\"dropdown\"><summary>Hi, {account}!</summary>\
          <div class=\"dropdown-panel\"><strong>{account}</strong> \
          <span class=\"state {state_class}\">{state}</span><ul>\
-         <li><a href=\"/\">Dashboard</a></li>\
+         <li><a href=\"/dashboard\">Dashboard</a></li>\
          <li><a href=\"/audit\">Write audit</a></li>\
          <li><a href=\"/diagnostics\">Diagnostics</a></li>\
          <li><a href=\"/session\">Session &amp; preferences</a></li>\
@@ -130,7 +139,10 @@ fn navigation(ctx: &PageContext) -> String {
     let mut items = String::new();
     for section in [
         NavSection::Home,
+        NavSection::Fandoms,
+        NavSection::Browse,
         NavSection::Search,
+        NavSection::Dashboard,
         NavSection::Session,
         NavSection::Audit,
         NavSection::Diagnostics,

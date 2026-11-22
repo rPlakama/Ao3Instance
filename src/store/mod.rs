@@ -5,6 +5,7 @@
 //! ([`session`]). This module owns the shared row types and the `Store` handle.
 
 mod errors;
+mod lists;
 mod session;
 mod solver;
 #[cfg(test)]
@@ -116,5 +117,9 @@ impl Store {
 
 pub(super) use crate::time::now_secs;
 pub use errors::HttpErrorRow;
+pub use lists::{
+    BookmarkEntry, BrowseResult, BrowseSort, CacheStats, ReadingEntry, ReadingStatus,
+    SubscriptionEntry, WorkFilter,
+};
 pub use solver::{SolverEventRow, StoredClearance};
 pub use works::sha256_hex;

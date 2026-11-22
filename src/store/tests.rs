@@ -3,6 +3,7 @@ use super::*;
 use crate::ao3::work::{Chapter, WorkPage};
 use crate::db;
 use crate::diag::{HttpDirection, HttpErrorEvent, Transport};
+use crate::store::{BrowseSort, ReadingStatus, WorkFilter};
 
 fn page() -> WorkPage {
     WorkPage {
@@ -424,6 +425,107 @@ async fn solver_events_and_clearance_round_trip() {
 
     store.clear_solver_clearance().await.unwrap();
     assert!(store.load_solver_clearance().await.unwrap().is_none());
+
+    drop(std::fs::remove_dir_all(&dir));
+}
+
+fn page_titled(id: &str, title: &str, fandom: &str, rating: &str) -> WorkPage {
+    let mut page = page();
+    page.ao3_id = id.into();
+    page.title = title.into();
+    page.fandoms = vec![fandom.into()];
+    page.rating = Some(rating.into());
+    page
+}
+
+#[tokio::test]
+async fn browse_and_local_lists_read_only_from_the_cache() {
+    let (store, dir) = test_store("lists").await;
+    store
+        .upsert_work(
+            &page_titled("123", "A Test Work", "Fandom", "General Audiences"),
+            "h1",
+        )
+        .await
+        .unwrap();
+    store
+        .upsert_work(&page_titled("456", "Second Work", "Other", "Mature"), "h2")
+        .await
+        .unwrap();
+    store.save_progress("123", 2).await.unwrap();
+    store.save_progress("456", 1).await.unwrap();
+    store
+        .set_reading_state("reader", "123", "for_later")
+        .await
+        .unwrap();
+    store.mark_bookmark("reader", "456", Some(9)).await.unwrap();
+    store
+        .upsert_subscription("reader", "Work", "123", Some(77), "active")
+        .await
+        .unwrap();
+
+    let fandoms = store.list_fandoms().await.unwrap();
+    assert_eq!(
+        fandoms,
+        vec![("Fandom".to_string(), 1), ("Other".to_string(), 1)]
+    );
+
+    let mut filter = WorkFilter::default();
+    let browse = store.browse_works("reader", &filter).await.unwrap();
+    assert_eq!(browse.total, 2);
+    assert_eq!(
+        browse.works[0].ao3_id,
+        "456",
+        "newest tie broken by id; got {:?}",
+        browse
+            .works
+            .iter()
+            .map(|work| &work.ao3_id)
+            .collect::<Vec<_>>()
+    );
+    assert_eq!(browse.page, 1);
+
+    filter.fandom = Some("other".into());
+    let filtered = store.browse_works("reader", &filter).await.unwrap();
+    assert_eq!(filtered.total, 1);
+    assert_eq!(filtered.works[0].ao3_id, "456");
+
+    filter.fandom = None;
+    filter.reading_status = ReadingStatus::Bookmarked;
+    let bookmarked = store.browse_works("reader", &filter).await.unwrap();
+    assert_eq!(bookmarked.total, 1);
+    assert_eq!(bookmarked.works[0].ao3_id, "456");
+
+    filter.reading_status = ReadingStatus::InProgress;
+    let in_progress = store.browse_works("reader", &filter).await.unwrap();
+    assert_eq!(in_progress.total, 2, "both works have saved progress");
+    assert!(in_progress.works.iter().any(|work| work.ao3_id == "123"));
+
+    filter.reading_status = ReadingStatus::All;
+    filter.sort = BrowseSort::TitleAsc;
+    let sorted = store.browse_works("reader", &filter).await.unwrap();
+    assert_eq!(sorted.works[0].ao3_id, "123", "A Test Work sorts first");
+
+    let subscriptions = store.list_subscriptions("reader").await.unwrap();
+    assert_eq!(subscriptions.len(), 1);
+    assert_eq!(subscriptions[0].title.as_deref(), Some("A Test Work"));
+
+    let bookmarks = store.list_bookmarks("reader").await.unwrap();
+    assert_eq!(bookmarks.len(), 1);
+    assert_eq!(bookmarks[0].title.as_deref(), Some("Second Work"));
+
+    let reading = store.list_reading_history("reader").await.unwrap();
+    assert_eq!(reading.len(), 2);
+    let with_progress = reading.iter().find(|entry| entry.work_id == "123").unwrap();
+    assert_eq!(with_progress.progress_chapter, Some(2));
+    assert_eq!(with_progress.reading_state.as_deref(), Some("for_later"));
+
+    let stats = store.cache_stats().await.unwrap();
+    assert_eq!(stats.works, 2);
+    assert_eq!(stats.chapters, 4);
+    assert_eq!(stats.subscriptions, 1);
+    assert_eq!(stats.bookmarks, 1);
+    assert_eq!(stats.kudos, 0);
 
     drop(std::fs::remove_dir_all(&dir));
 }

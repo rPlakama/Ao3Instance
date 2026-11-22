@@ -111,31 +111,20 @@ impl Store {
         .fetch_optional(&self.pool)
         .await
         .map_err(|e| Error::Store(format!("select work: {e}")))?;
+        row.as_ref().map(stored_work_from_row).transpose()
+    }
 
-        let Some(row) = row else {
-            return Ok(None);
-        };
-        let authors_json: String = row.get("authors_json");
-        let tags_json: String = row.get("tags_json");
-        let authors: Vec<String> = serde_json::from_str(&authors_json)
-            .map_err(|e| Error::Store(format!("corrupt authors json: {e}")))?;
-        let tags: TagGroups = serde_json::from_str(&tags_json)
-            .map_err(|e| Error::Store(format!("corrupt tags json: {e}")))?;
-        Ok(Some(StoredWork {
-            ao3_id: row.get("ao3_id"),
-            title: row.get("title"),
-            authors,
-            summary: row.get("summary"),
-            tags,
-            rating: row.get("rating"),
-            language: row.get("language"),
-            word_count: row.get::<Option<i64>, _>("word_count").map(|v| v as u64),
-            kudos: row.get::<Option<i64>, _>("kudos").map(|v| v as u64),
-            comment_count: row.get::<Option<i64>, _>("comment_count").map(|v| v as u64),
-            chapter_count: row.get::<i64, _>("chapter_count") as usize,
-            content_hash: row.get("content_hash"),
-            fetched_at: row.get("fetched_at"),
-        }))
+    /// Every cached work, for the offline browse/facet pages.
+    pub async fn all_works(&self) -> Result<Vec<StoredWork>> {
+        let rows = sqlx::query(
+            "SELECT ao3_id, title, authors_json, summary, tags_json, rating, language,
+                    word_count, kudos, comment_count, chapter_count, content_hash, fetched_at
+             FROM works ORDER BY fetched_at DESC, ao3_id DESC",
+        )
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| Error::Store(format!("select all works: {e}")))?;
+        rows.iter().map(stored_work_from_row).collect()
     }
 
     pub async fn get_chapters(&self, ao3_id: &str) -> Result<Vec<StoredChapter>> {
@@ -289,4 +278,29 @@ pub fn sha256_hex(bytes: &[u8]) -> String {
         out.push_str(&format!("{byte:02x}"));
     }
     out
+}
+
+/// One `works` row (the column list is repeated by `get_work`/`all_works`).
+fn stored_work_from_row(row: &sqlx::sqlite::SqliteRow) -> Result<StoredWork> {
+    let authors_json: String = row.get("authors_json");
+    let tags_json: String = row.get("tags_json");
+    let authors: Vec<String> = serde_json::from_str(&authors_json)
+        .map_err(|e| Error::Store(format!("corrupt authors json: {e}")))?;
+    let tags: TagGroups = serde_json::from_str(&tags_json)
+        .map_err(|e| Error::Store(format!("corrupt tags json: {e}")))?;
+    Ok(StoredWork {
+        ao3_id: row.get("ao3_id"),
+        title: row.get("title"),
+        authors,
+        summary: row.get("summary"),
+        tags,
+        rating: row.get("rating"),
+        language: row.get("language"),
+        word_count: row.get::<Option<i64>, _>("word_count").map(|v| v as u64),
+        kudos: row.get::<Option<i64>, _>("kudos").map(|v| v as u64),
+        comment_count: row.get::<Option<i64>, _>("comment_count").map(|v| v as u64),
+        chapter_count: row.get::<i64, _>("chapter_count") as usize,
+        content_hash: row.get("content_hash"),
+        fetched_at: row.get("fetched_at"),
+    })
 }

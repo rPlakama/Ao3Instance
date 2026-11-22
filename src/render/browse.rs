@@ -1,0 +1,225 @@
+//! Offline browse with a server-rendered filter sidebar and pagination.
+
+use super::blurb::work_blurb;
+use super::chrome::{PageContext, layout};
+use super::escape;
+use crate::ao3::parse::{SpaceMode, percent_encode};
+use crate::store::{BrowseResult, BrowseSort, ReadingStatus, WorkFilter};
+
+pub fn browse_page(ctx: &PageContext, result: &BrowseResult, filter: &WorkFilter) -> String {
+    let scope = filter
+        .fandom
+        .as_deref()
+        .or(filter.tag.as_deref())
+        .map_or_else(
+            || "Cached works".to_string(),
+            |value| format!("Cached works · {}", escape(value)),
+        );
+
+    let mut body = format!(
+        "<h2>{scope}</h2><p class=\"meta\">{} work(s) in the local cache. \
+         Browse is offline: filters never call archiveofourown.org.</p>",
+        result.total
+    );
+
+    body.push_str("<div class=\"browse-grid\"><section class=\"browse-results\">");
+    if result.works.is_empty() {
+        body.push_str(
+            "<p class=\"muted\">No cached work matches these filters. \
+             <a href=\"/works\">Clear filters</a> or open a work from the start page.</p>",
+        );
+    } else {
+        body.push_str(&format!(
+            "<p class=\"meta\">showing {}–{} of {}</p>",
+            (result.page - 1) * result.per_page + 1,
+            (result.page - 1) * result.per_page + result.works.len() as i64,
+            result.total
+        ));
+        for work in &result.works {
+            body.push_str(&work_blurb(work, None));
+        }
+        body.push_str(&pagination(result, filter));
+    }
+    body.push_str("</section>");
+    body.push_str(&sidebar(result, filter));
+    body.push_str("</div>");
+    layout(ctx, &body)
+}
+
+fn pagination(result: &BrowseResult, filter: &WorkFilter) -> String {
+    let pages = (result.total as i64 + result.per_page - 1) / result.per_page;
+    if pages <= 1 {
+        return String::new();
+    }
+    let mut out = String::from("<ol class=\"pagination actions\">");
+    if result.page > 1 {
+        out.push_str(&format!(
+            "<li><a href=\"/works?{}\">← previous</a></li>",
+            query(filter, result.page - 1)
+        ));
+    }
+    out.push_str(&format!(
+        "<li><span class=\"state\">page {}/{pages}</span></li>",
+        result.page
+    ));
+    if result.page < pages {
+        out.push_str(&format!(
+            "<li><a href=\"/works?{}\">next →</a></li>",
+            query(filter, result.page + 1)
+        ));
+    }
+    out.push_str("</ol>");
+    out
+}
+
+fn sidebar(result: &BrowseResult, filter: &WorkFilter) -> String {
+    let mut form = String::from(
+        "<form id=\"work-filters\" class=\"filters\" method=\"get\" action=\"/works\">\
+         <h3>Sort and filter</h3>",
+    );
+    form.push_str("<label>Sort by<select name=\"sort\">");
+    for sort in [
+        BrowseSort::FetchedDesc,
+        BrowseSort::WordsDesc,
+        BrowseSort::KudosDesc,
+        BrowseSort::TitleAsc,
+    ] {
+        let label = match sort {
+            BrowseSort::FetchedDesc => "Recently cached",
+            BrowseSort::WordsDesc => "Word count",
+            BrowseSort::KudosDesc => "Kudos",
+            BrowseSort::TitleAsc => "Title A–Z",
+        };
+        form.push_str(&option(sort.as_str(), label, filter.sort == sort));
+    }
+    form.push_str("</select></label>");
+
+    form.push_str("<label>Rating<select name=\"rating\">");
+    form.push_str(&option("", "Any rating", filter.rating.is_none()));
+    for (rating, count) in &result.ratings {
+        form.push_str(&option(
+            rating,
+            &format!("{rating} ({count})"),
+            filter.rating.as_deref() == Some(rating.as_str()),
+        ));
+    }
+    form.push_str("</select></label>");
+
+    form.push_str("<label>Fandom<select name=\"fandom\">");
+    form.push_str(&option("", "Any fandom", filter.fandom.is_none()));
+    for (fandom, count) in &result.fandoms {
+        form.push_str(&option(
+            fandom,
+            &format!("{fandom} ({count})"),
+            filter.fandom.as_deref() == Some(fandom.as_str()),
+        ));
+    }
+    form.push_str("</select></label>");
+
+    form.push_str("<label>Language<select name=\"language\">");
+    form.push_str(&option("", "Any language", filter.language.is_none()));
+    for (language, count) in &result.languages {
+        form.push_str(&option(
+            language,
+            &format!("{language} ({count})"),
+            filter.language.as_deref() == Some(language.as_str()),
+        ));
+    }
+    form.push_str("</select></label>");
+
+    form.push_str("<label>Reading status<select name=\"status\">");
+    for status in [
+        ReadingStatus::All,
+        ReadingStatus::InProgress,
+        ReadingStatus::ForLater,
+        ReadingStatus::Read,
+        ReadingStatus::Bookmarked,
+    ] {
+        let label = match status {
+            ReadingStatus::All => "Everything",
+            ReadingStatus::InProgress => "In progress",
+            ReadingStatus::ForLater => "Marked for later",
+            ReadingStatus::Read => "Read",
+            ReadingStatus::Bookmarked => "Bookmarked",
+        };
+        form.push_str(&option(
+            status.as_str(),
+            label,
+            filter.reading_status == status,
+        ));
+    }
+    form.push_str("</select></label>");
+
+    form.push_str(&format!(
+        "<label>Tag<input type=\"text\" name=\"tag\" value=\"{}\" \
+         placeholder=\"exact tag\"></label>",
+        escape(filter.tag.as_deref().unwrap_or(""))
+    ));
+    if filter.fandom.is_some() {
+        form.push_str(&format!(
+            "<input type=\"hidden\" name=\"fandom\" value=\"{}\">",
+            escape(filter.fandom.as_deref().unwrap_or(""))
+        ));
+    }
+    form.push_str("<button type=\"submit\">Sort and filter</button>");
+    form.push_str("<p class=\"meta\"><a href=\"/works\">Clear all filters</a></p></form>");
+    form
+}
+
+fn option(value: &str, label: &str, selected: bool) -> String {
+    format!(
+        "<option value=\"{}\"{}>{}</option>",
+        escape(value),
+        if selected { " selected" } else { "" },
+        escape(label)
+    )
+}
+
+fn query(filter: &WorkFilter, page: i64) -> String {
+    let mut parts: Vec<String> = Vec::new();
+    let encode = |value: &str| percent_encode(value, SpaceMode::Percent20);
+    if let Some(rating) = &filter.rating {
+        parts.push(format!("rating={}", encode(rating)));
+    }
+    if let Some(fandom) = &filter.fandom {
+        parts.push(format!("fandom={}", encode(fandom)));
+    }
+    if let Some(tag) = &filter.tag {
+        parts.push(format!("tag={}", encode(tag)));
+    }
+    if let Some(language) = &filter.language {
+        parts.push(format!("language={}", encode(language)));
+    }
+    parts.push(format!("status={}", filter.reading_status.as_str()));
+    parts.push(format!("sort={}", filter.sort.as_str()));
+    parts.push(format!("page={}", page.max(1)));
+    parts.join("&")
+}
+
+/// Parses the filters from `GET /works` (and the tag alias) into one struct.
+pub fn filter_from(
+    rating: Option<String>,
+    fandom: Option<String>,
+    tag: Option<String>,
+    language: Option<String>,
+    status: Option<String>,
+    sort: Option<String>,
+    page: Option<i64>,
+) -> WorkFilter {
+    let clean = |value: Option<String>| {
+        value.and_then(|value| {
+            let trimmed = value.trim().to_string();
+            (!trimmed.is_empty()).then_some(trimmed)
+        })
+    };
+    WorkFilter {
+        rating: clean(rating),
+        fandom: clean(fandom),
+        tag: clean(tag),
+        language: clean(language),
+        reading_status: ReadingStatus::parse(status.as_deref()),
+        sort: BrowseSort::parse(sort.as_deref()),
+        page: page.unwrap_or(1).max(1),
+        per_page: 20,
+    }
+}

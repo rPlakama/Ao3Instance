@@ -14,7 +14,7 @@ use ao3instance::store::Store;
 use ao3instance::{db, server};
 use support::harness::http;
 
-async fn serve(dir: &std::path::Path) -> (String, tokio::task::JoinHandle<()>) {
+async fn serve(dir: &std::path::Path) -> (String, Store, tokio::task::JoinHandle<()>) {
     let config = Config::from_pairs([
         ("AO3I_BASE_URL", "http://127.0.0.1:1"),
         ("AO3I_DATA_DIR", dir.to_str().expect("utf8 dir")),
@@ -24,15 +24,17 @@ async fn serve(dir: &std::path::Path) -> (String, tokio::task::JoinHandle<()>) {
     .expect("config");
     let pool = db::open(&config.db_file).await.expect("db");
     let store = Store::new(pool);
-    let app = server::router(&config, store).await.expect("router");
+    let app = server::router(&config, store.clone())
+        .await
+        .expect("router");
     let (root, handle) = support::serve(app).await;
-    (root, handle)
+    (root, store, handle)
 }
 
 #[tokio::test]
 async fn every_offline_segment_renders_the_shared_chrome() {
     let dir = support::temp_dir("frontend-walk");
-    let (root, handle) = serve(&dir).await;
+    let (root, _store, handle) = serve(&dir).await;
     let client = http();
 
     for path in [
@@ -43,6 +45,13 @@ async fn every_offline_segment_renders_the_shared_chrome() {
         "/session",
         "/audit",
         "/diagnostics",
+        "/works",
+        "/fandoms",
+        "/dashboard",
+        "/subscriptions",
+        "/bookmarks",
+        "/reading",
+        "/tags/Test/works",
     ] {
         let response = client
             .get(format!("{root}{path}"))
@@ -68,7 +77,7 @@ async fn every_offline_segment_renders_the_shared_chrome() {
 #[tokio::test]
 async fn stylesheet_is_embedded_and_cache_friendly() {
     let dir = support::temp_dir("frontend-css");
-    let (root, handle) = serve(&dir).await;
+    let (root, _store, handle) = serve(&dir).await;
 
     let response = http()
         .get(format!("{root}/assets/ao3.css"))
@@ -113,7 +122,7 @@ async fn stylesheet_is_embedded_and_cache_friendly() {
 #[tokio::test]
 async fn aliases_are_offline_and_uncached_works_stay_a_miss() {
     let dir = support::temp_dir("frontend-aliases");
-    let (root, handle) = serve(&dir).await;
+    let (root, _store, handle) = serve(&dir).await;
     let client = http();
 
     let login = client
@@ -159,6 +168,89 @@ async fn aliases_are_offline_and_uncached_works_stay_a_miss() {
         started.elapsed() < std::time::Duration::from_secs(5),
         "offline failure must not hang"
     );
+
+    handle.abort();
+    drop(std::fs::remove_dir_all(dir));
+}
+
+#[tokio::test]
+async fn seeded_cache_renders_browse_fandoms_and_dashboard() {
+    let dir = support::temp_dir("frontend-seeded");
+    let (root, store, handle) = serve(&dir).await;
+    support::harness::seed_work(&store).await;
+    let client = http();
+
+    let browse = client
+        .get(format!("{root}/works"))
+        .send()
+        .await
+        .expect("browse");
+    assert_eq!(browse.status(), 200);
+    let body = browse.text().await.expect("body");
+    assert!(
+        body.contains("PLACEHOLDER: The Map and the Mirror"),
+        "{body}"
+    );
+    assert!(body.contains("id=\"work-filters\""), "filter sidebar");
+    assert!(body.contains("Test Fandom (Not Real)"), "fandom facet");
+
+    let filtered = client
+        .get(format!("{root}/works?rating=Explicit"))
+        .send()
+        .await
+        .expect("filtered");
+    assert_eq!(filtered.status(), 200);
+    assert!(
+        filtered
+            .text()
+            .await
+            .expect("body")
+            .contains("PLACEHOLDER: The Map and the Mirror")
+    );
+
+    let empty = client
+        .get(format!("{root}/works?rating=Not%20A%20Rating"))
+        .send()
+        .await
+        .expect("empty filter");
+    assert!(
+        empty
+            .text()
+            .await
+            .expect("body")
+            .contains("No cached work matches")
+    );
+
+    let fandoms = client
+        .get(format!("{root}/fandoms"))
+        .send()
+        .await
+        .expect("fandoms");
+    assert!(
+        fandoms
+            .text()
+            .await
+            .expect("body")
+            .contains("Test Fandom (Not Real)")
+    );
+
+    let dashboard = client
+        .get(format!("{root}/dashboard"))
+        .send()
+        .await
+        .expect("dashboard");
+    let body = dashboard.text().await.expect("body");
+    assert!(body.contains("Cached works:"), "{body}");
+    assert!(body.contains(">1<"), "one cached work in stats: {body}");
+
+    for path in ["/subscriptions", "/bookmarks", "/reading"] {
+        let response = client
+            .get(format!("{root}{path}"))
+            .send()
+            .await
+            .expect("list page");
+        assert_eq!(response.status(), 200, "{path}");
+    }
 
     handle.abort();
     drop(std::fs::remove_dir_all(dir));

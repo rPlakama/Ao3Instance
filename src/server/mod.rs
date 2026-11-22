@@ -9,6 +9,7 @@
 
 mod diag;
 mod error;
+mod lists;
 mod reads;
 mod session;
 mod solver;
@@ -139,7 +140,14 @@ pub async fn router(config: &Config, store: Store) -> Result<Router> {
         .route("/write/bookmark", post(writes::write_bookmark))
         .route("/audit", get(writes::audit))
         .route("/users/login", get(session::session_page))
+        .route("/works", get(lists::browse))
         .route("/works/search", get(reads::search))
+        .route("/tags/{tag}/works", get(lists::tag_browse))
+        .route("/fandoms", get(lists::fandoms))
+        .route("/dashboard", get(lists::dashboard))
+        .route("/subscriptions", get(lists::subscriptions))
+        .route("/bookmarks", get(lists::bookmarks))
+        .route("/reading", get(lists::reading))
         .route("/works/{id}", get(reads::read_work))
         .route("/works/{id}/chapters/{idx}", get(reads::chapter_alias))
         .route("/assets/ao3.css", get(stylesheet))
