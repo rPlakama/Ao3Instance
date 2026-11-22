@@ -37,10 +37,18 @@ suite):
   build-dependency gate are written; the binary and compiled assets build in
   Nix without the solver.
 
+**Verified in this pass:** `cargo fmt --check`, clippy with `-D warnings` and
+188 tests (109 unit + 79 integration) are green; `nix build .#default` produced
+`/nix/store/0w8crsa3m3dnjm3cs5d5smpkclx0jsxy-ao3instance-0.1.1`, whose binary
+served `/`, `/works`, `/fandoms`, `/dashboard`, `/subscriptions`, `/bookmarks`,
+`/reading`, `/users/login`, `/session`, `/audit` and `/diagnostics` with `200`,
+the embedded 16 KB `ao3.css`, and `POST /skin` switching `data-skin` to
+`reversi`. `scripts/check-no-solver-build-dep.sh --closure` confirms FlareSolverr
+is absent from the build closure.
+
 Remaining before the plan's final gate: per-segment pixel parity (work-meta
-ordering, chapter jump/`view_full_work`, feedback box), search pagination,
-the `/diagnostics` direction filter, and the final `nix build` + manual
-walkthrough sign-off after the next version bump.
+ordering, `view_full_work`, feedback/comment polish), search pagination, a
+manual browser walkthrough in both skins, and the next version bump.
 
 ---
 
