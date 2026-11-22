@@ -59,9 +59,18 @@ reader no longer repeats the chapter title, and `/favicon.ico` no longer fills
 the diagnostics table. Round 4 fixed the last visual bug found by the walkthrough: the chapter
 iframe is a separate document, so Reversi readers kept dark text; iframe URLs
 now carry `&skin=...` and the chapter document themes text, links, notes and
-blockquotes accordingly (verified by a Reversi-reader screenshot). Remaining
-before the plan's final gate: an optional pass on required-tag SVG artwork, a
-checkbox sweep of the phase lists, and the next version bump.
+blockquotes accordingly (verified by a Reversi-reader screenshot). **Final gate (round 4):** `cargo fmt --check`, clippy `-D warnings` and
+189 tests (110 unit + 79 integration) pass; `nix build .#default` produced
+`/nix/store/4lwjh675yx2rx09s44baj8hkcfyac8yr-ao3instance-0.1.1`; that binary
+served all 14 pages with `200`, the offline miss with `404`, `/favicon.ico`
+with `204`, and switched skins through `POST /skin`; the build closure stays
+free of FlareSolverr. Desktop, mobile and Reversi screenshots were captured
+from the built binary.
+
+**Known deviations (documented, not blockers):** required-tag marks are
+styled text badges rather than SVG artwork; the skin is a single-operator
+global preference rather than a per-browser cookie; a release/version bump is
+left to an explicit operator request.
 
 ---
 
