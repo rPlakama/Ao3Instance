@@ -27,6 +27,12 @@ pub struct Config {
     pub write_enabled: bool,
     /// Client-side floor between upstream requests (ADR-0002 §4).
     pub min_request_spacing: Duration,
+    /// Address the web app binds to.
+    pub bind: String,
+    /// Port the web app listens on.
+    pub port: u16,
+    /// SQLite database file.
+    pub db_file: PathBuf,
 }
 
 impl Config {
@@ -49,6 +55,9 @@ impl Config {
         let mut user_agent = consts::USER_AGENT.to_string();
         let mut write_enabled = false;
         let mut min_request_spacing = consts::MIN_REQUEST_SPACING;
+        let mut bind = consts::DEFAULT_BIND.to_string();
+        let mut port = consts::DEFAULT_PORT;
+        let mut db_file: Option<PathBuf> = None;
         let mut xdg_config_home: Option<PathBuf> = None;
         let mut home: Option<PathBuf> = None;
 
@@ -82,6 +91,19 @@ impl Config {
                 "DATA_DIR" => data_dir = Some(PathBuf::from(value)),
                 "KEY_FILE" => key_file = Some(PathBuf::from(value)),
                 "USER_AGENT" => user_agent = value,
+                "BIND" => {
+                    let trimmed = value.trim();
+                    if trimmed.is_empty() {
+                        return Err(Error::Config("AO3I_BIND is empty".into()));
+                    }
+                    bind = trimmed.to_string();
+                }
+                "PORT" => {
+                    port = value.trim().parse::<u16>().map_err(|_| {
+                        Error::Config(format!("AO3I_PORT expects a port number, got {value:?}"))
+                    })?;
+                }
+                "DB_FILE" => db_file = Some(PathBuf::from(value)),
                 "WRITE_ENABLED" => write_enabled = parse_bool(&value)?,
                 "MIN_SPACING_MS" => {
                     let millis: u64 = value.trim().parse().map_err(|_| {
@@ -101,6 +123,7 @@ impl Config {
             None => default_data_dir(xdg_config_home.as_deref(), home.as_deref())?,
         };
         let key_file = key_file.unwrap_or_else(|| data_dir.join("key"));
+        let db_file = db_file.unwrap_or_else(|| data_dir.join(consts::DB_FILE_NAME));
 
         Ok(Self {
             base_url,
@@ -109,6 +132,9 @@ impl Config {
             user_agent,
             write_enabled,
             min_request_spacing,
+            bind,
+            port,
+            db_file,
         })
     }
 }
@@ -161,6 +187,9 @@ mod tests {
         assert_eq!(c.key_file, PathBuf::from("/tmp/xdg/ao3instance/key"));
         assert!(!c.write_enabled, "writes must be off by default");
         assert_eq!(c.min_request_spacing, consts::MIN_REQUEST_SPACING);
+        assert_eq!(c.bind, "127.0.0.1");
+        assert_eq!(c.port, consts::DEFAULT_PORT);
+        assert_eq!(c.db_file, PathBuf::from("/tmp/xdg/ao3instance/ao3i.db"));
         assert!(c.user_agent.starts_with("AO3Instance/"));
     }
 
@@ -172,12 +201,18 @@ mod tests {
             ("AO3I_KEY_FILE", "/srv/ao3i/secret.key"),
             ("AO3I_WRITE_ENABLED", "true"),
             ("AO3I_MIN_SPACING_MS", "0"),
+            ("AO3I_BIND", "0.0.0.0"),
+            ("AO3I_PORT", "9000"),
+            ("AO3I_DB_FILE", "/srv/ao3i/db.sqlite"),
         ]);
         assert_eq!(c.base_url, "http://127.0.0.1:3000");
         assert_eq!(c.data_dir, PathBuf::from("/srv/ao3i"));
         assert_eq!(c.key_file, PathBuf::from("/srv/ao3i/secret.key"));
         assert!(c.write_enabled);
         assert_eq!(c.min_request_spacing, Duration::ZERO);
+        assert_eq!(c.bind, "0.0.0.0");
+        assert_eq!(c.port, 9000);
+        assert_eq!(c.db_file, PathBuf::from("/srv/ao3i/db.sqlite"));
     }
 
     #[test]

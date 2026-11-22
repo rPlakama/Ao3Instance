@@ -25,6 +25,11 @@ pub const SESSION_COOKIE: &str = "_otwarchive_session";
 /// Load-bearing companion cookie: missing it triggers `/lost_cookie`.
 pub const CREDENTIALS_COOKIE: &str = "user_credentials";
 
+/// Where the web app listens by default (loopback only; it holds a session).
+pub const DEFAULT_BIND: &str = "127.0.0.1";
+pub const DEFAULT_PORT: u16 = 8099;
+pub const DB_FILE_NAME: &str = "ao3i.db";
+
 pub const LOGIN_PATH: &str = "/users/login";
 pub const LOGOUT_PATH: &str = "/users/logout";
 pub const TOKEN_PATH: &str = "/token_dispenser.json";

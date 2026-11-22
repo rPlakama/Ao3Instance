@@ -14,6 +14,8 @@ pub enum Error {
     Config(String),
     /// Filesystem failure reading/writing the key or secret files.
     Io(String),
+    /// Database failure (open, migrate, query).
+    Store(String),
     /// Secret storage failure: bad hex, wrong length, authentication failed.
     Crypto(String),
     /// Transport failure: DNS, connect, timeout, TLS, body read.
@@ -47,6 +49,7 @@ impl fmt::Display for Error {
         match self {
             Self::Config(msg) => write!(f, "configuration error: {msg}"),
             Self::Io(msg) => write!(f, "io error: {msg}"),
+            Self::Store(msg) => write!(f, "database error: {msg}"),
             Self::Crypto(msg) => write!(f, "secret store error: {msg}"),
             Self::Network(msg) => write!(f, "network error: {msg}"),
             Self::LoginRejected(msg) => write!(f, "login rejected: {msg}"),

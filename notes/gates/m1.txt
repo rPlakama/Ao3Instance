@@ -1,0 +1,32 @@
+M1 gate run (final) — 2026-11-22T15:25:40-03:00
+toolchain: rustc 1.98.1, cargo 1.98.0 (nix dev shell)
+
+== cargo test
+test result: ok. 61 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.31s
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.06s
+test result: ok. 25 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.05s
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+== cargo clippy --all-targets -- -D warnings
+exit=0
+
+== cargo fmt --check
+exit=0
+
+== application opens (real binary, temp config, port 8123)
+/           200 · landing page with the open-work form
+/health     200 · ok
+/read/999   404 · not cached yet (clean error page)
+startup: AO3Instance ready at http://127.0.0.1:8123/
+
+== end-to-end smoke (mock upstream + checked-in fixture)
+POST /open -> 303 -> GET /read/12345 -> 200; chapter iframe 200 with CSP;
+work cached in SQLite; cache-first re-open makes zero upstream requests;
+home lists it; unknown work -> 404.
+
+== live upstream note
+archiveofourown.org returned 429 to one polite request from this environment.
+Per ADR-0002 no retry/crawl; parsers are fixture-driven. Sandbox run is W6.

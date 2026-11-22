@@ -42,11 +42,18 @@ src/
     jar.rs         cookie jar: parse/apply/expiry, completeness, encryption
                    primitives (the at-rest wiring is W3 persistence)
     parse.rs       CSRF meta, flash slots, percent-(de)encode shared by form+path
+    work.rs        W2 — work page parser: title, byline, tags, stats, chapters,
+                   notes, comment-form presence (selectors traced to the clone)
     limiter.rs     W3 — per-action budgets + Retry-After parking
     parse/         W2 — checked-in fixtures per surface (work, comment, subscription)
     actions/       W3/W4/W5 — kudos.rs, comments.rs, subscriptions.rs, …
     outcome.rs     W3 — classification precedence + typed outcomes
     audit.rs       W3 — intent + audit rows, redaction
+  db.rs            SQLite pool, pragmas, single migrator (`migrations/`)
+  store.rs         cached works/chapters, content hash, deterministic listing
+  render.rs        server-rendered pages, escaping, ammonia sanitizer
+  server.rs        axum routes: /, /open, /read/{id}, /read/{id}/chapter/{idx}, /health
+  bin/ao3i-server.rs  thin entry point
 ```
 
 Configuration knobs (all read once by `config.rs`; unknown `AO3I_*` keys are ignored):
@@ -59,6 +66,9 @@ Configuration knobs (all read once by `config.rs`; unknown `AO3I_*` keys are ign
 | `AO3I_USER_AGENT` | built-in UA | **set this before public use**: ADR-0002 requires a project URL and contact |
 | `AO3I_WRITE_ENABLED` | `false` | master switch for upstream writes (W6 gate) |
 | `AO3I_MIN_SPACING_MS` | `2000` | client-side floor between upstream requests |
+| `AO3I_BIND` | `127.0.0.1` | address the web app binds to |
+| `AO3I_PORT` | `8099` | port the web app listens on |
+| `AO3I_DB_FILE` | `<data_dir>/ao3i.db` | SQLite cache |
 
 ---
 
@@ -260,6 +270,20 @@ The fault matrix in ADR-0005 is the acceptance test for W6.
 | **W4** | kudos + reading flags + bookmarks | exact AO3 strings mapped; verification reads |
 | **W5** | comments (top-level + reply) | rate limit, spam, duplicate, frozen, moderation all typed; no auto-retry |
 | **W6** | failure injection + sandbox suite + kill switch + operator docs | ADR-0005 fault matrix passes; `AO3I_WRITE_ENABLED=false` blocks all writes |
+
+### W2 / M1 status — complete (2026-11-22)
+
+**Landed:** work-page parser (`src/ao3/work.rs`, selectors traced to the pinned clone), SQLite
+cache (`db.rs`, `store.rs`, one migrator, WAL), server-rendered app (`render.rs`, `server.rs`,
+`bin/ao3i-server.rs`), cache-first open, sanitized chapter iframes with CSP. The application
+**opens and reads a work end to end** against a mock upstream + checked-in fixture.
+**Evidence:** `notes/gates/m1.txt` — 100 tests, clippy/fmt clean, real binary serves `/`
+and `/health`, cached re-open makes no upstream request.
+
+**Known limits of this slice (next milestones):** adult-content interstitial and restricted
+works need the session (W2 session wiring); progress anchors (W3); search/offline index (W3);
+no write actions yet (W3+). The live site answered 429 from this environment, so parsing is
+fixture-driven; a sandbox run is the acceptance step (plan §9 tier 3).
 
 ### W1 status — complete (2026-11-22)
 

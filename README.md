@@ -16,3 +16,21 @@ Features:
  Arch ref2; https://github.com/Kareadita/Kavita <-- ePUB reading desing & features;
 
  This project shall utilizate flake.nix && Kunobi Kache (https://ninja.kunobi.com/kache) for Local builds. The project shall also use strict Clippy rules.
+
+## Running it
+
+```
+nix develop -c cargo run --bin ao3i-server
+# then open http://127.0.0.1:8099/
+```
+
+Paste an AO3 work id (or a `/works/<id>` URL) on the start page: the work is fetched
+once, parsed and cached in SQLite, and served by a local reader. Re-opening a cached work
+never touches archiveofourown.org, so it keeps working offline.
+
+Configuration (environment, read once at startup): `AO3I_BIND`, `AO3I_PORT`,
+`AO3I_DATA_DIR`, `AO3I_DB_FILE`, `AO3I_BASE_URL` (sandbox), `AO3I_USER_AGENT`,
+`AO3I_WRITE_ENABLED`, `AO3I_MIN_SPACING_MS`. See `docs/write-client-plan.md`.
+
+Current state: M1 vertical slice (open → cache → read). Tests: `nix develop -c cargo test`.
+Design and decisions: `docs/init-audit.md`, `docs/ao3-write-api.md`, `docs/adr/`.

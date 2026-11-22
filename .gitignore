@@ -20,3 +20,9 @@ key
 
 # Rust build state kept in-workspace (nix sandbox: no writes outside)
 .cargo-home/
+
+# Local reference material (not committed)
+.refs/
+
+# Local run state (evidence, not committed)
+.run/
