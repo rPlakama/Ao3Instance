@@ -10,8 +10,6 @@ mod tests;
 mod works;
 mod writes;
 
-use std::time::{SystemTime, UNIX_EPOCH};
-
 use serde::{Deserialize, Serialize};
 use sqlx::SqlitePool;
 
@@ -114,11 +112,5 @@ impl Store {
     }
 }
 
+pub(super) use crate::time::now_secs;
 pub use works::sha256_hex;
-
-pub(super) fn now_secs() -> i64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_secs() as i64)
-        .unwrap_or(0)
-}

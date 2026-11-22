@@ -33,6 +33,10 @@ pub struct Config {
     pub port: u16,
     /// SQLite database file.
     pub db_file: PathBuf,
+    /// Emit structured HTTP error lines to stderr (journald-friendly).
+    pub log_http_errors: bool,
+    /// Maximum rows retained in `http_error_log`.
+    pub http_log_retention: i64,
 }
 
 impl Config {
@@ -58,6 +62,8 @@ impl Config {
         let mut bind = consts::DEFAULT_BIND.to_string();
         let mut port = consts::DEFAULT_PORT;
         let mut db_file: Option<PathBuf> = None;
+        let mut log_http_errors = true;
+        let mut http_log_retention = consts::HTTP_ERROR_LOG_RETENTION;
         let mut xdg_config_home: Option<PathBuf> = None;
         let mut home: Option<PathBuf> = None;
 
@@ -104,7 +110,23 @@ impl Config {
                     })?;
                 }
                 "DB_FILE" => db_file = Some(PathBuf::from(value)),
-                "WRITE_ENABLED" => write_enabled = parse_bool(&value)?,
+                "WRITE_ENABLED" => write_enabled = parse_bool("AO3I_WRITE_ENABLED", &value)?,
+                "LOG_HTTP_ERRORS" => {
+                    log_http_errors = parse_bool("AO3I_LOG_HTTP_ERRORS", &value)?;
+                }
+                "HTTP_LOG_RETENTION" => {
+                    let retention: i64 = value.trim().parse().map_err(|_| {
+                        Error::Config(format!(
+                            "AO3I_HTTP_LOG_RETENTION expects a positive integer, got {value:?}"
+                        ))
+                    })?;
+                    if retention <= 0 {
+                        return Err(Error::Config(format!(
+                            "AO3I_HTTP_LOG_RETENTION expects a positive integer, got {value:?}"
+                        )));
+                    }
+                    http_log_retention = retention;
+                }
                 "MIN_SPACING_MS" => {
                     let millis: u64 = value.trim().parse().map_err(|_| {
                         Error::Config(format!(
@@ -135,16 +157,18 @@ impl Config {
             bind,
             port,
             db_file,
+            log_http_errors,
+            http_log_retention,
         })
     }
 }
 
-fn parse_bool(value: &str) -> Result<bool> {
+fn parse_bool(name: &str, value: &str) -> Result<bool> {
     match value.trim().to_ascii_lowercase().as_str() {
         "1" | "true" | "yes" | "on" => Ok(true),
         "0" | "false" | "no" | "off" | "" => Ok(false),
         other => Err(Error::Config(format!(
-            "AO3I_WRITE_ENABLED expects a boolean, got {other:?}"
+            "{name} expects a boolean, got {other:?}"
         ))),
     }
 }
@@ -190,6 +214,11 @@ mod tests {
         assert_eq!(c.bind, "127.0.0.1");
         assert_eq!(c.port, consts::DEFAULT_PORT);
         assert_eq!(c.db_file, PathBuf::from("/tmp/xdg/ao3instance/ao3i.db"));
+        assert!(
+            c.log_http_errors,
+            "structured HTTP diagnostics are on by default"
+        );
+        assert_eq!(c.http_log_retention, consts::HTTP_ERROR_LOG_RETENTION);
         assert!(c.user_agent.starts_with("AO3Instance/"));
     }
 
@@ -204,6 +233,8 @@ mod tests {
             ("AO3I_BIND", "0.0.0.0"),
             ("AO3I_PORT", "9000"),
             ("AO3I_DB_FILE", "/srv/ao3i/db.sqlite"),
+            ("AO3I_LOG_HTTP_ERRORS", "off"),
+            ("AO3I_HTTP_LOG_RETENTION", "42"),
         ]);
         assert_eq!(c.base_url, "http://127.0.0.1:3000");
         assert_eq!(c.data_dir, PathBuf::from("/srv/ao3i"));
@@ -213,6 +244,27 @@ mod tests {
         assert_eq!(c.bind, "0.0.0.0");
         assert_eq!(c.port, 9000);
         assert_eq!(c.db_file, PathBuf::from("/srv/ao3i/db.sqlite"));
+        assert!(!c.log_http_errors);
+        assert_eq!(c.http_log_retention, 42);
+    }
+
+    #[test]
+    fn http_diagnostic_knobs_are_strict() {
+        for value in ["0", "-5", "many"] {
+            assert!(
+                matches!(
+                    Config::from_pairs([
+                        ("XDG_CONFIG_HOME", "/tmp/x-dir"),
+                        ("AO3I_HTTP_LOG_RETENTION", value),
+                    ]),
+                    Err(Error::Config(_))
+                ),
+                "retention {value:?} must be rejected"
+            );
+        }
+        let err = Config::from_pairs([("AO3I_LOG_HTTP_ERRORS", "maybe")]).unwrap_err();
+        assert!(matches!(err, Error::Config(_)));
+        assert!(err.to_string().contains("AO3I_LOG_HTTP_ERRORS"), "{err}");
     }
 
     #[test]

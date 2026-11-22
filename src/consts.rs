@@ -47,3 +47,6 @@ pub const MAX_BODY_BYTES: usize = 4 * 1024 * 1024;
 /// The client's own floor between upstream requests (the server allows
 /// 300/300 s per IP; we stay far below it — ADR-0002).
 pub const MIN_REQUEST_SPACING: Duration = Duration::from_secs(2);
+
+/// Rows kept in `http_error_log` before the oldest are pruned.
+pub const HTTP_ERROR_LOG_RETENTION: i64 = 500;

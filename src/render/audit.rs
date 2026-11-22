@@ -1,7 +1,8 @@
 //! Two-step write confirmation, the audit log and the error page.
 
-use super::chrome::{format_utc, layout};
+use super::chrome::layout;
 use super::escape;
+use crate::time::format_utc;
 /// Two-step confirmation page for a write action.
 pub fn confirm_page(
     title: &str,

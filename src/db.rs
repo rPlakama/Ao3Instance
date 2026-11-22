@@ -65,6 +65,43 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(count, 0);
+        let logged: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM http_error_log")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(logged, 0, "0008 must exist after migration");
+        pool.close().await;
+        drop(std::fs::remove_dir_all(&dir));
+    }
+
+    #[tokio::test]
+    async fn http_error_log_shape_is_enforced() {
+        let dir = std::env::temp_dir().join(format!("ao3i-db-http-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let pool = open(&dir.join("test.db")).await.unwrap();
+
+        sqlx::query(
+            "INSERT INTO http_error_log
+             (direction, transport, method, path, status, error_kind, message, created_at)
+             VALUES ('upstream', 'direct', 'GET', '/works/1', 403, 'blocked_by_edge', 'refused', 1)",
+        )
+        .execute(&pool)
+        .await
+        .expect("valid diagnostic row");
+
+        for (direction, transport) in [("sideways", "direct"), ("upstream", "carrier-pigeon")] {
+            let result = sqlx::query(
+                "INSERT INTO http_error_log
+                 (direction, transport, method, path, error_kind, message, created_at)
+                 VALUES (?1, ?2, 'GET', '/works/1', 'network', 'x', 1)",
+            )
+            .bind(direction)
+            .bind(transport)
+            .execute(&pool)
+            .await;
+            assert!(result.is_err(), "CHECK must reject {direction}/{transport}");
+        }
+
         pool.close().await;
         drop(std::fs::remove_dir_all(&dir));
     }

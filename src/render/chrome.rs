@@ -1,5 +1,7 @@
 //! Shared page chrome: the stylesheet, the document skeleton and the
 //! UTC/staleness helpers used by more than one segment.
+
+use crate::time::{format_utc, now_secs};
 const STYLE: &str = r#"
 :root { color-scheme: light dark; --fg:#1c1b1a; --bg:#fbfaf7; --muted:#6b6762; --line:#e2ddd5; --accent:#8c2f39; }
 @media (prefers-color-scheme: dark) { :root { --fg:#e9e4dc; --bg:#171615; --muted:#a39c93; --line:#33302c; --accent:#e07b86; } }
@@ -64,26 +66,6 @@ pub(super) fn layout(title: &str, body: &str) -> String {
 /// How long before a cached copy is labelled stale.
 const STALE_AFTER_SECS: i64 = 7 * 86_400;
 
-fn now_secs() -> i64 {
-    use std::time::{SystemTime, UNIX_EPOCH};
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_secs() as i64)
-        .unwrap_or(0)
-}
-
-/// `YYYY-MM-DD HH:MM UTC` without pulling a date crate.
-pub(super) fn format_utc(unix: i64) -> String {
-    let days = unix.div_euclid(86_400);
-    let seconds = unix.rem_euclid(86_400);
-    let (year, month, day) = civil_from_days(days);
-    format!(
-        "{year:04}-{month:02}-{day:02} {:02}:{:02} UTC",
-        seconds / 3_600,
-        (seconds % 3_600) / 60
-    )
-}
-
 pub(super) fn checked_label(fetched_at: i64) -> String {
     let age = now_secs().saturating_sub(fetched_at);
     if age > STALE_AFTER_SECS {
@@ -97,35 +79,9 @@ pub(super) fn checked_label(fetched_at: i64) -> String {
     }
 }
 
-/// Inverse of the day-count algorithm: days since 1970-01-01 → (year, month, day).
-fn civil_from_days(days: i64) -> (i64, i64, i64) {
-    let z = days + 719_468;
-    let era = if z >= 0 { z } else { z - 146_096 } / 146_097;
-    let day_of_era = z - era * 146_097;
-    let year_of_era =
-        (day_of_era - day_of_era / 1_460 + day_of_era / 36_524 - day_of_era / 146_096) / 365;
-    let year = year_of_era + era * 400;
-    let day_of_year = day_of_era - (365 * year_of_era + year_of_era / 4 - year_of_era / 100);
-    let month_prime = (5 * day_of_year + 2) / 153;
-    let day = day_of_year - (153 * month_prime + 2) / 5 + 1;
-    let month = if month_prime < 10 {
-        month_prime + 3
-    } else {
-        month_prime - 9
-    };
-    (if month <= 2 { year + 1 } else { year }, month, day)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn utc_formatting_matches_known_dates() {
-        assert_eq!(format_utc(0), "1970-01-01 00:00 UTC");
-        assert_eq!(format_utc(1_795_348_800), "2026-11-22 12:00 UTC");
-        assert_eq!(format_utc(1_795_392_000), "2026-11-23 00:00 UTC");
-    }
 
     #[test]
     fn checked_label_flags_only_old_copies() {
