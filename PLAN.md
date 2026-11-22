@@ -67,6 +67,14 @@ with `204`, and switched skins through `POST /skin`; the build closure stays
 free of FlareSolverr. Desktop, mobile and Reversi screenshots were captured
 from the built binary.
 
+**Wiring pass (new goal):** every rendered local anchor is now crawled by
+`tests/wiring.rs`; tag, author, rating and required-tag badges are live local
+filters (`/works?tag=`, `/works?author=`, `/works?rating=`), author names in
+lists link to that filter, dashboard counters link to their pages, and tag/user
+subscriptions no longer point at `/read`. The `WorkFilter` gained an `author`
+facet. Remaining wiring candidates: search-page filter selectors, audit and
+diagnostics targets.
+
 **Known deviations (documented, not blockers):** required-tag marks are
 styled text badges rather than SVG artwork; the skin is a single-operator
 global preference rather than a per-browser cookie; a release/version bump is
