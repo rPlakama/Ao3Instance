@@ -2,6 +2,7 @@
 
 use super::chrome::{PageContext, layout};
 use super::escape;
+use crate::ao3::parse::{SpaceMode, percent_encode};
 use crate::store::{BookmarkEntry, ReadingEntry, SubscriptionEntry};
 use crate::time::format_utc;
 
@@ -32,8 +33,10 @@ pub fn subscriptions_page(ctx: &PageContext, entries: &[SubscriptionEntry]) -> S
             } else {
                 "—".to_string()
             };
+            let authors = author_cell(&entry.authors);
             body.push_str(&format!(
-                "<tr><td><a href=\"/read/{id}\">{title}</a></td><td>{kind}</td>\
+                "<tr><td><a href=\"/read/{id}\">{title}</a>\
+                 <div class=\"byline\">by {authors}</div></td><td>{kind}</td>\
                  <td>{state}</td><td>{updated}</td><td>{action}</td></tr>",
                 id = escape(&entry.target_id),
                 title = escape(title),
@@ -67,7 +70,7 @@ pub fn bookmarks_page(ctx: &PageContext, entries: &[BookmarkEntry]) -> String {
                  <td>{saved}</td></tr>",
                 id = escape(&entry.work_id),
                 title = escape(title),
-                authors = escape(&entry.authors.join(", ")),
+                authors = author_cell(&entry.authors),
                 saved = escape(&format_utc(entry.created_at)),
             ));
         }
@@ -100,14 +103,34 @@ pub fn reading_page(ctx: &PageContext, entries: &[ReadingEntry]) -> String {
                 },
             );
             body.push_str(&format!(
-                "<tr><td><a href=\"/read/{id}\">{title}</a></td><td>{progress}</td>\
+                "<tr><td><a href=\"/read/{id}\">{title}</a>\
+                 <div class=\"byline\">by {authors}</div></td><td>{progress}</td>\
                  <td>{flag}</td></tr>",
                 id = escape(&entry.work_id),
                 title = escape(title),
+                authors = author_cell(&entry.authors),
                 flag = escape(entry.reading_state.as_deref().unwrap_or("—")),
             ));
         }
         body.push_str("</tbody></table>");
     }
     layout(ctx, &body)
+}
+
+/// Author names as local-filter links (entries, not decorations).
+fn author_cell(authors: &[String]) -> String {
+    if authors.is_empty() {
+        return "Anonymous".to_string();
+    }
+    authors
+        .iter()
+        .map(|author| {
+            format!(
+                "<a href=\"/works?author={}\">{}</a>",
+                percent_encode(author, SpaceMode::Percent20),
+                escape(author)
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(", ")
 }

@@ -28,18 +28,20 @@ pub fn dashboard_page(
         },
     ));
 
-    body.push_str(
-        "<dl class=\"work meta group\">\
-         <dt>Cached works:</dt><dd>",
-    );
-    body.push_str(&format!("{}</dd>", stats.works));
     body.push_str(&format!(
-        "<dt>Cached chapters:</dt><dd>{}</dd>\
-         <dt>Subscriptions:</dt><dd>{}</dd>\
-         <dt>Bookmarks:</dt><dd>{}</dd>\
-         <dt>Kudos given:</dt><dd>{}</dd>\
-         <dt>HTTP failures logged:</dt><dd>{}</dd></dl>",
-        stats.chapters, stats.subscriptions, stats.bookmarks, stats.kudos, stats.recent_http_errors
+        "<dl class=\"work meta group\">\
+         <dt>Cached works:</dt><dd><a href=\"/works\">{works}</a></dd>\
+         <dt>Cached chapters:</dt><dd>{chapters}</dd>\
+         <dt>Subscriptions:</dt><dd><a href=\"/subscriptions\">{subscriptions}</a></dd>\
+         <dt>Bookmarks:</dt><dd><a href=\"/bookmarks\">{bookmarks}</a></dd>\
+         <dt>Kudos given:</dt><dd>{kudos}</dd>\
+         <dt>HTTP failures logged:</dt><dd><a href=\"/diagnostics\">{errors}</a></dd></dl>",
+        works = stats.works,
+        chapters = stats.chapters,
+        subscriptions = stats.subscriptions,
+        bookmarks = stats.bookmarks,
+        kudos = stats.kudos,
+        errors = stats.recent_http_errors,
     ));
 
     body.push_str(

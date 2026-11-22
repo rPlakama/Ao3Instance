@@ -4,8 +4,10 @@
 //! Author HTML only ever reaches a page through [`sanitize`]; the chapter body
 //! gets its own document with `CHAPTER_CSP`, never inline in the app page.
 
+use super::blurb::author_links;
 use super::chrome::{PageContext, checked_label, layout};
 use super::{escape, sanitize};
+use crate::ao3::parse::{SpaceMode, percent_encode};
 use crate::store::{StoredChapter, StoredWork};
 /// Everything the reader needs that is not the work itself.
 pub struct ReadContext<'a> {
@@ -41,11 +43,7 @@ pub fn read_page(
         full_work,
         comment_as,
     } = *ctx;
-    let authors = if work.authors.is_empty() {
-        "Anonymous".to_string()
-    } else {
-        work.authors.join(", ")
-    };
+    let authors = author_links(work);
     let mut body = String::from("<a id=\"top\"></a>");
     if let Some(notice) = notice {
         body.push_str(&format!("<div class=\"notice\">{}</div>", escape(notice)));
@@ -54,12 +52,16 @@ pub fn read_page(
         "<div class=\"preface group\"><h2 class=\"title heading\">{}</h2>\
          <h3 class=\"byline heading\">by {}</h3></div>",
         escape(&work.title),
-        escape(&authors)
+        authors
     ));
 
     let mut meta_rows = String::new();
     if let Some(rating) = &work.rating {
-        meta_rows.push_str(&format!("<dt>Rating:</dt><dd>{}</dd>", escape(rating)));
+        meta_rows.push_str(&format!(
+            "<dt>Rating:</dt><dd><a class=\"tag\" href=\"/works?rating={}\">{}</a></dd>",
+            percent_encode(rating, SpaceMode::Percent20),
+            escape(rating)
+        ));
     }
     meta_rows.push_str(&meta_row("Archive Warning:", &work.tags.warnings));
     meta_rows.push_str(&meta_row("Category:", &work.tags.categories));
@@ -381,7 +383,13 @@ fn meta_row(label: &str, tags: &[String]) -> String {
     }
     let joined = tags
         .iter()
-        .map(|tag| format!("<span class=\"tag\">{}</span>", escape(tag)))
+        .map(|tag| {
+            format!(
+                "<a class=\"tag\" href=\"/works?tag={}\">{}</a>",
+                percent_encode(tag, SpaceMode::Percent20),
+                escape(tag)
+            )
+        })
         .collect::<Vec<_>>()
         .join(", ");
     format!("<dt>{label}</dt><dd>{joined}</dd>")

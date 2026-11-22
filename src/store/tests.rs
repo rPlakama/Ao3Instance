@@ -448,10 +448,9 @@ async fn browse_and_local_lists_read_only_from_the_cache() {
         )
         .await
         .unwrap();
-    store
-        .upsert_work(&page_titled("456", "Second Work", "Other", "Mature"), "h2")
-        .await
-        .unwrap();
+    let mut second = page_titled("456", "Second Work", "Other", "Mature");
+    second.authors = vec!["SecondAuthor".into()];
+    store.upsert_work(&second, "h2").await.unwrap();
     store.save_progress("123", 2).await.unwrap();
     store.save_progress("456", 1).await.unwrap();
     store
@@ -489,6 +488,18 @@ async fn browse_and_local_lists_read_only_from_the_cache() {
     let filtered = store.browse_works("reader", &filter).await.unwrap();
     assert_eq!(filtered.total, 1);
     assert_eq!(filtered.works[0].ao3_id, "456");
+
+    filter.fandom = None;
+    filter.author = Some("secondauthor".into());
+    let by_author = store.browse_works("reader", &filter).await.unwrap();
+    assert_eq!(by_author.total, 1, "author matching is case-insensitive");
+    assert_eq!(by_author.works[0].ao3_id, "456");
+    filter.author = Some("missing".into());
+    assert_eq!(
+        store.browse_works("reader", &filter).await.unwrap().total,
+        0
+    );
+    filter.author = None;
 
     filter.fandom = None;
     filter.reading_status = ReadingStatus::Bookmarked;

@@ -76,6 +76,7 @@ impl BrowseSort {
 #[derive(Debug, Clone)]
 pub struct WorkFilter {
     pub rating: Option<String>,
+    pub author: Option<String>,
     pub fandom: Option<String>,
     pub tag: Option<String>,
     pub language: Option<String>,
@@ -89,6 +90,7 @@ impl Default for WorkFilter {
     fn default() -> Self {
         Self {
             rating: None,
+            author: None,
             fandom: None,
             tag: None,
             language: None,
@@ -191,6 +193,10 @@ impl Store {
                     work.language
                         .as_deref()
                         .is_some_and(|value| value.eq_ignore_ascii_case(language))
+                }) && filter.author.as_ref().is_none_or(|author| {
+                    work.authors
+                        .iter()
+                        .any(|value| value.eq_ignore_ascii_case(author))
                 }) && filter.fandom.as_ref().is_none_or(|fandom| {
                     work.tags
                         .fandoms

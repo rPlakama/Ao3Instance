@@ -598,3 +598,6 @@ ul.required-tags li.warning-choose { background: #b8860b; }
 .toolbar form { margin: 0; }
 .toolbar > span, .toolbar > a { white-space: nowrap; }
 #workskin .preface.group h2.title.heading { margin-bottom: 0.1rem; }
+
+
+ul.required-tags a { color: inherit; text-decoration: none; }

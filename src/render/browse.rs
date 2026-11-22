@@ -105,6 +105,12 @@ fn sidebar(result: &BrowseResult, filter: &WorkFilter) -> String {
     }
     form.push_str("</select></label>");
 
+    form.push_str(&format!(
+        "<label>Author<input type=\"text\" name=\"author\" value=\"{}\" \
+         placeholder=\"exact author\"></label>",
+        escape(filter.author.as_deref().unwrap_or(""))
+    ));
+
     form.push_str("<label>Fandom<select name=\"fandom\">");
     form.push_str(&option("", "Any fandom", filter.fandom.is_none()));
     for (fandom, count) in &result.fandoms {
@@ -181,6 +187,9 @@ fn query(filter: &WorkFilter, page: i64) -> String {
     if let Some(rating) = &filter.rating {
         parts.push(format!("rating={}", encode(rating)));
     }
+    if let Some(author) = &filter.author {
+        parts.push(format!("author={}", encode(author)));
+    }
     if let Some(fandom) = &filter.fandom {
         parts.push(format!("fandom={}", encode(fandom)));
     }
@@ -197,8 +206,13 @@ fn query(filter: &WorkFilter, page: i64) -> String {
 }
 
 /// Parses the filters from `GET /works` (and the tag alias) into one struct.
+#[allow(
+    clippy::too_many_arguments,
+    reason = "each argument is one independent AO3 filter query parameter"
+)]
 pub fn filter_from(
     rating: Option<String>,
+    author: Option<String>,
     fandom: Option<String>,
     tag: Option<String>,
     language: Option<String>,
@@ -214,6 +228,7 @@ pub fn filter_from(
     };
     WorkFilter {
         rating: clean(rating),
+        author: clean(author),
         fandom: clean(fandom),
         tag: clean(tag),
         language: clean(language),

@@ -2,15 +2,12 @@
 
 use super::icons::required_tags;
 use super::{escape, sanitize};
+use crate::ao3::parse::{SpaceMode, percent_encode};
 use crate::store::StoredWork;
 
 /// Renders one `.work.blurb.group` card. `progress` is the saved chapter, if any.
 pub fn work_blurb(work: &StoredWork, progress: Option<i64>) -> String {
-    let authors = if work.authors.is_empty() {
-        "Anonymous".to_string()
-    } else {
-        work.authors.join(", ")
-    };
+    let authors = author_links(work);
 
     let mut tags = String::new();
     tags.push_str(&tag_items(&work.tags.warnings, "warnings"));
@@ -40,7 +37,11 @@ pub fn work_blurb(work: &StoredWork, progress: Option<i64>) -> String {
     });
 
     let rating = work.rating.as_deref().map_or_else(String::new, |rating| {
-        format!("<span class=\"tag rating\">{}</span>", escape(rating))
+        format!(
+            "<a class=\"tag rating\" href=\"/works?rating={}\">{}</a>",
+            percent_encode(rating, SpaceMode::Percent20),
+            escape(rating)
+        )
     });
 
     format!(
@@ -59,7 +60,7 @@ pub fn work_blurb(work: &StoredWork, progress: Option<i64>) -> String {
         id = escape(&work.ao3_id),
         title = escape(&work.title),
         required = required_tags(work),
-        authors = escape(&authors),
+        authors = authors,
         words = work.word_count.unwrap_or(0),
         chapters = work.chapter_count,
         kudos = work.kudos.unwrap_or(0),
@@ -71,9 +72,28 @@ fn tag_items(tags: &[String], class: &str) -> String {
     let mut out = String::new();
     for tag in tags {
         out.push_str(&format!(
-            "<li class=\"{class}\"><span class=\"tag\">{}</span></li>",
+            "<li class=\"{class}\"><a class=\"tag\" href=\"/works?tag={}\">{}</a></li>",
+            percent_encode(tag, SpaceMode::Percent20),
             escape(tag)
         ));
     }
     out
+}
+
+/// Author names as local-filter links; the byline is an entry too.
+pub(super) fn author_links(work: &StoredWork) -> String {
+    if work.authors.is_empty() {
+        return "Anonymous".to_string();
+    }
+    work.authors
+        .iter()
+        .map(|author| {
+            format!(
+                "<a href=\"/works?author={}\">{}</a>",
+                percent_encode(author, SpaceMode::Percent20),
+                escape(author)
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(", ")
 }

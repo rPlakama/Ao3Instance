@@ -15,6 +15,7 @@ use crate::render::{self, NavSection};
 #[derive(Deserialize)]
 pub(super) struct BrowseQuery {
     rating: Option<String>,
+    author: Option<String>,
     fandom: Option<String>,
     tag: Option<String>,
     language: Option<String>,
@@ -49,6 +50,7 @@ async fn render_browse(
     let (account, _) = super::session_identity(state).await;
     let mut filter = render::filter_from(
         query.rating,
+        query.author,
         query.fandom,
         query.tag,
         query.language,
