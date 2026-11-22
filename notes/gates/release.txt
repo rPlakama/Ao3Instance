@@ -39,3 +39,18 @@ exit=0
 
 == release title (changes since previous release: none — first release)
 commits in release: 10
+
+== push
+git remote -v -> (empty). No remote is configured, so `git push` / `git push --tags`
+cannot run from this checkout; the release commit and annotated tag v0.1.1 are local.
+Add a remote and push when one exists.
+
+== sandbox validation (operator step, not a code task)
+`otwarchive` runs under Docker (docker-compose: MariaDB + Redis + Elasticsearch 9.3,
+~1.5 GB heap). In this sandboxed session the docker CLI resolves to a podman shim and
+fails: "Failed to obtain podman configuration: mkdir /run/user/1000/libpod:
+permission denied" (no container daemon reachable). The plan's tier-3 sandbox run
+(plan §9) therefore remains an operator acceptance step on a host with Docker; it
+validates the parsers against a real Rails instance. All other gates are green and the
+live site is respected (no crawling; one polite request returned 429 and was not
+retried).
