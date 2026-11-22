@@ -51,10 +51,14 @@ preface heading and jump select, `?view_full_work=true` with a Chapter-by-Chapte
 toggle, bottom feedback actions, `Comment as <pseud>`, blurb-based search
 results, the signed-out login dropdown, an A–Z fandoms directory and the
 signed-in dashboard sidebar on every page. Round 3 added paged offline search
-with totals, the home Continue Reading strip, and the two-step
-`/users/logout/confirm` flow. Remaining before the plan's final gate: an
-optional pass on required-tag SVG artwork, a manual browser walkthrough in both
-skins, and the next version bump.
+with totals, the home Continue Reading strip, the two-step
+`/users/logout/confirm` flow, and a headless Chromium walkthrough (home, reader,
+browse, diagnostics, Reversi) that caught and fixed three visual bugs: plain
+home cards now use the shared blurb, Reversi blurb titles are readable, the
+reader no longer repeats the chapter title, and `/favicon.ico` no longer fills
+the diagnostics table. Remaining before the plan's final gate: an optional pass
+on required-tag SVG artwork, a checkbox sweep of the phase lists, and the next
+version bump.
 
 ---
 
