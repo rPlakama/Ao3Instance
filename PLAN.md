@@ -74,8 +74,9 @@ names in lists and continue-reading link to the author filter; dashboard
 counters link to their pages; search has wired rating/fandom/language/sort
 selects backed by a rank-preserving FTS query; tag/user subscriptions no longer
 point at `/read`; cached audit targets link to the reader while uncached ones
-stay text. The `WorkFilter` gained an `author` facet. Remaining wiring
-candidates: diagnostics log targets and solver-event paths.
+stay text. The `WorkFilter` gained an `author` facet. Diagnostics now also link cached `/works/<id>` paths and solver-event targets to
+the reader, leaving uncached paths as text. With the crawl test in place, every
+rendered local entry is wired and guarded against regression.
 
 **Known deviations (documented, not blockers):** required-tag marks are
 styled text badges rather than SVG artwork; the skin is a single-operator
