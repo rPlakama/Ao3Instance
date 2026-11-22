@@ -46,9 +46,12 @@ the embedded 16 KB `ao3.css`, and `POST /skin` switching `data-skin` to
 `reversi`. `scripts/check-no-solver-build-dep.sh --closure` confirms FlareSolverr
 is absent from the build closure.
 
-Remaining before the plan's final gate: per-segment pixel parity (work-meta
-ordering, `view_full_work`, feedback/comment polish), search pagination, a
-manual browser walkthrough in both skins, and the next version bump.
+Round 2 closed the reader and search gaps: AO3-ordered work metadata, chapter
+jump, `?view_full_work=true` with a Chapter-by-Chapter toggle, bottom feedback
+actions, blurb-based search results, and the signed-out login dropdown.
+Remaining before the plan's final gate: comment-box polish (`Comment as
+<pseud>`), search result paging, a manual browser walkthrough in both skins,
+and the next version bump.
 
 ---
 

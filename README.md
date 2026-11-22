@@ -20,6 +20,17 @@ Features:
 
  This project shall utilizate flake.nix && Kunobi Kache (https://ninja.kunobi.com/kache) for Local builds. The project shall also use strict Clippy rules.
 
+## What you get
+
+- A local cache that keeps reads working when AO3 is down.
+- AO3-style pages: header/nav/footer, work blurbs, required-tag badges,
+  browse filters, fandoms, dashboard, subscriptions, bookmarks, reading history.
+- A reader with chapter jump and an **Entire Work** mode, plus classic and
+  Reversi display skins (`POST /skin`).
+- Structured HTTP diagnostics at `/diagnostics` (All / Upstream / Inbound).
+- An optional, explicit Cloudflare fallback that calls a **host-provided**
+  FlareSolverr; the project never builds, vendors or starts it.
+
 ## Running it
 
 ```
