@@ -2,6 +2,7 @@
 
 use super::chrome::{PageContext, layout};
 use super::escape;
+use crate::ao3::parse::{SpaceMode, percent_encode};
 use crate::store::{BookmarkEntry, CacheStats, ReadingEntry, SubscriptionEntry};
 
 pub fn dashboard_page(
@@ -59,9 +60,37 @@ pub fn dashboard_page(
     body.push_str("<h3>Recent subscriptions</h3>");
     body.push_str(&recent_items(
         subscriptions.iter().map(|entry| {
+            let (href, label) = match entry.target_kind.as_str() {
+                "Work" => (
+                    format!("/read/{}", escape(&entry.target_id)),
+                    entry
+                        .title
+                        .as_deref()
+                        .unwrap_or(&entry.target_id)
+                        .to_string(),
+                ),
+                "Tag" => (
+                    format!(
+                        "/works?tag={}",
+                        percent_encode(
+                            entry.title.as_deref().unwrap_or(&entry.target_id),
+                            SpaceMode::Percent20
+                        )
+                    ),
+                    entry
+                        .title
+                        .as_deref()
+                        .unwrap_or(&entry.target_id)
+                        .to_string(),
+                ),
+                _ => (
+                    "/subscriptions".to_string(),
+                    format!("{} {}", entry.target_kind, entry.target_id),
+                ),
+            };
             (
-                escape(entry.title.as_deref().unwrap_or(&entry.target_id)),
-                format!("/read/{}", escape(&entry.target_id)),
+                escape(&label),
+                href,
                 format!("subscription {}", escape(&entry.state)),
             )
         }),

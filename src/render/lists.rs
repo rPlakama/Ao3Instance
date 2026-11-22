@@ -34,12 +34,23 @@ pub fn subscriptions_page(ctx: &PageContext, entries: &[SubscriptionEntry]) -> S
                 "—".to_string()
             };
             let authors = author_cell(&entry.authors);
+            let title_html = match entry.target_kind.as_str() {
+                "Work" => format!(
+                    "<a href=\"/read/{}\">{}</a>",
+                    escape(&entry.target_id),
+                    escape(title)
+                ),
+                "Tag" => format!(
+                    "<a href=\"/works?tag={}\">{}</a>",
+                    percent_encode(title, SpaceMode::Percent20),
+                    escape(title)
+                ),
+                _ => escape(title),
+            };
             body.push_str(&format!(
-                "<tr><td><a href=\"/read/{id}\">{title}</a>\
+                "<tr><td>{title_html}\
                  <div class=\"byline\">by {authors}</div></td><td>{kind}</td>\
                  <td>{state}</td><td>{updated}</td><td>{action}</td></tr>",
-                id = escape(&entry.target_id),
-                title = escape(title),
                 kind = escape(&entry.target_kind),
                 state = escape(&entry.state),
                 updated = escape(&format_utc(entry.updated_at)),

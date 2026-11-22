@@ -15,7 +15,8 @@ use ao3instance::config::Config;
 use ao3instance::store::Store;
 use ao3instance::{db, server};
 use scraper::{Html, Selector};
-use support::harness::{http, seed_work};
+use support::Server;
+use support::harness::{http, seed_work, session_routes, sign_in, start};
 
 async fn serve(dir: &std::path::Path) -> (String, Store, tokio::task::JoinHandle<()>) {
     let config = Config::from_pairs([
@@ -117,6 +118,63 @@ async fn every_rendered_local_link_resolves() {
         }
     }
     assert!(broken.is_empty(), "unwired entries: {broken:?}");
+
+    handle.abort();
+    drop(std::fs::remove_dir_all(dir));
+}
+
+#[tokio::test]
+async fn non_work_subscriptions_never_point_at_reader_urls() {
+    let upstream = Server::start(session_routes(vec![]));
+    let (root, store, dir, handle) = start(&upstream, false).await;
+    let client = http();
+    sign_in(&client, &root).await;
+    seed_work(&store).await;
+    store
+        .upsert_subscription("someone", "Work", "12345", Some(7), "active")
+        .await
+        .expect("work subscription");
+    store
+        .upsert_subscription("someone", "Tag", "fluff", None, "active")
+        .await
+        .expect("tag subscription");
+    store
+        .upsert_subscription("someone", "User", "another", None, "active")
+        .await
+        .expect("user subscription");
+
+    for page in ["/subscriptions", "/dashboard"] {
+        let body = client
+            .get(format!("{root}{page}"))
+            .send()
+            .await
+            .expect("page")
+            .text()
+            .await
+            .expect("body");
+        assert!(
+            !body.contains("/read/fluff") && !body.contains("/read/another"),
+            "{page} must not treat tags/users as works"
+        );
+        assert!(body.contains("fluff"), "{page} still lists the tag");
+    }
+
+    let subscriptions = client
+        .get(format!("{root}/subscriptions"))
+        .send()
+        .await
+        .expect("subscriptions")
+        .text()
+        .await
+        .expect("body");
+    assert!(
+        subscriptions.contains("/works?tag=fluff"),
+        "tag subscriptions link to the tag filter"
+    );
+    assert!(
+        subscriptions.contains("/read/12345"),
+        "work subscriptions link to the reader"
+    );
 
     handle.abort();
     drop(std::fs::remove_dir_all(dir));
