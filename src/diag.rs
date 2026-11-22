@@ -327,14 +327,15 @@ fn redact_key(text: &str, key: &str) -> String {
     let mut rest = text;
     while let Some(pos) = rest.find(key) {
         out.push_str(&rest[..pos]);
-        out.push_str(key);
         let after_key = rest[pos + key.len()..].trim_start_matches(['"', '\'', ' ']);
         if let Some(after_eq) = after_key.strip_prefix('=') {
-            out.push('=');
+            // The key name itself is dropped: the plan forbids cookie and CSRF
+            // names in rows as well as their values.
             out.push_str("[redacted]");
             let value = after_eq.trim_start_matches(['"', '\'', ' ']);
             rest = &value[value.find(delimiter).unwrap_or(value.len())..];
         } else {
+            out.push_str(key);
             rest = after_key;
         }
     }
@@ -426,7 +427,15 @@ mod tests {
         let dirty = "GET /works/1 failed cookie: _otwarchive_session=abc123; \
                      user_credentials=def456 authenticity_token=ghi789 password=hunter2";
         let clean = redact_message(dirty);
-        for secret in ["abc123", "def456", "ghi789", "hunter2"] {
+        for secret in [
+            "abc123",
+            "def456",
+            "ghi789",
+            "hunter2",
+            "_otwarchive_session",
+            "user_credentials",
+            "authenticity_token",
+        ] {
             assert!(!clean.contains(secret), "leaked {secret}: {clean}");
         }
         assert!(clean.contains("[redacted]"), "{clean}");

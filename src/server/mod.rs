@@ -7,6 +7,7 @@
 //! The route handlers live in three segments — reads, session, writes — and the
 //! router below is the only place that knows their URLs.
 
+mod diag;
 mod error;
 mod reads;
 mod session;
@@ -15,6 +16,7 @@ mod writes;
 use std::sync::Arc;
 
 use axum::Router;
+use axum::middleware;
 use axum::routing::{get, post};
 use tokio::sync::Mutex;
 
@@ -25,6 +27,7 @@ use crate::ao3::session::AccountSession;
 use crate::config::Config;
 use crate::crypto::SecretKey;
 use crate::db;
+use crate::diag::HttpErrorEvent;
 use crate::error::{Error, Result};
 use crate::store::Store;
 
@@ -34,6 +37,8 @@ pub struct AppState {
     pub key: SecretKey,
     pub governor: WriteGovernor,
     pub write_enabled: bool,
+    /// Inbound 4xx/5xx events join the same queue as upstream client failures.
+    pub diag_tx: tokio::sync::mpsc::Sender<HttpErrorEvent>,
 }
 
 /// Builds the router. Split from [`run`] so tests can serve it on an ephemeral
@@ -41,6 +46,18 @@ pub struct AppState {
 pub async fn router(config: &Config, store: Store) -> Result<Router> {
     let key = SecretKey::load_or_create(&config.key_file)?;
     let mut session = AccountSession::new(config)?;
+
+    // One bounded queue for both directions; the writer task owns SQLite.
+    let (diag_tx, diag_rx) = diag::channel();
+    diag::spawn_writer(
+        store.clone(),
+        config.http_log_retention,
+        config.log_http_errors,
+        diag_rx,
+    );
+    session
+        .client_mut()
+        .set_error_sink(diag::sink(diag_tx.clone()));
 
     if let Some(saved) = store.load_session().await? {
         match Jar::decrypt(&key, &saved.jar_enc) {
@@ -63,8 +80,9 @@ pub async fn router(config: &Config, store: Store) -> Result<Router> {
         key,
         governor: WriteGovernor::new(config.min_request_spacing),
         write_enabled: config.write_enabled,
+        diag_tx,
     });
-    Ok(Router::new()
+    let app = Router::new()
         .route("/", get(reads::home))
         .route("/open", post(reads::open_work))
         .route("/read/{id}", get(reads::read_work))
@@ -90,7 +108,9 @@ pub async fn router(config: &Config, store: Store) -> Result<Router> {
         .route("/write/bookmark", post(writes::write_bookmark))
         .route("/audit", get(writes::audit))
         .route("/health", get(health))
-        .with_state(state))
+        .with_state(state.clone())
+        .layer(middleware::from_fn_with_state(state, diag::inbound));
+    Ok(app)
 }
 
 /// Opens the database and serves until Ctrl-C.

@@ -2,6 +2,7 @@ use super::works::fts_query;
 use super::*;
 use crate::ao3::work::{Chapter, WorkPage};
 use crate::db;
+use crate::diag::{HttpDirection, HttpErrorEvent, Transport};
 
 fn page() -> WorkPage {
     WorkPage {
@@ -333,4 +334,49 @@ fn hashes_are_stable_and_distinct() {
     assert_eq!(sha256_hex(b"abc"), sha256_hex(b"abc"));
     assert_ne!(sha256_hex(b"abc"), sha256_hex(b"abd"));
     assert_eq!(sha256_hex(b"abc").len(), 64);
+}
+
+#[tokio::test]
+async fn http_errors_are_recorded_filtered_and_pruned() {
+    let (store, dir) = test_store("http-errors").await;
+    for index in 0..5 {
+        let direction = if index % 2 == 0 {
+            HttpDirection::Upstream
+        } else {
+            HttpDirection::Inbound
+        };
+        let event = HttpErrorEvent::new(
+            direction,
+            Transport::Direct,
+            "GET",
+            format!("/works/{index}?authenticity_token=secret"),
+            "blocked_by_edge",
+            "refused; cookie _otwarchive_session=secret-cookie",
+        )
+        .with_status(403)
+        .with_latency(5);
+        store.record_http_error(&event, 3).await.unwrap();
+    }
+
+    let rows = store.recent_http_errors(10, None).await.unwrap();
+    assert_eq!(rows.len(), 3, "retention prunes the oldest rows");
+    assert!(rows[0].id > rows[1].id, "newest first");
+    assert_eq!(rows[0].path, "/works/4", "query strings are stripped");
+    assert_eq!(rows[0].status, Some(403));
+    assert_eq!(rows[0].transport, "direct");
+    assert!(!rows[0].message.contains("secret-cookie"));
+    assert!(!rows[0].message.contains("_otwarchive_session"));
+
+    let upstream = store
+        .recent_http_errors(10, Some("upstream"))
+        .await
+        .unwrap();
+    assert!(!upstream.is_empty());
+    assert!(upstream.iter().all(|row| row.direction == "upstream"));
+
+    let cleared = store.clear_http_errors().await.unwrap();
+    assert_eq!(cleared, 3);
+    assert!(store.recent_http_errors(10, None).await.unwrap().is_empty());
+
+    drop(std::fs::remove_dir_all(&dir));
 }

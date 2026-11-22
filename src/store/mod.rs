@@ -4,6 +4,7 @@
 //! ledger and local receipts ([`writes`]), and the persisted AO3 session
 //! ([`session`]). This module owns the shared row types and the `Store` handle.
 
+mod errors;
 mod session;
 #[cfg(test)]
 mod tests;
@@ -113,4 +114,5 @@ impl Store {
 }
 
 pub(super) use crate::time::now_secs;
+pub use errors::HttpErrorRow;
 pub use works::sha256_hex;

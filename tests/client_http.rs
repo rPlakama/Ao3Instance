@@ -8,12 +8,26 @@
 
 mod support;
 
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use ao3instance::ao3::client::Client;
 use ao3instance::consts;
+use ao3instance::diag::{HttpErrorEvent, format_line};
 use ao3instance::error::Error;
 use support::{Response, Server};
+
+fn collector() -> (
+    Arc<Mutex<Vec<HttpErrorEvent>>>,
+    ao3instance::ao3::client::ErrorSink,
+) {
+    let events = Arc::new(Mutex::new(Vec::new()));
+    let sink_events = Arc::clone(&events);
+    let sink: ao3instance::ao3::client::ErrorSink = Arc::new(move |event: &HttpErrorEvent| {
+        sink_events.lock().expect("event lock").push(event.clone());
+    });
+    (events, sink)
+}
 
 fn client(server: &Server) -> Client {
     // Spacing is a production policy; tests must not wait 2 s per request.
@@ -161,4 +175,108 @@ async fn timeout_override_aborts_a_slow_response() {
         .await
         .expect_err("a 20 ms budget must abort a 300 ms response");
     assert!(matches!(err, Error::Network(_)), "got {err:?}");
+}
+
+#[tokio::test]
+async fn edge_block_emits_one_redacted_diagnostic_event() {
+    let server = Server::start(vec![(
+        "GET /works/42?view_full_work=true",
+        Response::new(403)
+            .with_header("cf-ray", "8f2a-SJC")
+            .with_header("server", "cloudflare")
+            .with_header("content-type", "text/html")
+            .with_body("challenge page leaks _otwarchive_session=secret-cookie"),
+    )]);
+    let mut client = client(&server);
+    let (events, sink) = collector();
+    client.set_error_sink(sink);
+
+    let response = client
+        .get("/works/42?view_full_work=true")
+        .await
+        .expect("403 is still a response");
+    assert_eq!(response.status, 403);
+    assert_eq!(response.transport, ao3instance::diag::Transport::Direct);
+    assert_eq!(response.path, "/works/42?view_full_work=true");
+
+    let events = events.lock().expect("event lock");
+    assert_eq!(events.len(), 1, "one request, one event: {events:?}");
+    let event = &events[0];
+    assert_eq!(event.status, Some(403));
+    assert_eq!(event.error_kind, "blocked_by_edge");
+    assert_eq!(event.path, "/works/42?view_full_work=true");
+    assert_eq!(event.cf_ray.as_deref(), Some("8f2a-SJC"));
+    assert_eq!(event.server_header.as_deref(), Some("cloudflare"));
+    assert!(event.latency_ms.is_some());
+    assert!(
+        !event.message.contains("secret-cookie"),
+        "{:?}",
+        event.message
+    );
+    assert!(!format_line(event).contains("secret-cookie"));
+}
+
+#[tokio::test]
+async fn login_redirect_emits_its_own_kind_without_the_query() {
+    let server = Server::start(vec![(
+        "GET /works/9",
+        Response::redirect("/users/login?return_to=/works/9&authenticity_token=tok"),
+    )]);
+    let mut client = client(&server);
+    let (events, sink) = collector();
+    client.set_error_sink(sink);
+
+    let response = client.get("/works/9").await.expect("redirect is data");
+    assert_eq!(response.status, 302);
+
+    let events = events.lock().expect("event lock");
+    assert_eq!(events.len(), 1, "{events:?}");
+    assert_eq!(events[0].error_kind, "redirect_login");
+    assert_eq!(events[0].location_path.as_deref(), Some("/users/login"));
+    assert!(!format_line(&events[0]).contains("authenticity_token"));
+}
+
+#[tokio::test]
+async fn announced_oversize_emits_body_cap_event_with_status() {
+    let server = Server::start(vec![(
+        "GET /big",
+        Response::ok("tiny")
+            .with_header("content-length", (consts::MAX_BODY_BYTES + 1).to_string()),
+    )]);
+    let mut client = client(&server);
+    let (events, sink) = collector();
+    client.set_error_sink(sink);
+
+    let err = client.get("/big").await.expect_err("cap must trip");
+    assert!(matches!(err, Error::UpstreamChanged(_)));
+
+    let events = events.lock().expect("event lock");
+    assert_eq!(events.len(), 1, "{events:?}");
+    assert_eq!(events[0].error_kind, "body_cap_exceeded");
+    assert_eq!(events[0].status, Some(200));
+}
+
+#[tokio::test]
+async fn transport_failure_emits_network_event_without_status() {
+    let mut client = Client::with_spacing("http://127.0.0.1:1", "AO3Instance/test", Duration::ZERO)
+        .expect("client");
+    let (events, sink) = collector();
+    client.set_error_sink(sink);
+
+    let err = client
+        .get("/works/1")
+        .await
+        .expect_err("connection refused");
+    assert!(matches!(err, Error::Network(_)), "got {err:?}");
+
+    let events = events.lock().expect("event lock");
+    assert_eq!(events.len(), 1, "{events:?}");
+    assert_eq!(events[0].error_kind, "network");
+    assert_eq!(events[0].status, None);
+    assert_eq!(events[0].method, "GET");
+    assert!(
+        events[0].message.contains("connect"),
+        "{:?}",
+        events[0].message
+    );
 }
