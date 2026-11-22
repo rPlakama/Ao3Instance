@@ -9,7 +9,7 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use axum::{
-    extract::{Form, State},
+    extract::{Form, Query, State},
     response::{Html, Redirect},
 };
 use serde::Deserialize;
@@ -199,8 +199,21 @@ async fn persist_clearance(state: &AppState) -> Handled<()> {
     Ok(())
 }
 
-pub(super) async fn diagnostics(State(state): State<Arc<AppState>>) -> Handled<Html<String>> {
-    let errors = state.store.recent_http_errors(100, None).await?;
+#[derive(Deserialize)]
+pub(super) struct DiagnosticsQuery {
+    direction: Option<String>,
+}
+
+pub(super) async fn diagnostics(
+    State(state): State<Arc<AppState>>,
+    Query(query): Query<DiagnosticsQuery>,
+) -> Handled<Html<String>> {
+    let direction = match query.direction.as_deref() {
+        Some("upstream") => Some("upstream"),
+        Some("inbound") => Some("inbound"),
+        _ => None,
+    };
+    let errors = state.store.recent_http_errors(100, direction).await?;
     let events = state.store.recent_solver_events(20).await?;
     let status = state.solver_status.read().await.clone();
     let (send_cookies_allowed, clearance_expires_at) = {
@@ -227,6 +240,7 @@ pub(super) async fn diagnostics(State(state): State<Arc<AppState>>) -> Handled<H
         send_cookies_allowed,
         clearance_expires_at,
         solves_last_hour,
+        direction,
     };
     Ok(Html(diagnostics_page(&page, &view)))
 }

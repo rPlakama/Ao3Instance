@@ -234,3 +234,64 @@ async fn inbound_4xx_is_logged_without_upstream_traffic() {
     handle.abort();
     drop(std::fs::remove_dir_all(dir));
 }
+
+#[tokio::test]
+async fn diagnostics_page_filters_directions_and_clears() {
+    let upstream = Server::start(vec![(
+        "GET /works/444?view_full_work=true",
+        Response::new(404),
+    )]);
+    let dir = support::temp_dir("diag-page");
+    let (root, store, handle) = serve_app(&dir, &upstream.url()).await;
+
+    let _ = open_work(&root, "444").await;
+    wait_for(&store, "upstream", 1).await;
+    wait_for(&store, "inbound", 1).await;
+
+    let client = http();
+    let all = client
+        .get(format!("{root}/diagnostics"))
+        .send()
+        .await
+        .expect("diagnostics");
+    let all = all.text().await.expect("body");
+    assert!(all.contains("/works/444?view_full_work=true"), "{all}");
+    assert!(all.contains("Recent solver outcomes"), "{all}");
+
+    let inbound = client
+        .get(format!("{root}/diagnostics?direction=inbound"))
+        .send()
+        .await
+        .expect("filtered");
+    let inbound = inbound.text().await.expect("body");
+    assert!(
+        !inbound.contains("/works/444"),
+        "upstream row hidden: {inbound}"
+    );
+    assert!(
+        inbound.contains("inbound_client_error") || inbound.contains("inbound"),
+        "{inbound}"
+    );
+
+    let cleared = client
+        .post(format!("{root}/diagnostics/clear"))
+        .send()
+        .await
+        .expect("clear");
+    assert_eq!(cleared.status(), 200);
+    let after = client
+        .get(format!("{root}/diagnostics"))
+        .send()
+        .await
+        .expect("after clear");
+    assert!(
+        after
+            .text()
+            .await
+            .expect("body")
+            .contains("Nothing recorded yet")
+    );
+
+    handle.abort();
+    drop(std::fs::remove_dir_all(dir));
+}

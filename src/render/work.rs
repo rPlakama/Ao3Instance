@@ -7,17 +7,6 @@
 use super::chrome::{PageContext, checked_label, layout};
 use super::{escape, sanitize};
 use crate::store::{StoredChapter, StoredWork};
-fn tag_chips(tags: &[String], class: &str) -> String {
-    let mut out = String::new();
-    for tag in tags {
-        out.push_str(&format!(
-            "<li class=\"{class}\"><span class=\"tag\">{}</span></li>",
-            escape(tag)
-        ));
-    }
-    out
-}
-
 /// Everything the reader needs that is not the work itself.
 pub struct ReadContext<'a> {
     pub current: i64,
@@ -65,6 +54,12 @@ pub fn read_page(
     if let Some(rating) = &work.rating {
         meta_rows.push_str(&format!("<dt>Rating:</dt><dd>{}</dd>", escape(rating)));
     }
+    meta_rows.push_str(&meta_row("Archive Warning:", &work.tags.warnings));
+    meta_rows.push_str(&meta_row("Category:", &work.tags.categories));
+    meta_rows.push_str(&meta_row("Fandom:", &work.tags.fandoms));
+    meta_rows.push_str(&meta_row("Relationship:", &work.tags.relationships));
+    meta_rows.push_str(&meta_row("Character:", &work.tags.characters));
+    meta_rows.push_str(&meta_row("Additional Tags:", &work.tags.additional));
     if let Some(language) = &work.language {
         meta_rows.push_str(&format!("<dt>Language:</dt><dd>{}</dd>", escape(language)));
     }
@@ -79,17 +74,6 @@ pub fn read_page(
         escape(&checked_label(work.fetched_at))
     ));
     body.push_str(&format!("<dl class=\"work meta group\">{meta_rows}</dl>"));
-
-    let mut tags = String::new();
-    tags.push_str(&tag_chips(&work.tags.warnings, "warning"));
-    tags.push_str(&tag_chips(&work.tags.fandoms, ""));
-    tags.push_str(&tag_chips(&work.tags.relationships, ""));
-    tags.push_str(&tag_chips(&work.tags.characters, ""));
-    tags.push_str(&tag_chips(&work.tags.additional, ""));
-    tags.push_str(&tag_chips(&work.tags.categories, ""));
-    if !tags.is_empty() {
-        body.push_str(&format!("<ul class=\"tags commas\">{tags}</ul>"));
-    }
 
     if let Some(summary) = &work.summary
         && !summary.trim().is_empty()
@@ -138,10 +122,26 @@ pub fn read_page(
             escape(&work.ao3_id)
         ));
     }
+    let mut options = String::new();
+    for candidate in chapters {
+        options.push_str(&format!(
+            "<option value=\"{}\"{}>Chapter {}</option>",
+            candidate.idx,
+            if candidate.idx == current {
+                " selected"
+            } else {
+                ""
+            },
+            candidate.idx
+        ));
+    }
     toolbar.push_str(&format!(
-        "<a href=\"https://archiveofourown.org/works/{}\" rel=\"noopener noreferrer\">\
+        "<form class=\"inline\" method=\"get\" action=\"/read/{id}\">\
+         <label class=\"meta\">Chapter <select name=\"chapter\">{options}</select></label>\
+         <button type=\"submit\">Go</button></form>\
+         <a href=\"https://archiveofourown.org/works/{id}\" rel=\"noopener noreferrer\">\
          open on AO3</a>",
-        escape(&work.ao3_id)
+        id = escape(&work.ao3_id)
     ));
     if can_write {
         if subscribed {
@@ -287,6 +287,19 @@ pub fn chapter_document(work_title: &str, chapter: &StoredChapter) -> String {
          </head><body>{body}</body></html>",
         escape(work_title)
     )
+}
+
+/// One AO3 metadata row: label plus comma-joined tag chips (or `—`).
+fn meta_row(label: &str, tags: &[String]) -> String {
+    if tags.is_empty() {
+        return format!("<dt>{label}</dt><dd>—</dd>");
+    }
+    let joined = tags
+        .iter()
+        .map(|tag| format!("<span class=\"tag\">{}</span>", escape(tag)))
+        .collect::<Vec<_>>()
+        .join(", ");
+    format!("<dt>{label}</dt><dd>{joined}</dd>")
 }
 
 #[cfg(test)]

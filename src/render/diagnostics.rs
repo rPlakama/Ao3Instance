@@ -16,6 +16,8 @@ pub struct DiagnosticsView<'a> {
     pub send_cookies_allowed: bool,
     pub clearance_expires_at: Option<i64>,
     pub solves_last_hour: i64,
+    /// `None` = all, otherwise `upstream` or `inbound`.
+    pub direction: Option<&'a str>,
 }
 
 pub fn diagnostics_page(ctx: &PageContext, view: &DiagnosticsView<'_>) -> String {
@@ -62,7 +64,26 @@ pub fn diagnostics_page(ctx: &PageContext, view: &DiagnosticsView<'_>) -> String
          <button type=\"submit\">Forget clearance</button></form>",
     );
 
-    body.push_str("<h3>Recent HTTP failures</h3>");
+    body.push_str("<h3>Recent HTTP failures</h3><p class=\"actions\">");
+    for (label, value) in [
+        ("All", None),
+        ("Upstream", Some("upstream")),
+        ("Inbound", Some("inbound")),
+    ] {
+        let href = value.map_or_else(
+            || "/diagnostics".to_string(),
+            |value| format!("/diagnostics?direction={value}"),
+        );
+        let class = if view.direction == value {
+            "state active"
+        } else {
+            "state"
+        };
+        body.push_str(&format!(
+            "<a class=\"{class}\" href=\"{href}\">{label}</a> "
+        ));
+    }
+    body.push_str("</p>");
     if view.errors.is_empty() {
         body.push_str("<p class=\"muted\">Nothing recorded yet.</p>");
     } else {
