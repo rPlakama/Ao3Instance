@@ -41,12 +41,14 @@ pub(super) async fn tag_browse(
         return render_browse(&state, query, Some(tag)).await;
     }
     let page = query.page.unwrap_or(1).max(1);
-    let encoded = crate::ao3::parse::percent_encode(&tag, crate::ao3::parse::SpaceMode::Percent20);
-    let path = if page > 1 {
-        format!("/tags/{encoded}/works?page={page}")
-    } else {
-        format!("/tags/{encoded}/works")
+    let live_query = crate::ao3::search::LiveSearchQuery {
+        include_tags: vec![tag.clone()],
+        sort: Some("date".to_string()),
+        direction: Some("desc".to_string()),
+        page,
+        ..crate::ao3::search::LiveSearchQuery::default()
     };
+    let path = live_query.path(page);
     if let Some(body) = fetch_live_tag_page(&state, &path).await
         && let Ok(results) = crate::ao3::search::parse_search_results(&body)
     {

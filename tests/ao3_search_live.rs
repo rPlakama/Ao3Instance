@@ -197,10 +197,15 @@ async fn tag_pages_are_live_and_work_entries_link_to_tags() {
             "<h2 class=\"heading\">1 - 2 of 2 Works in Test</h2>",
         )
         .replace("<h3 class=\"heading\">2 Found</h3>", "");
-    let upstream = Server::start(vec![(
-        "GET /tags/Test/works".to_string(),
-        Response::ok(tag_page),
-    )]);
+    let tag_query = LiveSearchQuery {
+        include_tags: vec!["Test".into()],
+        sort: Some("date".into()),
+        direction: Some("desc".into()),
+        page: 1,
+        ..LiveSearchQuery::default()
+    };
+    let tag_path = tag_query.path(1);
+    let upstream = Server::start(vec![(format!("GET {tag_path}"), Response::ok(tag_page))]);
     let dir = support::temp_dir("live-tag");
     let (root, _store, handle) = serve(&dir, &upstream).await;
 
@@ -216,12 +221,11 @@ async fn tag_pages_are_live_and_work_entries_link_to_tags() {
     assert!(body.contains("A Mirror of Small Things"), "{body}");
     assert!(body.contains("/tags/Test%20Fandom/works"), "{body}");
     assert!(body.contains("/open/111"), "{body}");
-    assert!(
-        upstream
-            .requests()
-            .iter()
-            .any(|request| { request.path.starts_with("/tags/Test/works") })
-    );
+    assert!(upstream.requests().iter().any(|request| {
+        request
+            .path
+            .contains("work_search%5Bother_tag_names%5D=Test")
+    }));
 
     handle.abort();
     drop(std::fs::remove_dir_all(dir));
