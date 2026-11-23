@@ -154,6 +154,7 @@ pub async fn router(config: &Config, store: Store) -> Result<Router> {
         .route("/subscriptions", get(lists::subscriptions))
         .route("/bookmarks", get(lists::bookmarks))
         .route("/reading", get(lists::reading))
+        .route("/history", get(lists::history))
         .route("/works/{id}", get(reads::work_alias))
         .route("/works/{id}/chapters/{idx}", get(reads::chapter_alias))
         .route("/assets/ao3.css", get(stylesheet))

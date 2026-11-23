@@ -102,6 +102,15 @@ component and `<ol class="work index group">` entry layout landed. Tag work
 pages, a cached Tag Search, and tag include/exclude fields back the "search per
 tags" requirement; `?local=1` remains the offline fallback.
 
+**AO3 chrome dropdowns and local history (2026-11-23):** the header now uses
+AO3's dropdown menus from `otwarchive/app/views/menu/` (Fandoms media list,
+Browse, Search Works/Bookmarks/Tags/People, About), plus AO3's search box with a
+tip line and a live `/works/search` submit. A local-only `/history` records
+reads/caches (`access_log`, migration 0011) and lists them with a Today / Last 7
+days / Everything dropdown; it is linked from the greeting menu, dashboard
+sidebar and footer. Fandoms media categories link to AO3 because media
+classification is not stored locally.
+
 **Known deviations (documented, not blockers):** required-tag marks are
 styled text badges rather than SVG artwork; the skin is a single-operator
 global preference rather than a per-browser cookie; a release/version bump is

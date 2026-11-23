@@ -4,6 +4,7 @@
 //! ledger and local receipts ([`writes`]), and the persisted AO3 session
 //! ([`session`]). This module owns the shared row types and the `Store` handle.
 
+mod access;
 mod errors;
 mod lists;
 mod session;
@@ -173,6 +174,7 @@ impl Store {
 }
 
 pub(super) use crate::time::now_secs;
+pub use access::AccessEntry;
 pub use errors::HttpErrorRow;
 pub use lists::{
     BookmarkEntry, BrowseResult, BrowseSort, CacheStats, ReadingEntry, ReadingStatus,

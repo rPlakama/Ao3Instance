@@ -16,6 +16,12 @@ pub fn about_page(ctx: &PageContext) -> String {
         <li><a href=\"/audit\">Write audit</a> and <a href=\"/diagnostics\">HTTP diagnostics</a></li>\
         <li><a href=\"/session\">AO3 session</a> (encrypted cookie jar)</li>\
         </ul>\
+        <h3 id=\"faq\">FAQ</h3>\
+        <p><strong>Does search work offline?</strong> No — Work Search makes one literal \
+        AO3 request; cached browsing works offline. Use <a href=\"/works\">Browse</a> or \
+        <a href=\"/search?local=1\">local search</a> without a connection.</p>\
+        <p><strong>Where is my history?</strong> <a href=\"/history\">History</a> keeps local \
+        accesses, a deliberate difference from AO3.</p>\
         <h3>Privacy</h3>\
         <p>No analytics, no third-party embeds. Diagnostics redact cookies, CSRF \
         tokens and response bodies. The optional FlareSolverr fallback is a \

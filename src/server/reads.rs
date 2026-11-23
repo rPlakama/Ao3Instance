@@ -66,6 +66,9 @@ pub(super) async fn open_work(
         return Ok(Redirect::to(&format!("/read/{id}")));
     }
     let html = fetch_work_html(&state, &id).await?;
+    if let Err(error) = state.store.record_access(&id, "cached").await {
+        eprintln!("access history: {error}");
+    }
     cache_work_html(&state, &id, html, existing).await
 }
 
@@ -198,6 +201,9 @@ pub(super) async fn read_work(
     Query(query): Query<ReadQuery>,
 ) -> Handled<Html<String>> {
     let work = state.store.get_work(&id).await?.ok_or(AppError::NotFound)?;
+    if let Err(error) = state.store.record_access(&id, "read").await {
+        eprintln!("access history: {error}");
+    }
     let chapters = state.store.get_chapters(&id).await?;
     let progress = state.store.get_progress(&id).await?;
     let current = query

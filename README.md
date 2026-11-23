@@ -35,6 +35,11 @@ Features:
 - Tag Search over cached tags, AO3-shaped tag work pages with Works/Bookmarks,
   range headings and numbered pagination, and tag include/exclude fields in the
   live search form.
+- AO3 header dropdowns (Fandoms, Browse, Search, About) and a header search box
+  with AO3's tip line; category links open AO3 media pages because the local
+  cache does not store media classifications.
+- Local-only **History** (`/history`): latest reads/caches with a range
+  dropdown (`Today` / `Last 7 days` / `Everything`).
 - A reader with chapter jump and an **Entire Work** mode, plus classic and
   Reversi display skins (`POST /skin`).
 - Structured HTTP diagnostics at `/diagnostics` (All / Upstream / Inbound).

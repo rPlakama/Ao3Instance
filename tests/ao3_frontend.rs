@@ -53,6 +53,7 @@ async fn every_offline_segment_renders_the_shared_chrome() {
         "/reading",
         "/tags/Test/works",
         "/about",
+        "/history",
     ] {
         let response = client
             .get(format!("{root}{path}"))
@@ -293,6 +294,16 @@ async fn seeded_cache_renders_browse_fandoms_and_dashboard() {
     let home = client.get(&root).send().await.expect("home");
     let home = home.text().await.expect("body");
     assert!(home.contains("id=\"login\""), "signed-out login dropdown");
+    assert!(
+        home.contains("class=\"menu\""),
+        "AO3 dropdown menus: {home}"
+    );
+    assert!(home.contains("Anime &amp; Manga"), "{home}");
+    assert!(home.contains("fluff sort:kudos"), "search tip: {home}");
+    assert!(
+        home.contains("action=\"/works/search\""),
+        "header search goes to AO3 search: {home}"
+    );
 
     let browse = client
         .get(format!("{root}/works"))

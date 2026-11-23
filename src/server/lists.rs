@@ -137,3 +137,23 @@ pub(super) async fn tag_search(
     let page = super::page_context(&state, "Tag Search — AO3Instance", NavSection::Fandoms).await;
     Ok(Html(render::tag_search_page(&page, &raw, &hits)))
 }
+
+#[derive(Deserialize)]
+pub(super) struct HistoryQuery {
+    range: Option<String>,
+}
+
+pub(super) async fn history(
+    State(state): State<Arc<AppState>>,
+    Query(query): Query<HistoryQuery>,
+) -> Handled<Html<String>> {
+    let range = query.range.as_deref().unwrap_or("week");
+    let since = match range {
+        "today" => crate::time::now_secs() - 86_400,
+        "all" => 0,
+        _ => crate::time::now_secs() - 7 * 86_400,
+    };
+    let entries = state.store.recent_accesses(200, since).await?;
+    let page = super::page_context(&state, "History — AO3Instance", NavSection::Dashboard).await;
+    Ok(Html(render::history_page(&page, &entries, range)))
+}

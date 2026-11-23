@@ -140,6 +140,7 @@ fn greeting(ctx: &PageContext) -> String {
          <div class=\"dropdown-panel\"><strong>{account}</strong> \
          <span class=\"state {state_class}\">{state}</span><ul>\
          <li><a href=\"/dashboard\">Dashboard</a></li>\
+         <li><a href=\"/history\">History</a></li>\
          <li><a href=\"/audit\">Write audit</a></li>\
          <li><a href=\"/diagnostics\">Diagnostics</a></li>\
          <li><a href=\"/session\">Session &amp; preferences</a></li>\
@@ -155,30 +156,127 @@ fn greeting(ctx: &PageContext) -> String {
     )
 }
 
+fn menu_link(label: &str, href: &str, external: bool) -> String {
+    let label = escape(label);
+    if external {
+        format!("<li><a href=\"{href}\" rel=\"noopener noreferrer\">{label}</a></li>")
+    } else {
+        format!("<li><a href=\"{href}\">{label}</a></li>")
+    }
+}
+
+fn dropdown(section: NavSection, active: NavSection, items: &[(&str, &str, bool)]) -> String {
+    let mut menu = String::from("<ul class=\"menu\">");
+    for (label, href, external) in items {
+        menu.push_str(&menu_link(label, href, *external));
+    }
+    menu.push_str("</ul>");
+    format!(
+        "<li class=\"dropdown{}\"><a href=\"{}\">{}</a>{menu}</li>",
+        if section == active { " active" } else { "" },
+        section.href(),
+        section.label()
+    )
+}
+
 fn navigation(ctx: &PageContext) -> String {
     let mut items = String::new();
-    for section in [
+    items.push_str(&dropdown(
         NavSection::Fandoms,
+        ctx.active,
+        &[
+            ("All Fandoms", "/fandoms", false),
+            (
+                "Anime & Manga",
+                "https://archiveofourown.org/media/Anime%20*a*%20Manga/fandoms",
+                true,
+            ),
+            (
+                "Books & Literature",
+                "https://archiveofourown.org/media/Books%20*a*%20Literature/fandoms",
+                true,
+            ),
+            (
+                "Cartoons & Comics & Graphic Novels",
+                "https://archiveofourown.org/media/Cartoons%20*a*%20Comics%20*a*%20Graphic%20Novels/fandoms",
+                true,
+            ),
+            (
+                "Celebrities & Real People",
+                "https://archiveofourown.org/media/Celebrities%20*a*%20Real%20People/fandoms",
+                true,
+            ),
+            ("Movies", "https://archiveofourown.org/media/Movies/fandoms", true),
+            (
+                "Music & Bands",
+                "https://archiveofourown.org/media/Music%20*a*%20Bands/fandoms",
+                true,
+            ),
+            ("Other Media", "https://archiveofourown.org/media/Other%20Media/fandoms", true),
+            ("Theater", "https://archiveofourown.org/media/Theater/fandoms", true),
+            ("TV Shows", "https://archiveofourown.org/media/TV%20Shows/fandoms", true),
+            (
+                "Video Games",
+                "https://archiveofourown.org/media/Video%20Games/fandoms",
+                true,
+            ),
+            (
+                "Uncategorized Fandoms",
+                "https://archiveofourown.org/media/Uncategorized%20Fandoms/fandoms",
+                true,
+            ),
+        ],
+    ));
+    items.push_str(&dropdown(
         NavSection::Browse,
+        ctx.active,
+        &[
+            ("Works", "/works", false),
+            ("Bookmarks", "/bookmarks", false),
+            ("Tags", "/tags/search", false),
+            (
+                "Collections",
+                "https://archiveofourown.org/collections",
+                true,
+            ),
+        ],
+    ));
+    items.push_str(&dropdown(
         NavSection::Search,
+        ctx.active,
+        &[
+            ("Works", "/works/search", false),
+            ("Bookmarks", "/bookmarks", false),
+            ("Tags", "/tags/search", false),
+            ("People", "https://archiveofourown.org/people/search", true),
+        ],
+    ));
+    items.push_str(&dropdown(
         NavSection::About,
-    ] {
-        let class = if section == ctx.active {
-            " class=\"active\""
-        } else {
-            ""
-        };
-        items.push_str(&format!(
-            "<li{class}><a href=\"{href}\">{label}</a></li>",
-            href = section.href(),
-            label = section.label()
-        ));
-    }
+        ctx.active,
+        &[
+            ("About Us", "/about", false),
+            ("News", "/#news", false),
+            ("FAQ", "/about#faq", false),
+            (
+                "Wrangling Guidelines",
+                "https://archiveofourown.org/wrangling_guidelines",
+                true,
+            ),
+            ("Donate", "https://archiveofourown.org/donate", true),
+        ],
+    ));
     format!(
         "<ul class=\"primary navigation\">{items}\
-         <li id=\"search\"><form method=\"get\" action=\"/search\">\
-         <input type=\"search\" name=\"q\" placeholder=\"Search cached works\" aria-label=\"Search cached works\">\
-         <button type=\"submit\">Search</button></form></li></ul>"
+         <li class=\"search\"><form class=\"search\" method=\"get\" action=\"/works/search\" \
+         role=\"search\"><fieldset><p>\
+         <label class=\"landmark\" for=\"site_search\">Search</label>\
+         <input class=\"text\" id=\"site_search\" type=\"search\" name=\"q\" \
+         aria-describedby=\"site_search_tooltip\">\
+         <span class=\"tip\" role=\"tooltip\" id=\"site_search_tooltip\">tip: \
+         <a href=\"/works/search?q=fluff%20sort%3Akudos\">fluff sort:kudos</a></span>\
+         <span class=\"submit actions\"><button type=\"submit\">Search</button></span>\
+         </p></fieldset></form></li></ul>"
     )
 }
 
@@ -195,7 +293,8 @@ fn dashboard_nav(active: NavSection) -> String {
     items.push_str(
         "<li><a href=\"/subscriptions\">Subscriptions</a></li>\
                     <li><a href=\"/bookmarks\">Bookmarks</a></li>\
-                    <li><a href=\"/reading\">Marked for later &amp; history</a></li>",
+                    <li><a href=\"/reading\">Marked for later</a></li>\
+                    <li><a href=\"/history\">Local history</a></li>",
     );
     for (section, label, href) in links {
         let class = if section == active {
@@ -224,6 +323,7 @@ fn footer(ctx: &PageContext) -> String {
          <div><h4>About</h4><ul>\
          <li><a href=\"/\">AO3Instance</a></li>\
          <li><a href=\"/session#cookie-import\">Cookie import</a></li>\
+         <li><a href=\"/history\">Local history</a></li>\
          <li>Personal offline archive</li></ul></div>\
          <div><h4>Operator &amp; cache</h4><ul>\
          <li>{count} cached work(s)</li>\
@@ -305,7 +405,8 @@ mod tests {
         ctx.account = "reader<b>".into();
         let html = layout(&ctx, "<p>body</p>");
         assert!(html.contains("<title>A &lt;title&gt;</title>"), "{html}");
-        assert!(html.contains("li class=\"active\"><a href=\"/about\">About"));
+        assert!(html.contains("class=\"dropdown active\""), "{html}");
+        assert!(html.contains("<a href=\"/about\">About</a>"), "{html}");
         assert!(html.contains("Hi, reader&lt;b&gt;!"), "{html}");
         assert!(html.contains("/assets/ao3.css"), "{html}");
         assert!(html.contains("<p>body</p>"), "{html}");

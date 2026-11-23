@@ -57,6 +57,7 @@ async fn every_rendered_local_link_resolves() {
         "/reading",
         "/audit",
         "/diagnostics",
+        "/history",
         "/users/login",
         "/users/logout/confirm",
     ];
@@ -152,7 +153,9 @@ async fn every_rendered_local_link_resolves() {
                 continue;
             }
             let path = href.split('#').next().unwrap_or(href);
-            if !path.is_empty() && path != "/" {
+            // Live AO3 search links intentionally leave the local-only crawl;
+            // tests/ao3_search_live.rs exercises them with a mock upstream.
+            if !path.is_empty() && path != "/" && !path.starts_with("/works/search") {
                 targets.insert(path.to_string());
             }
         }

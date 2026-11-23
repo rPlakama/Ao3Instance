@@ -907,3 +907,93 @@ ul.navigation.actions li.active span {
     color: var(--ao3-bg);
     font-weight: 700;
 }
+
+/* ---------- AO3 header dropdowns and search box ---------- */
+
+ul.primary.navigation li.dropdown { position: relative; }
+ul.primary.navigation li.dropdown > .menu {
+    display: none;
+    position: absolute;
+    top: 100%;
+    left: 0;
+    z-index: 80;
+    min-width: 17rem;
+    margin: 0;
+    padding: 0;
+    list-style: none;
+    background: var(--ao3-bg);
+    border: 1px solid var(--ao3-border-strong);
+    border-top: 0;
+    box-shadow: 0 6px 18px rgb(0 0 0 / 18%);
+}
+ul.primary.navigation li.dropdown:hover > .menu,
+ul.primary.navigation li.dropdown:focus-within > .menu {
+    display: block;
+}
+ul.primary.navigation li.dropdown > .menu li a {
+    display: block;
+    padding: 0.45rem 0.8rem;
+    color: var(--ao3-text);
+    background: var(--ao3-bg);
+    border-bottom: 1px solid var(--ao3-border);
+    text-decoration: none;
+    white-space: nowrap;
+}
+ul.primary.navigation li.dropdown > .menu li:last-child a { border-bottom: 0; }
+ul.primary.navigation li.dropdown > .menu li a:hover {
+    background: var(--ao3-surface);
+    color: var(--ao3-red);
+}
+ul.primary.navigation li.search {
+    margin-left: auto;
+    display: flex;
+    align-items: center;
+    padding: 0.15rem 0 0.3rem;
+}
+ul.primary.navigation li.search form.search { position: relative; margin: 0; }
+ul.primary.navigation li.search fieldset { border: 0; margin: 0; padding: 0; }
+ul.primary.navigation li.search p {
+    display: flex;
+    align-items: center;
+    gap: 0.35rem;
+    margin: 0;
+}
+ul.primary.navigation li.search input.text {
+    width: 24rem;
+    max-width: 40vw;
+    padding: 0.35rem 0.7rem;
+    border: 1px solid var(--ao3-border-strong);
+    border-radius: 999px;
+    background: #fff;
+    color: #222;
+    font: inherit;
+}
+ul.primary.navigation li.search .tip {
+    position: absolute;
+    top: 100%;
+    right: 0;
+    z-index: 90;
+    margin-top: 0.15rem;
+    padding: 0.15rem 0.5rem;
+    background: #e8e8e8;
+    border: 1px solid #bbb;
+    color: #333;
+    font-size: 0.72rem;
+    white-space: nowrap;
+}
+ul.primary.navigation li.search .tip a { color: #a33; }
+ul.primary.navigation li.search .submit button {
+    padding: 0.3rem 0.8rem;
+    border-radius: 0.2rem;
+}
+
+@media (max-width: 62em) {
+    ul.primary.navigation li.search {
+        width: 100%;
+        margin-left: 0;
+    }
+    ul.primary.navigation li.search input.text { width: 100%; max-width: none; }
+    ul.primary.navigation li.search .tip { position: static; margin: 0.2rem 0 0.4rem; width: 100%; }
+    ul.primary.navigation li.search p { flex-wrap: wrap; }
+    ul.primary.navigation li.search form.search { width: 100%; }
+}
