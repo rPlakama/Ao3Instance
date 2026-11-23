@@ -84,6 +84,35 @@ Configuration (environment, read once at startup): `AO3I_BIND`, `AO3I_PORT`,
 `AO3I_HTTP_LOG_RETENTION`, and the optional `AO3I_FLARESOLVERR*` knobs. See
 `docs/operator.md`.
 
+### NixOS module
+
+```nix
+{
+  inputs.ao3instance.url = "path:/path/to/AO3Instance";
+
+  outputs = { nixpkgs, ao3instance, ... }: {
+    nixosConfigurations.host = nixpkgs.lib.nixosSystem {
+      system = "x86_64-linux";
+      modules = [
+        ao3instance.nixosModules.default
+        {
+          services.ao3instance = {
+            enable = true;
+            dataDir = "/var/lib/ao3instance";
+            port = 8099;
+          };
+        }
+      ];
+    };
+  };
+}
+```
+
+The module has only two settings: `dataDir` (where `ao3i.db` and `key` are
+written) and `port`. It creates a dedicated `ao3instance` system user, runs the
+service as loopback-only, and does not open the firewall; use a reverse proxy
+for external access.
+
 Operator guide: [docs/operator.md](docs/operator.md). Failure behaviour:
 [docs/failure-matrix.md](docs/failure-matrix.md).
 

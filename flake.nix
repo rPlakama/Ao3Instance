@@ -43,6 +43,10 @@
           || (type == "regular" && (builtins.elem rel allowFiles || underTree rel));
       };
 
+      nixosTest = import (nixpkgs.outPath + "/nixos/lib/testing-python.nix") {
+        inherit system;
+      };
+
       # Runtime/build inputs shared by the package and the dev shell.
       # openssl backs both reqwest's native TLS and our AES-256-GCM secret store.
       nativeDeps = with pkgs; [
@@ -79,6 +83,27 @@
       packages.${system} = {
         default = ao3instance;
         ao3instance = ao3instance;
+      };
+
+      nixosModules.default = import ./nix/module.nix { package = ao3instance; };
+
+      checks.${system}.ao3instance-module = nixosTest.runTest {
+        name = "ao3instance-module";
+        nodes.machine = {
+          imports = [ self.nixosModules.default ];
+          services.ao3instance = {
+            enable = true;
+            dataDir = "/var/lib/ao3instance-test";
+            port = 9123;
+          };
+        };
+        testScript = ''
+          machine.wait_for_unit("ao3instance.service")
+          machine.wait_for_open_port(9123)
+          machine.succeed("curl -fsS http://127.0.0.1:9123/health | grep -qx ok")
+          machine.succeed("test -s /var/lib/ao3instance-test/ao3i.db")
+          machine.succeed("test -s /var/lib/ao3instance-test/key")
+        '';
       };
 
       devShells.${system}.default = pkgs.mkShell {
