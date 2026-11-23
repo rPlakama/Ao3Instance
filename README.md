@@ -108,10 +108,12 @@ Configuration (environment, read once at startup): `AO3I_BIND`, `AO3I_PORT`,
 }
 ```
 
-The module has only two settings: `dataDir` (where `ao3i.db` and `key` are
-written) and `port`. It creates a dedicated `ao3instance` system user, runs the
-service as loopback-only, and does not open the firewall; use a reverse proxy
-for external access.
+The module's settings are `dataDir` (where `ao3i.db` and `key` are written),
+`port`, and `openFirewall` (default `false`). With `openFirewall = true` the
+configured port is opened and the service binds to all interfaces; otherwise it
+is loopback-only. It creates a dedicated `ao3instance` system user. The app
+holds an AO3 session, so expose it only on trusted networks or behind a reverse
+proxy.
 
 Operator guide: [docs/operator.md](docs/operator.md). Failure behaviour:
 [docs/failure-matrix.md](docs/failure-matrix.md).

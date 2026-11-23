@@ -100,8 +100,8 @@ so use `/themes/clear` to return to the built-in look.
 
 ## NixOS module
 
-`nixosModules.default` defines only `services.ao3instance.dataDir` and
-`services.ao3instance.port`:
+`nixosModules.default` defines `services.ao3instance.dataDir`,
+`services.ao3instance.port` and `services.ao3instance.openFirewall`:
 
 ```nix
 services.ao3instance = {
@@ -113,8 +113,10 @@ services.ao3instance = {
 
 It creates `/var/lib/ao3instance` (0700, owned by the `ao3instance` system
 user), runs the package binary with `AO3I_DATA_DIR`/`AO3I_PORT`, and restarts on
-failure. The app keeps its default loopback bind; the module does not open the
-firewall. Back up the whole data directory (SQLite database plus AES key).
+failure. With `openFirewall = true` the module also opens the configured port
+and sets `AO3I_BIND=0.0.0.0`; by default it stays loopback-only. The app holds
+an AO3 session, so only expose it on trusted networks or behind a reverse
+proxy. Back up the whole data directory (SQLite database plus AES key).
 The flake check `nixos-module` boots a VM, waits for the port, checks `/health`,
 and verifies that `ao3i.db` and `key` are created.
 

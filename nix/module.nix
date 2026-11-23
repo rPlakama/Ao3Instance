@@ -20,7 +20,20 @@ in
     port = lib.mkOption {
       type = lib.types.port;
       default = 8099;
-      description = "Loopback TCP port the AO3Instance web UI listens on.";
+      description = ''
+        TCP port the AO3Instance web UI listens on. It is loopback-only unless
+        services.ao3instance.openFirewall is enabled.
+      '';
+    };
+
+    openFirewall = lib.mkOption {
+      type = lib.types.bool;
+      default = false;
+      description = ''
+        Open services.ao3instance.port in the NixOS firewall and bind the
+        service to all interfaces. The app holds an AO3 session, so enable this
+        only on trusted networks or put it behind a reverse proxy.
+      '';
     };
   };
 
@@ -44,6 +57,8 @@ in
       "d ${toString cfg.dataDir} 0700 ao3instance ao3instance -"
     ];
 
+    networking.firewall.allowedTCPPorts = lib.mkIf cfg.openFirewall [ cfg.port ];
+
     systemd.services.ao3instance = {
       description = "AO3Instance";
       wantedBy = [ "multi-user.target" ];
@@ -59,13 +74,14 @@ in
         Environment = [
           "AO3I_DATA_DIR=${toString cfg.dataDir}"
           "AO3I_PORT=${toString cfg.port}"
-        ];
+        ] ++ lib.optional cfg.openFirewall "AO3I_BIND=0.0.0.0";
         Restart = "on-failure";
         RestartSec = 5;
         UMask = "0077";
 
         # The process only needs to read its binary/assets and write its data
-        # directory. It binds loopback, so the module does not open a firewall.
+        # directory. By default it binds loopback; openFirewall widens the bind
+        # and opens the port explicitly.
         NoNewPrivileges = true;
         PrivateTmp = true;
         ProtectSystem = "strict";

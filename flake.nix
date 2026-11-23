@@ -87,7 +87,37 @@
 
       nixosModules.default = import ./nix/module.nix { package = ao3instance; };
 
-      checks.${system}.ao3instance-module = nixosTest.runTest {
+      checks.${system} = {
+        ao3instance-module-open-firewall =
+        let
+          exposed = (nixpkgs.lib.nixosSystem {
+            inherit system;
+            modules = [
+              self.nixosModules.default
+              {
+                services.ao3instance = {
+                  enable = true;
+                  dataDir = "/srv/ao3instance-test";
+                  port = 9123;
+                  openFirewall = true;
+                };
+              }
+            ];
+          }).config;
+          values = pkgs.writeText "ao3instance-module-open-firewall.txt" ''
+            DATA_DIR=${toString exposed.services.ao3instance.dataDir}
+            PORTS=${builtins.concatStringsSep "," (map toString exposed.networking.firewall.allowedTCPPorts)}
+            ${builtins.concatStringsSep "\n" (map (value: "ENV=${value}") exposed.systemd.services.ao3instance.serviceConfig.Environment)}
+          '';
+        in
+        pkgs.runCommand "check-ao3instance-module-open-firewall" { } ''
+          grep -qx "DATA_DIR=/srv/ao3instance-test" ${values}
+          grep -qx "PORTS=9123" ${values}
+          grep -q "ENV=AO3I_BIND=0.0.0.0" ${values}
+          touch $out
+        '';
+
+        ao3instance-module = nixosTest.runTest {
         name = "ao3instance-module";
         nodes.machine = {
           imports = [ self.nixosModules.default ];
@@ -104,6 +134,8 @@
           machine.succeed("test -s /var/lib/ao3instance-test/ao3i.db")
           machine.succeed("test -s /var/lib/ao3instance-test/key")
         '';
+      };
+
       };
 
       devShells.${system}.default = pkgs.mkShell {
