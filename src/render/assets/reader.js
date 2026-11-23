@@ -73,12 +73,21 @@
 
         function update() { schedule(chapter, percent()); }
 
+        function loaded() {
+            var doc = frame.contentDocument;
+            return !!(doc && doc.readyState === "complete" && doc.location &&
+                doc.location.pathname.indexOf("/chapter/") !== -1);
+        }
+
         function restore() {
-            if (resume > 0) {
-                var m = maxScroll();
-                if (m > 0) win.scrollTo(0, m * resume / 100);
-            }
-            update();
+            window.setTimeout(function () {
+                if (!loaded()) return;
+                if (resume > 0) {
+                    var m = maxScroll();
+                    if (m > 0) win.scrollTo(0, m * resume / 100);
+                }
+                update();
+            }, 120);
         }
 
         var raf = 0;
@@ -87,11 +96,28 @@
             raf = window.requestAnimationFrame(function () { raf = 0; update(); });
         }, {passive: true});
 
-        var doc = frame.contentDocument;
-        if (doc && doc.readyState === "complete") {
+        var restored = false;
+        function restoreOnce() {
+            if (restored) return;
+            restored = true;
             restore();
+        }
+
+        if (loaded()) {
+            restoreOnce();
         } else {
-            frame.addEventListener("load", restore, {once: true});
+            frame.addEventListener("load", restoreOnce, {once: true});
+            // The iframe may have finished before this script ran; poll briefly.
+            var attempts = 0;
+            var poll = window.setInterval(function () {
+                attempts += 1;
+                if (loaded()) {
+                    window.clearInterval(poll);
+                    restoreOnce();
+                } else if (attempts >= 50) {
+                    window.clearInterval(poll);
+                }
+            }, 100);
         }
     }
 
