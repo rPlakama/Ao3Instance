@@ -25,6 +25,63 @@ pub fn format_utc(unix: i64) -> String {
     )
 }
 
+/// `02 Jan 2025` for AO3-style blurbs and dates.
+pub fn format_date(unix: i64) -> String {
+    let days = unix.div_euclid(86_400);
+    let (year, month, day) = civil_from_days(days);
+    format!("{day:02} {} {year}", month_name(month))
+}
+
+/// Formats an ISO `YYYY-MM-DD` string as `02 Jan 2025`; returns the input when
+/// it does not look like a date (old caches may hold arbitrary text).
+pub fn format_iso_date(iso: &str) -> String {
+    let mut parts = iso.split('-');
+    let (Some(year), Some(month), Some(day)) = (parts.next(), parts.next(), parts.next()) else {
+        return iso.to_string();
+    };
+    let (Ok(year), Ok(month), Ok(day)) = (
+        year.parse::<i64>(),
+        month.parse::<u32>(),
+        day.parse::<u32>(),
+    ) else {
+        return iso.to_string();
+    };
+    if !(1..=12).contains(&month) || !(1..=31).contains(&day) {
+        return iso.to_string();
+    }
+    format!("{day:02} {} {year}", month_name(i64::from(month)))
+}
+
+/// `4321` → `4,321` for AO3-style stats and result counts.
+pub fn format_count(value: u64) -> String {
+    let digits = value.to_string();
+    let mut out = String::with_capacity(digits.len() + digits.len() / 3);
+    for (index, ch) in digits.chars().enumerate() {
+        if index > 0 && (digits.len() - index).is_multiple_of(3) {
+            out.push(',');
+        }
+        out.push(ch);
+    }
+    out
+}
+
+fn month_name(month: i64) -> &'static str {
+    match month {
+        1 => "Jan",
+        2 => "Feb",
+        3 => "Mar",
+        4 => "Apr",
+        5 => "May",
+        6 => "Jun",
+        7 => "Jul",
+        8 => "Aug",
+        9 => "Sep",
+        10 => "Oct",
+        11 => "Nov",
+        _ => "Dec",
+    }
+}
+
 /// `YYYY-MM-DDTHH:MM:SSZ` for log lines: greppable and RFC3339-shaped.
 pub fn format_rfc3339(unix: i64) -> String {
     let days = unix.div_euclid(86_400);

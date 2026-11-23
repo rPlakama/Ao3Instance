@@ -56,7 +56,7 @@ async fn cached_work_survives_an_unreachable_upstream() {
     assert!(body.contains("iframe"), "chapter content expected");
 
     let search = client
-        .get(format!("{root}/search?q=PLACEHOLDER"))
+        .get(format!("{root}/search?local=1&q=PLACEHOLDER"))
         .send()
         .await
         .expect("offline search");

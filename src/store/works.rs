@@ -33,8 +33,9 @@ impl Store {
 
         sqlx::query(
             "INSERT INTO works (ao3_id, title, authors_json, summary, tags_json, rating, language,
-                                word_count, kudos, comment_count, chapter_count, content_hash, fetched_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)
+                                published_at, complete, word_count, kudos, comment_count, hits,
+                                bookmarks, chapter_count, content_hash, fetched_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17)
              ON CONFLICT(ao3_id) DO UPDATE SET
                title = excluded.title,
                authors_json = excluded.authors_json,
@@ -43,9 +44,13 @@ impl Store {
                tags_json = excluded.tags_json,
                rating = excluded.rating,
                language = excluded.language,
+               published_at = excluded.published_at,
+               complete = excluded.complete,
                word_count = excluded.word_count,
                kudos = excluded.kudos,
                comment_count = excluded.comment_count,
+               hits = excluded.hits,
+               bookmarks = excluded.bookmarks,
                chapter_count = excluded.chapter_count,
                content_hash = excluded.content_hash,
                fetched_at = excluded.fetched_at",
@@ -57,9 +62,13 @@ impl Store {
         .bind(&tags_json)
         .bind(page.rating.as_deref())
         .bind(page.language.as_deref())
+        .bind(page.published_at.as_deref())
+        .bind(page.complete.map(i64::from))
         .bind(page.word_count.map(|v| v as i64))
         .bind(page.kudos.map(|v| v as i64))
         .bind(page.comment_count.map(|v| v as i64))
+        .bind(page.hits.map(|v| v as i64))
+        .bind(page.bookmarks.map(|v| v as i64))
         .bind(page.chapters.len() as i64)
         .bind(content_hash)
         .bind(fetched_at)
@@ -115,7 +124,8 @@ impl Store {
     pub async fn get_work(&self, ao3_id: &str) -> Result<Option<StoredWork>> {
         let row = sqlx::query(
             "SELECT ao3_id, title, authors_json, summary, tags_json, rating, language,
-                    word_count, kudos, comment_count, chapter_count, content_hash, fetched_at
+                    published_at, complete, word_count, kudos, comment_count, hits,
+                    bookmarks, chapter_count, content_hash, fetched_at
              FROM works WHERE ao3_id = ?1",
         )
         .bind(ao3_id)
@@ -129,7 +139,8 @@ impl Store {
     pub async fn all_works(&self) -> Result<Vec<StoredWork>> {
         let rows = sqlx::query(
             "SELECT ao3_id, title, authors_json, summary, tags_json, rating, language,
-                    word_count, kudos, comment_count, chapter_count, content_hash, fetched_at
+                    published_at, complete, word_count, kudos, comment_count, hits,
+                    bookmarks, chapter_count, content_hash, fetched_at
              FROM works ORDER BY fetched_at DESC, ao3_id DESC",
         )
         .fetch_all(&self.pool)
@@ -484,9 +495,13 @@ fn stored_work_from_row(row: &sqlx::sqlite::SqliteRow) -> Result<StoredWork> {
         tags,
         rating: row.get("rating"),
         language: row.get("language"),
+        published_at: row.get("published_at"),
+        complete: row.get::<Option<i64>, _>("complete").map(|v| v != 0),
         word_count: row.get::<Option<i64>, _>("word_count").map(|v| v as u64),
         kudos: row.get::<Option<i64>, _>("kudos").map(|v| v as u64),
         comment_count: row.get::<Option<i64>, _>("comment_count").map(|v| v as u64),
+        hits: row.get::<Option<i64>, _>("hits").map(|v| v as u64),
+        bookmarks: row.get::<Option<i64>, _>("bookmarks").map(|v| v as u64),
         chapter_count: row.get::<i64, _>("chapter_count") as usize,
         content_hash: row.get("content_hash"),
         fetched_at: row.get("fetched_at"),

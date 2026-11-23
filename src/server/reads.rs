@@ -322,45 +322,191 @@ pub(super) struct SearchQuery {
     single_chapter: Option<String>,
     sort: Option<String>,
     direction: Option<String>,
+    edit_search: Option<String>,
+    date: Option<String>,
+    complete: Option<String>,
+    crossover: Option<String>,
+    hits_min: Option<String>,
+    bookmarks_min: Option<String>,
+    include_tags: Option<String>,
+    exclude_tags: Option<String>,
+    local: Option<String>,
 }
 
 pub(super) async fn search(
     State(state): State<Arc<AppState>>,
     Query(query): Query<SearchQuery>,
 ) -> Handled<Html<String>> {
-    let raw = query.q.unwrap_or_default();
-    let filter = render::search_filter_from(
-        query.title,
-        query.creator,
-        query.fandom,
-        query.characters,
-        query.relationships,
-        query.additional_tags,
-        query.rating,
-        query.warning,
-        query.category,
-        query.language,
-        query.words_min,
-        query.words_max,
-        query.kudos_min,
-        query.comments_min,
-        query.single_chapter,
-        query.sort,
-        query.direction,
-    );
-    let result = state
-        .store
-        .search_works_filtered(&raw, &filter, query.page.unwrap_or(1), 20)
-        .await?;
-    let (account, _) = session_identity(&state).await;
-    let facets = state
-        .store
-        .browse_works(&account, &crate::store::WorkFilter::default())
-        .await?;
-    let page = super::page_context(&state, "Search — AO3Instance", NavSection::Search).await;
-    Ok(Html(render::search_page(
-        &page, &raw, &result, &facets, &filter,
-    )))
+    perform_search(state.as_ref(), query).await
+}
+
+/// The AO3-shaped form posts here. AO3's own web search endpoint is GET-only,
+/// so the server issues exactly one literal GET upstream for this POST.
+pub(super) async fn search_post(
+    State(state): State<Arc<AppState>>,
+    Form(query): Form<SearchQuery>,
+) -> Handled<Html<String>> {
+    perform_search(state.as_ref(), query).await
+}
+
+async fn perform_search(app: &AppState, query: SearchQuery) -> Handled<Html<String>> {
+    let raw = query.q.clone().unwrap_or_default();
+    let local = query.local.as_deref() == Some("1");
+
+    // Local-cache mode stays available as an explicit offline fallback.
+    if local {
+        let filter = render::search_filter_from(
+            query.title,
+            query.creator,
+            query.fandom,
+            query.characters,
+            query.relationships,
+            query.additional_tags,
+            query.rating,
+            query.warning,
+            query.category,
+            query.language,
+            query.words_min,
+            query.words_max,
+            query.kudos_min,
+            query.comments_min,
+            query.single_chapter,
+            query.sort,
+            query.direction,
+        );
+        let submitted = !raw.trim().is_empty() || filter.has_filters();
+        if submitted && query.edit_search.as_deref() != Some("true") {
+            let result = app
+                .store
+                .search_works_filtered(&raw, &filter, query.page.unwrap_or(1), 20)
+                .await?;
+            let page =
+                super::page_context(app, "Local Search — AO3Instance", NavSection::Search).await;
+            return Ok(Html(render::search_results_page(
+                &page, &raw, &result, &filter,
+            )));
+        }
+        let (account, _) = session_identity(app).await;
+        let facets = app
+            .store
+            .browse_works(&account, &crate::store::WorkFilter::default())
+            .await?;
+        let page = super::page_context(app, "Local Search — AO3Instance", NavSection::Search).await;
+        return Ok(Html(render::search_form_page(
+            &page, &raw, &facets, &filter,
+        )));
+    }
+
+    let live = live_query_from(&query, &raw);
+    let edit = query.edit_search.as_deref() == Some("true");
+    if live.has_criteria() && !edit {
+        let path = live.path(live.page);
+        let response = {
+            let mut session = app.session.lock().await;
+            session
+                .client_mut()
+                .get(&path)
+                .await
+                .map_err(AppError::from)?
+        };
+        if response.location_contains("/users/login") {
+            return Err(AppError::from(crate::error::Error::LoggedOut));
+        }
+        match response.status {
+            200 => {}
+            403 | 503 => {
+                return Err(AppError::Upstream(format!(
+                    "AO3 refused the search (HTTP {}); it may be a bot challenge.",
+                    response.status
+                )));
+            }
+            429 => {
+                return Err(AppError::Upstream(
+                    "AO3 is rate limiting this instance; wait a minute and retry.".into(),
+                ));
+            }
+            302 | 303 => {
+                return Err(AppError::Upstream(
+                    "AO3 redirected the search; sign in on the Session page.".into(),
+                ));
+            }
+            status => {
+                return Err(AppError::Upstream(format!(
+                    "Unexpected HTTP {status} from AO3 search."
+                )));
+            }
+        }
+        let results =
+            crate::ao3::search::parse_search_results(&response.body).map_err(AppError::from)?;
+        let page =
+            super::page_context(app, "Search Results — AO3Instance", NavSection::Search).await;
+        return Ok(Html(render::live_search_results_page(
+            &page, &live, &results,
+        )));
+    }
+
+    let page = super::page_context(app, "Work Search — AO3Instance", NavSection::Search).await;
+    Ok(Html(render::live_search_form_page(&page, &live)))
+}
+
+fn live_query_from(query: &SearchQuery, raw: &str) -> crate::ao3::search::LiveSearchQuery {
+    let clean = |value: &Option<String>| {
+        value
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(str::to_string)
+    };
+    let number = |value: &Option<String>| value.as_deref().and_then(|value| value.parse().ok());
+    let split_tags = |value: &Option<String>| {
+        value
+            .as_deref()
+            .map(|value| {
+                value
+                    .split(',')
+                    .map(str::trim)
+                    .filter(|tag| !tag.is_empty())
+                    .map(str::to_string)
+                    .collect()
+            })
+            .unwrap_or_default()
+    };
+    let words = match (clean(&query.words_min), clean(&query.words_max)) {
+        (Some(min), Some(max)) => Some(format!("{min}-{max}")),
+        (Some(min), None) => Some(format!(">{min}")),
+        (None, Some(max)) => Some(format!("<{max}")),
+        (None, None) => None,
+    };
+    crate::ao3::search::LiveSearchQuery {
+        query: raw.trim().to_string(),
+        title: clean(&query.title),
+        creator: clean(&query.creator),
+        date: clean(&query.date),
+        complete: clean(&query.complete),
+        crossover: clean(&query.crossover),
+        single_chapter: query
+            .single_chapter
+            .as_deref()
+            .is_some_and(|value| matches!(value, "1" | "true" | "on")),
+        word_count: words,
+        language: clean(&query.language),
+        fandom: clean(&query.fandom),
+        characters: clean(&query.characters),
+        relationships: clean(&query.relationships),
+        additional_tags: clean(&query.additional_tags),
+        include_tags: split_tags(&query.include_tags),
+        exclude_tags: split_tags(&query.exclude_tags),
+        rating: clean(&query.rating),
+        warning: clean(&query.warning),
+        category: clean(&query.category),
+        hits_min: number(&query.hits_min),
+        kudos_min: number(&query.kudos_min),
+        comments_min: number(&query.comments_min),
+        bookmarks_min: number(&query.bookmarks_min),
+        sort: clean(&query.sort),
+        direction: clean(&query.direction),
+        page: query.page.unwrap_or(1),
+    }
 }
 
 #[derive(Deserialize)]

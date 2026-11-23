@@ -47,7 +47,7 @@ async fn every_rendered_local_link_resolves() {
         "/",
         "/works",
         "/fandoms",
-        "/search?q=Mirror",
+        "/search?local=1&q=Mirror",
         "/read/12345",
         "/read/12345?view_full_work=true",
         "/session",

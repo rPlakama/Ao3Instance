@@ -19,9 +19,13 @@ fn page() -> WorkPage {
         categories: vec!["F/M".into()],
         rating: Some("General Audiences".into()),
         language: Some("English".into()),
+        published_at: Some("2025-01-02".into()),
+        complete: Some(true),
         word_count: Some(1234),
         kudos: Some(7),
         comment_count: Some(2),
+        hits: Some(99),
+        bookmarks: Some(3),
         chapter_count: 2,
         chapters: vec![
             Chapter {
@@ -58,6 +62,10 @@ async fn upsert_round_trip_and_replace() {
     assert_eq!(work.authors, vec!["tester".to_string()]);
     assert_eq!(work.tags.fandoms, vec!["Fandom".to_string()]);
     assert_eq!(work.tags.additional, vec!["Fluff".to_string()]);
+    assert_eq!(work.published_at.as_deref(), Some("2025-01-02"));
+    assert_eq!(work.complete, Some(true));
+    assert_eq!(work.hits, Some(99));
+    assert_eq!(work.bookmarks, Some(3));
     assert_eq!(work.chapter_count, 2);
 
     let chapters = store.get_chapters("123").await.unwrap();

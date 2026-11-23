@@ -77,7 +77,7 @@ async fn search_covers_title_author_and_tags_over_the_cache() {
 
     let client = http();
     let by_tag = client
-        .get(format!("{root}/search?q=DistinctiveTag"))
+        .get(format!("{root}/search?local=1&q=DistinctiveTag"))
         .send()
         .await
         .expect("search")
@@ -91,7 +91,7 @@ async fn search_covers_title_author_and_tags_over_the_cache() {
     );
 
     let by_author = client
-        .get(format!("{root}/search?q=otherwriter"))
+        .get(format!("{root}/search?local=1&q=otherwriter"))
         .send()
         .await
         .expect("search")
@@ -103,7 +103,7 @@ async fn search_covers_title_author_and_tags_over_the_cache() {
     // Blank query and a miss both render the page without results or errors.
     for query in ["?q=", "?q=nothingmatchesthis"] {
         let response = client
-            .get(format!("{root}/search{query}"))
+            .get(format!("{root}/search?local=1{query}"))
             .send()
             .await
             .expect("search");
@@ -118,7 +118,7 @@ async fn search_covers_title_author_and_tags_over_the_cache() {
         ao3instance::ao3::parse::SpaceMode::Plus,
     );
     let hostile = client
-        .get(format!("{root}/search?q={hostile_q}"))
+        .get(format!("{root}/search?local=1&q={hostile_q}"))
         .send()
         .await
         .expect("search");
@@ -220,7 +220,7 @@ async fn refresh_with_changed_content_updates_cache_and_search() {
 
     // The FTS trigger followed the update.
     let search = client
-        .get(format!("{root}/search?q=UPDATED"))
+        .get(format!("{root}/search?local=1&q=UPDATED"))
         .send()
         .await
         .expect("search")
@@ -229,7 +229,7 @@ async fn refresh_with_changed_content_updates_cache_and_search() {
         .expect("body");
     assert!(search.contains("UPDATED: The Map and the Mirror"));
     let stale = client
-        .get(format!("{root}/search?q=PLACEHOLDER"))
+        .get(format!("{root}/search?local=1&q=PLACEHOLDER"))
         .send()
         .await
         .expect("search")

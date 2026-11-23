@@ -27,9 +27,14 @@ Features:
   Reading, and the personal shortcuts row.
 - AO3-style pages: header/nav/footer, work blurbs, required-tag badges,
   browse filters, fandoms, dashboard, subscriptions, bookmarks, reading history.
-- Work Search modelled on AO3's form: any-field/title/creator/rating/warning/
-  category/fandom/characters/relationships/tags/language/word-count/single
-  chapter/kudos/comments plus sort and direction.
+- Work Search modelled on AO3's form: submitting it performs **one literal AO3
+  search** via the user's session and renders AO3's result entries (summary,
+  Found count, required tags, stats, date, Edit Your Search, numbered pages).
+  Results are not cached until you open a work. `?local=1` keeps an offline
+  cache-only search.
+- Tag Search over cached tags, AO3-shaped tag work pages with Works/Bookmarks,
+  range headings and numbered pagination, and tag include/exclude fields in the
+  live search form.
 - A reader with chapter jump and an **Entire Work** mode, plus classic and
   Reversi display skins (`POST /skin`).
 - Structured HTTP diagnostics at `/diagnostics` (All / Upstream / Inbound).

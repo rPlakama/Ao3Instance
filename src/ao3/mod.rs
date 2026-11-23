@@ -6,6 +6,7 @@ pub mod governor;
 pub mod jar;
 pub mod parse;
 pub mod pseuds;
+pub mod search;
 pub mod session;
 pub mod solver;
 pub mod work;

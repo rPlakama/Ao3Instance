@@ -42,9 +42,13 @@ pub struct StoredWork {
     pub tags: TagGroups,
     pub rating: Option<String>,
     pub language: Option<String>,
+    pub published_at: Option<String>,
+    pub complete: Option<bool>,
     pub word_count: Option<u64>,
     pub kudos: Option<u64>,
     pub comment_count: Option<u64>,
+    pub hits: Option<u64>,
+    pub bookmarks: Option<u64>,
     pub chapter_count: usize,
     pub content_hash: String,
     pub fetched_at: i64,
@@ -172,7 +176,7 @@ pub(super) use crate::time::now_secs;
 pub use errors::HttpErrorRow;
 pub use lists::{
     BookmarkEntry, BrowseResult, BrowseSort, CacheStats, ReadingEntry, ReadingStatus,
-    SubscriptionEntry, WorkFilter,
+    SubscriptionEntry, TagHit, WorkFilter,
 };
 pub use solver::{SolverEventRow, StoredClearance};
 pub use works::sha256_hex;

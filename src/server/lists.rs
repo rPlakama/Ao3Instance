@@ -122,3 +122,18 @@ pub(super) async fn about(State(state): State<Arc<AppState>>) -> Handled<Html<St
     let page = super::page_context(&state, "About — AO3Instance", NavSection::About).await;
     Ok(Html(render::about_page(&page)))
 }
+
+#[derive(Deserialize)]
+pub(super) struct TagSearchQuery {
+    q: Option<String>,
+}
+
+pub(super) async fn tag_search(
+    State(state): State<Arc<AppState>>,
+    Query(query): Query<TagSearchQuery>,
+) -> Handled<Html<String>> {
+    let raw = query.q.unwrap_or_default();
+    let hits = state.store.search_tags(&raw, 100).await?;
+    let page = super::page_context(&state, "Tag Search — AO3Instance", NavSection::Fandoms).await;
+    Ok(Html(render::tag_search_page(&page, &raw, &hits)))
+}

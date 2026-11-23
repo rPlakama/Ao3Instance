@@ -277,6 +277,42 @@ impl Store {
         })
     }
 
+    /// Cached tags matching `query`, grouped by kind, most-used first.
+    pub async fn search_tags(&self, query: &str, limit: i64) -> Result<Vec<TagHit>> {
+        let needle = query.trim().to_ascii_lowercase();
+        let mut counts: std::collections::BTreeMap<(String, String), usize> =
+            std::collections::BTreeMap::new();
+        for work in self.all_works().await? {
+            if let Some(rating) = &work.rating {
+                *counts
+                    .entry(("rating".to_string(), rating.clone()))
+                    .or_insert(0) += 1;
+            }
+            for (kind, values) in [
+                ("warning", &work.tags.warnings),
+                ("category", &work.tags.categories),
+                ("fandom", &work.tags.fandoms),
+                ("character", &work.tags.characters),
+                ("relationship", &work.tags.relationships),
+                ("freeform", &work.tags.additional),
+            ] {
+                for value in values {
+                    *counts.entry((kind.to_string(), value.clone())).or_insert(0) += 1;
+                }
+            }
+        }
+        let mut hits: Vec<TagHit> = counts
+            .into_iter()
+            .filter(|((_, name), _)| {
+                needle.is_empty() || name.to_ascii_lowercase().contains(&needle)
+            })
+            .map(|((kind, name), count)| TagHit { name, kind, count })
+            .collect();
+        hits.sort_by(|a, b| b.count.cmp(&a.count).then_with(|| a.name.cmp(&b.name)));
+        hits.truncate(usize::try_from(limit.max(1)).unwrap_or(usize::MAX));
+        Ok(hits)
+    }
+
     pub async fn list_subscriptions(&self, account: &str) -> Result<Vec<SubscriptionEntry>> {
         let rows = sqlx::query(
             "SELECT s.target_kind, s.target_id, s.subscription_id, s.state, s.updated_at,
@@ -481,4 +517,12 @@ where
     let mut facets: Vec<(String, usize)> = counts.into_iter().collect();
     facets.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
     facets
+}
+
+/// One cached tag and how many works use it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TagHit {
+    pub name: String,
+    pub kind: String,
+    pub count: usize,
 }

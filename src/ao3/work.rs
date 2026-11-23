@@ -52,9 +52,16 @@ pub struct WorkPage {
     /// Rating tag name, e.g. `Teen And Up Audiences`.
     pub rating: Option<String>,
     pub language: Option<String>,
+    /// AO3 `Published:` date, ISO `YYYY-MM-DD` when present.
+    pub published_at: Option<String>,
+    /// `Some(true)` when AO3 marks the work Completed; `Some(false)` when it
+    /// shows `Updated:` instead; `None` when the page does not say.
+    pub complete: Option<bool>,
     pub word_count: Option<u64>,
     pub kudos: Option<u64>,
     pub comment_count: Option<u64>,
+    pub hits: Option<u64>,
+    pub bookmarks: Option<u64>,
     /// Total chapter count as AO3 displays it: from the chapter index, else the
     /// chapter list in the page, else the number of parsed chapters.
     pub chapter_count: usize,
@@ -110,9 +117,19 @@ pub fn parse_work_page(html: &str) -> Result<WorkPage> {
         categories: tag_names(meta, &selectors.category_tags),
         rating: tag_names(meta, &selectors.rating_tags).into_iter().next(),
         language: meta_value(meta, &selectors.language),
+        published_at: meta_value(meta, &selectors.published)
+            .map(|value| value.trim().to_string())
+            .filter(|value| !value.is_empty()),
+        complete: meta_value(meta, &selectors.status_label).map(|label| {
+            let label = label.to_ascii_lowercase();
+            label.contains("completed")
+        }),
         word_count: meta_value(meta, &selectors.words).and_then(|value| number_from_text(&value)),
         kudos: meta_value(meta, &selectors.kudos).and_then(|value| number_from_text(&value)),
         comment_count: meta_value(meta, &selectors.comments)
+            .and_then(|value| number_from_text(&value)),
+        hits: meta_value(meta, &selectors.hits).and_then(|value| number_from_text(&value)),
+        bookmarks: meta_value(meta, &selectors.bookmarks)
             .and_then(|value| number_from_text(&value)),
         chapter_count,
         chapters,
@@ -138,9 +155,13 @@ struct Selectors {
     character_tags: Selector,
     freeform_tags: Selector,
     language: Selector,
+    published: Selector,
+    status_label: Selector,
     words: Selector,
     comments: Selector,
     kudos: Selector,
+    hits: Selector,
+    bookmarks: Selector,
     chapters: Selector,
     chapter_units: Selector,
     chapter_body: Selector,
@@ -170,9 +191,13 @@ fn selectors() -> Result<Selectors> {
         character_tags: css("dd.character.tags a.tag")?,
         freeform_tags: css("dd.freeform.tags a.tag")?,
         language: css("dd.language")?,
+        published: css("dd.published")?,
+        status_label: css("dt.status")?,
         words: css("dd.words")?,
         comments: css("dd.comments")?,
         kudos: css("dd.kudos")?,
+        hits: css("dd.hits")?,
+        bookmarks: css("dd.bookmarks")?,
         chapters: css("#chapters")?,
         chapter_units: css("#chapters > div.chapter")?,
         chapter_body: css("div.userstuff")?,

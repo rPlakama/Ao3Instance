@@ -89,6 +89,19 @@ Kudos / Comments fields, sort direction and pagination, backed by an expanded
 `SearchFilter` over ranked FTS candidates. Desktop, mobile and Reversi renders
 were checked headlessly against the references.
 
+**Literal AO3 search (post-plan clarification):** the search form now performs
+one live AO3 `/works/search` request through the session client and parses the
+returned page into AO3 entries (required tags, fandoms, tags, summary,
+language/words/chapters/comments/kudos/bookmarks/hits, date, status), rendered
+with AO3's Search Results header, `You searched for:` summary, `N Found`,
+`Edit Your Search` and numbered pagination. The local form POSTs to our server;
+AO3's own web search endpoint is GET-only, so exactly one GET goes upstream.
+Work metadata gained `published_at`, `complete`, `hits` and `bookmarks`
+(migration 0010) for AO3-shaped blurbs/statuses; a shared numbered pagination
+component and `<ol class="work index group">` entry layout landed. Tag work
+pages, a cached Tag Search, and tag include/exclude fields back the "search per
+tags" requirement; `?local=1` remains the offline fallback.
+
 **Known deviations (documented, not blockers):** required-tag marks are
 styled text badges rather than SVG artwork; the skin is a single-operator
 global preference rather than a per-browser cookie; a release/version bump is

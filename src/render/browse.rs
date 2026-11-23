@@ -7,20 +7,44 @@ use crate::ao3::parse::{SpaceMode, percent_encode};
 use crate::store::{BrowseResult, BrowseSort, ReadingStatus, WorkFilter};
 
 pub fn browse_page(ctx: &PageContext, result: &BrowseResult, filter: &WorkFilter) -> String {
-    let scope = filter
-        .fandom
-        .as_deref()
-        .or(filter.tag.as_deref())
-        .map_or_else(
-            || "Cached works".to_string(),
-            |value| format!("Cached works · {}", escape(value)),
+    let start = (result.page - 1) * result.per_page + 1;
+    let end = start + result.works.len() as i64 - 1;
+    let noun = if result.total == 1 { "Work" } else { "Works" };
+    let heading = if let Some(tag) = filter.tag.as_deref() {
+        if result.total > result.per_page as usize {
+            format!(
+                "{start} - {end} of {} {noun} in {}",
+                result.total,
+                escape(tag)
+            )
+        } else {
+            format!("{} {noun} in {}", result.total, escape(tag))
+        }
+    } else if let Some(fandom) = filter.fandom.as_deref() {
+        format!("{} {noun} in {}", result.total, escape(fandom))
+    } else {
+        "Cached works".to_string()
+    };
+    let mut body = format!("<h2 class=\"heading\">{heading}</h2>");
+    if filter.tag.is_some() || filter.fandom.is_some() {
+        body.push_str(
+            "<ul class=\"navigation actions\" role=\"navigation\">\
+                       <li class=\"active\"><span>Works</span></li>\
+                       <li><a href=\"/bookmarks\">Bookmarks</a></li>\
+                       <li><a href=\"/works\">Clear tag</a></li>",
         );
-
-    let mut body = format!(
-        "<h2>{scope}</h2><p class=\"meta\">{} work(s) in the local cache. \
-         Browse is offline: filters never call archiveofourown.org.</p>",
-        result.total
-    );
+        if let Some(tag) = filter.tag.as_deref().or(filter.fandom.as_deref()) {
+            body.push_str(&format!(
+                "<li><a href=\"/works/search?include_tags={}\">Search this tag on AO3</a></li>",
+                percent_encode(tag, SpaceMode::Percent20)
+            ));
+        }
+        body.push_str("</ul>");
+    } else {
+        body.push_str(
+            "<p class=\"meta\">Browse is offline: filters never call archiveofourown.org.</p>",
+        );
+    }
 
     body.push_str("<div class=\"browse-grid\"><section class=\"browse-results\">");
     if result.works.is_empty() {
@@ -35,41 +59,23 @@ pub fn browse_page(ctx: &PageContext, result: &BrowseResult, filter: &WorkFilter
             (result.page - 1) * result.per_page + result.works.len() as i64,
             result.total
         ));
+        body.push_str("<ol class=\"work index group\">");
         for work in &result.works {
             body.push_str(&work_blurb(work, None));
         }
-        body.push_str(&pagination(result, filter));
+        body.push_str("</ol>");
+        body.push_str(&crate::render::pagination(
+            result.page,
+            result.per_page,
+            i64::try_from(result.total).unwrap_or(i64::MAX),
+            "/works",
+            &query(filter),
+        ));
     }
     body.push_str("</section>");
     body.push_str(&sidebar(result, filter));
     body.push_str("</div>");
     layout(ctx, &body)
-}
-
-fn pagination(result: &BrowseResult, filter: &WorkFilter) -> String {
-    let pages = (result.total as i64 + result.per_page - 1) / result.per_page;
-    if pages <= 1 {
-        return String::new();
-    }
-    let mut out = String::from("<ol class=\"pagination actions\">");
-    if result.page > 1 {
-        out.push_str(&format!(
-            "<li><a href=\"/works?{}\">← previous</a></li>",
-            query(filter, result.page - 1)
-        ));
-    }
-    out.push_str(&format!(
-        "<li><span class=\"state\">page {}/{pages}</span></li>",
-        result.page
-    ));
-    if result.page < pages {
-        out.push_str(&format!(
-            "<li><a href=\"/works?{}\">next →</a></li>",
-            query(filter, result.page + 1)
-        ));
-    }
-    out.push_str("</ol>");
-    out
 }
 
 fn sidebar(result: &BrowseResult, filter: &WorkFilter) -> String {
@@ -161,12 +167,7 @@ fn sidebar(result: &BrowseResult, filter: &WorkFilter) -> String {
          placeholder=\"exact tag\"></label>",
         escape(filter.tag.as_deref().unwrap_or(""))
     ));
-    if filter.fandom.is_some() {
-        form.push_str(&format!(
-            "<input type=\"hidden\" name=\"fandom\" value=\"{}\">",
-            escape(filter.fandom.as_deref().unwrap_or(""))
-        ));
-    }
+
     form.push_str("<button type=\"submit\">Sort and filter</button>");
     form.push_str("<p class=\"meta\"><a href=\"/works\">Clear all filters</a></p></form>");
     form
@@ -181,7 +182,7 @@ fn option(value: &str, label: &str, selected: bool) -> String {
     )
 }
 
-fn query(filter: &WorkFilter, page: i64) -> String {
+fn query(filter: &WorkFilter) -> String {
     let mut parts: Vec<String> = Vec::new();
     let encode = |value: &str| percent_encode(value, SpaceMode::Percent20);
     if let Some(rating) = &filter.rating {
@@ -201,7 +202,6 @@ fn query(filter: &WorkFilter, page: i64) -> String {
     }
     parts.push(format!("status={}", filter.reading_status.as_str()));
     parts.push(format!("sort={}", filter.sort.as_str()));
-    parts.push(format!("page={}", page.max(1)));
     parts.join("&")
 }
 

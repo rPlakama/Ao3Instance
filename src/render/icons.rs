@@ -51,17 +51,16 @@ pub fn required_tags(work: &StoredWork) -> String {
         || "?".to_string(),
         |category| category.chars().take(4).collect::<String>().to_uppercase(),
     );
-    let status_label = format!("{}ch", work.chapter_count);
-    let status_class = if work.chapter_count > 1 {
-        "status-wip"
-    } else {
-        "status-complete"
+    let (status_class, status_label, status_title) = match work.complete {
+        Some(true) => ("status-complete", "✓".to_string(), "Completed"),
+        Some(false) => ("status-wip", "WIP".to_string(), "Work in progress"),
+        None => ("status-unknown", "?".to_string(), "Status unknown"),
     };
 
     format!(
         "<ul class=\"required-tags\" aria-label=\"rating, warnings, category, status\">\
          {rating_cell}{warning_cell}{category_cell}\
-         <li class=\"{status_class}\" title=\"Chapters\">{status}</li></ul>",
+         <li class=\"{status_class}\" title=\"{status_title}\">{status}</li></ul>",
         rating_cell = badge_cell(rating_class, rating_href.as_deref(), rating_label, "Rating"),
         warning_cell = badge_cell(
             warning_class,

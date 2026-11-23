@@ -53,9 +53,13 @@ fn full_work_page_reads_identity_tags_and_stats() {
     assert_eq!(page.categories, ["F/M", "Gen"]);
     assert_eq!(page.rating.as_deref(), Some("Explicit"));
     assert_eq!(page.language.as_deref(), Some("English"));
+    assert_eq!(page.published_at.as_deref(), Some("2025-01-02"));
+    assert_eq!(page.complete, Some(true));
     assert_eq!(page.word_count, Some(4_321));
     assert_eq!(page.kudos, Some(1_024));
     assert_eq!(page.comment_count, Some(57));
+    assert_eq!(page.hits, Some(9_876));
+    assert_eq!(page.bookmarks, Some(12));
 }
 
 #[test]

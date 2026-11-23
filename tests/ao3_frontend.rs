@@ -39,8 +39,8 @@ async fn every_offline_segment_renders_the_shared_chrome() {
 
     for path in [
         "/",
-        "/search?q=hello",
-        "/works/search?q=hello",
+        "/search?local=1&q=hello",
+        "/works/search?local=1&q=hello",
         "/users/login",
         "/session",
         "/audit",
@@ -246,21 +246,26 @@ async fn seeded_cache_renders_browse_fandoms_and_dashboard() {
     assert!(chapter_alias.text().await.expect("body").contains("iframe"));
 
     let search = client
-        .get(format!("{root}/search?q=Mirror"))
+        .get(format!("{root}/search?local=1&q=Mirror"))
         .send()
         .await
         .expect("search");
     let search = search.text().await.expect("body");
     assert!(search.contains("work blurb group"), "{search}");
     assert!(search.contains("required-tags"), "{search}");
-    assert!(
-        search.contains("name=\"rating\""),
-        "filters are wired: {search}"
-    );
-    assert!(search.contains("name=\"fandom\""), "{search}");
+    assert!(search.contains("Search Results"), "{search}");
+
+    let local_form = client
+        .get(format!("{root}/search?local=1"))
+        .send()
+        .await
+        .expect("local form");
+    let local_form = local_form.text().await.expect("body");
+    assert!(local_form.contains("name=\"rating\""), "{local_form}");
+    assert!(local_form.contains("name=\"fandom\""), "{local_form}");
 
     let filtered = client
-        .get(format!("{root}/search?q=Mirror&rating=Explicit"))
+        .get(format!("{root}/search?local=1&q=Mirror&rating=Explicit"))
         .send()
         .await
         .expect("filtered search");
@@ -273,7 +278,7 @@ async fn seeded_cache_renders_browse_fandoms_and_dashboard() {
     );
 
     let excluded = client
-        .get(format!("{root}/search?q=Mirror&rating=Mature"))
+        .get(format!("{root}/search?local=1&q=Mirror&rating=Mature"))
         .send()
         .await
         .expect("excluded search");
@@ -282,7 +287,7 @@ async fn seeded_cache_renders_browse_fandoms_and_dashboard() {
             .text()
             .await
             .expect("body")
-            .contains("0 cached matches")
+            .contains("No results found")
     );
 
     let home = client.get(&root).send().await.expect("home");
@@ -342,6 +347,46 @@ async fn seeded_cache_renders_browse_fandoms_and_dashboard() {
             .expect("body")
             .contains("Test Fandom (Not Real)")
     );
+
+    let tag_works = client
+        .get(format!(
+            "{root}/tags/Test%20Fandom%20%28Not%20Real%29/works"
+        ))
+        .send()
+        .await
+        .expect("tag works");
+    let tag_works = tag_works.text().await.expect("body");
+    assert!(
+        tag_works.contains("1 Work in Test Fandom (Not Real)"),
+        "{tag_works}"
+    );
+    assert!(tag_works.contains("Search this tag on AO3"), "{tag_works}");
+    assert!(tag_works.contains("navigation actions"), "{tag_works}");
+
+    let tag_search = client
+        .get(format!("{root}/tags/search?q=Fandom"))
+        .send()
+        .await
+        .expect("tag search");
+    let tag_search = tag_search.text().await.expect("body");
+    assert!(
+        tag_search.contains("Test Fandom (Not Real)"),
+        "{tag_search}"
+    );
+    assert!(
+        tag_search.contains("/works/search?include_tags="),
+        "{tag_search}"
+    );
+
+    let live_form = client
+        .get(format!("{root}/works/search"))
+        .send()
+        .await
+        .expect("live form");
+    let live_form = live_form.text().await.expect("body");
+    assert!(live_form.contains("Work Tags"), "{live_form}");
+    assert!(live_form.contains("name=\"include_tags\""), "{live_form}");
+    assert!(live_form.contains("method=\"post\""), "{live_form}");
 
     let dashboard = client
         .get(format!("{root}/dashboard"))
