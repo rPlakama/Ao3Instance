@@ -46,3 +46,29 @@ will then use the same account context as the browser.
   that exact search page once through the local FlareSolverr (same cooldown and
   hourly budget as any other solve) and render the returned page. Subsequent
   requests use the resulting clearance directly.
+
+
+## Why a bare direct request is blocked
+
+The AO3 checkout confirms the request itself is right:
+
+- `otwarchive/config/routes.rb:699` maps `GET /search` to `works#search`;
+  `resources :works` also exposes `GET /works/search`.
+- `otwarchive/app/controllers/works_controller.rb:32` reads
+  `params[:work_search]`, cleans it, and renders `search_results`.
+- The request fields in `src/ao3/search.rs` are the form names from
+  `otwarchive/app/views/works/_search_form.html.erb`.
+
+The 429 body (“The bot servers are currently overloaded…”) and
+`server: cloudflare` identify **Cloudflare edge filtering**, not an AO3
+controller error. AO3’s own Rack::Attack rule is 300 requests per 300 seconds
+(`otwarchive/config/initializers/rack_attack.rb:55`, values in
+`otwarchive/config/config.yml:209`), far above one search. A direct client without a
+browser clearance is scored by Cloudflare and gets 429; Helium succeeds because
+it has a browser session/clearance. Once the local solver supplies the scoped
+clearance, the direct reqwest request succeeds too (observed 0.3 s, 200).
+
+The handler therefore: (1) tries the canonical direct GET first, (2) on
+403/503/429 or timeout solves that exact search page once and renders it, and
+(3) lets later direct requests reuse the clearance. No AO3 source change can
+remove Cloudflare’s edge check.
