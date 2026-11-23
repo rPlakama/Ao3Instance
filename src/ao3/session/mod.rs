@@ -173,6 +173,22 @@ impl AccountSession {
             .ok_or(Error::CsrfMissing)
     }
 
+    /// Keeps the in-memory CSRF token in sync after a direct `Client` read:
+    /// clears any stale token if cookies rotated, and captures a fresh token
+    /// from an authenticated HTML response when present.
+    pub fn sync_csrf_from_response(&mut self, response: &Response) {
+        if response.jar_changed {
+            self.csrf = None;
+        }
+        if response.status == 200
+            && !self.account.is_empty()
+            && self.jar().is_complete()
+            && let Some(token) = crate::ao3::parse::csrf_token_from_html(&response.body)
+        {
+            self.csrf = Some(SecretString::new(token));
+        }
+    }
+
     /// Adopts a cookie jar supplied by the user and proves it works.
     ///
     /// An incomplete jar is rejected **before installation** and without network
@@ -194,10 +210,90 @@ impl AccountSession {
         self.finish_validation().await
     }
 
+    /// Proves a restored (`Imported`) or transiently `Blocked` session and
+    /// fetches a fresh CSRF token so it transitions to `Active`. No-op when
+    /// already `Active` with a token.
+    pub async fn ensure_active(&mut self) -> Result<SessionState> {
+        self.ensure_alive()?;
+        if self.state == SessionState::Active && self.csrf.is_some() {
+            return Ok(SessionState::Active);
+        }
+        if matches!(self.state, SessionState::Imported | SessionState::Blocked)
+            && self.jar().is_complete()
+            && !self.account.is_empty()
+        {
+            return self.finish_validation().await;
+        }
+        Ok(self.state)
+    }
+
+    /// Re-verifies the current session and refreshes its CSRF token so
+    /// "Verify session now" can promote a restored (`Imported`) session to
+    /// `Active`.
+    pub async fn verify_and_refresh(&mut self) -> Result<SessionState> {
+        self.ensure_alive()?;
+        self.finish_validation().await
+    }
+
+    /// Detects the signed-in AO3 login name for an imported cookie jar by
+    /// fetching `/` with that jar and inspecting the `#greeting` header.
+    /// Restores the previous session state before returning.
+    pub async fn discover_account_from_jar(&mut self, jar: &Jar) -> Result<String> {
+        self.ensure_alive()?;
+        if !jar.is_complete() {
+            return Err(Error::SessionIncomplete);
+        }
+        let saved_jar = self.client.jar().clone();
+        let saved_state = self.state;
+        let saved_csrf = self
+            .csrf
+            .as_ref()
+            .map(|token| SecretString::new(token.expose()));
+        let saved_account = self.account.clone();
+
+        self.client.set_jar(jar.clone());
+        self.state = SessionState::Imported;
+        self.csrf = None;
+
+        let result = self.upstream_get("/", None).await;
+
+        self.client.set_jar(saved_jar);
+        self.state = saved_state;
+        self.csrf = saved_csrf;
+        self.account = saved_account;
+
+        let response = result?;
+        if response.status != 200 {
+            return Err(Error::Validation(format!(
+                "could not detect AO3 login from cookie file (HTTP {})",
+                response.status
+            )));
+        }
+        crate::ao3::parse::logged_in_account_from_html(&response.body).ok_or_else(|| {
+            Error::Validation(
+                "could not detect AO3 username from cookie file — enter your AO3 login manually"
+                    .into(),
+            )
+        })
+    }
+
     /// Logs in with an AO3 username/password (ADR-0001 option B).
     pub async fn login(&mut self, account: &str, password: SecretString) -> Result<SessionState> {
         self.ensure_alive()?;
-        let account = validate_account(account)?;
+        let account = validate_account(account)?.to_string();
+        match self.login_once(&account, password.expose()).await {
+            Err(Error::CsrfExpired) if self.solver_status.reachable => {
+                // A stale FlareSolverr browser session can hold an older
+                // `_otwarchive_session` than the freshly parsed form token.
+                // Reset the browser session and try once more.
+                self.solver.reset_session().await;
+                self.login_once(&account, password.expose()).await
+            }
+            other => other,
+        }
+    }
+
+    async fn login_once(&mut self, account: &str, password: &str) -> Result<SessionState> {
         self.account = account.to_string();
         self.csrf = None;
         self.pseud = None;
@@ -213,14 +309,16 @@ impl AccountSession {
             }
         };
         self.classify_pre_login(&login_page)?;
-        let token = parse_token_from_page(&login_page.body)?;
+        let token = crate::ao3::parse::csrf_token_from_html(&login_page.body)
+            .ok_or(Error::CsrfMissing)?;
 
         let response = match self
             .upstream_post_form(
                 consts::LOGIN_PATH,
                 &[
                     ("user[login]", account),
-                    ("user[password]", password.expose()),
+                    ("user[password]", password),
+                    ("user[remember_me]", "1"),
                     ("authenticity_token", &token),
                 ],
             )
@@ -301,7 +399,12 @@ impl AccountSession {
         }
 
         let state = match response.status {
-            200 => SessionState::Active,
+            200 => {
+                if let Some(token) = crate::ao3::parse::csrf_token_from_html(&response.body) {
+                    self.csrf = Some(SecretString::new(token));
+                }
+                SessionState::Active
+            }
             302 | 303 => {
                 if response.location_contains("/lost_cookie") {
                     SessionState::SessionIncomplete
@@ -423,12 +526,30 @@ impl AccountSession {
         if state != SessionState::Active {
             return Ok(state);
         }
+        let probed_csrf = self.csrf.as_ref().map(|token| token.expose().to_string());
         match self.fetch_csrf().await {
             Ok(()) => {
                 self.state = SessionState::Active;
                 Ok(SessionState::Active)
             }
             Err(err) => {
+                // If `/token_dispenser.json` hit a transient edge/rate-limit
+                // error, keep the authenticated CSRF meta token we already
+                // captured from the probe page.
+                if let Some(token) = probed_csrf
+                    && matches!(
+                        err,
+                        Error::RateLimited { .. }
+                            | Error::BlockedByEdge { .. }
+                            | Error::Network(_)
+                            | Error::SolverFailed(_)
+                            | Error::SolverUnavailable(_)
+                    )
+                {
+                    self.csrf = Some(SecretString::new(token));
+                    self.state = SessionState::Active;
+                    return Ok(SessionState::Active);
+                }
                 // A verified jar without a token is `Imported`: not usable.
                 if matches!(err, Error::LoggedOut) {
                     self.client.set_jar(Jar::new());
@@ -449,37 +570,87 @@ impl AccountSession {
         }
     }
 
+    async fn ensure_csrf_token(&mut self) -> Result<String> {
+        if self.csrf.is_none() {
+            self.fetch_csrf().await?;
+        }
+        self.csrf_token().map(str::to_string)
+    }
+
     /// CSRF-protected form POST for a write action.
     ///
-    /// The caller classifies the response (201/200/422/302); this only guarantees
-    /// the token is present and sent.
+    /// Lazily refreshes a missing token and retries once if AO3 rejects a stale
+    /// token with a redirect to `/auth_error` (Rails aborts before running the
+    /// controller action, so one retry cannot double-post).
     pub async fn post_write(&mut self, path: &str, fields: &[(&str, &str)]) -> Result<Response> {
-        let token = self.csrf_token()?.to_string();
+        let token = self.ensure_csrf_token().await?;
         let mut all: Vec<(&str, &str)> = fields.to_vec();
         all.push(("authenticity_token", token.as_str()));
-        self.upstream_post_form(path, &all).await
+        let response = self.upstream_post_form(path, &all).await?;
+        if is_auth_error_redirect(&response) {
+            self.csrf = None;
+            if self.fetch_csrf().await.is_ok()
+                && let Ok(fresh) = self.csrf_token().map(str::to_string)
+            {
+                let mut retry: Vec<(&str, &str)> = fields.to_vec();
+                retry.push(("authenticity_token", fresh.as_str()));
+                return self.upstream_post_form(path, &retry).await;
+            }
+        }
+        Ok(response)
     }
 
     /// CSRF-protected PATCH for a write action (reading flags).
     pub async fn patch_write(&mut self, path: &str, fields: &[(&str, &str)]) -> Result<Response> {
-        let token = self.csrf_token()?.to_string();
+        let token = self.ensure_csrf_token().await?;
         let mut all: Vec<(&str, &str)> = fields.to_vec();
         all.push(("authenticity_token", token.as_str()));
-        self.upstream_patch_form(path, &all).await
+        let response = self.upstream_patch_form(path, &all).await?;
+        if is_auth_error_redirect(&response) {
+            self.csrf = None;
+            if self.fetch_csrf().await.is_ok()
+                && let Ok(fresh) = self.csrf_token().map(str::to_string)
+            {
+                let mut retry: Vec<(&str, &str)> = fields.to_vec();
+                retry.push(("authenticity_token", fresh.as_str()));
+                return self.upstream_patch_form(path, &retry).await;
+            }
+        }
+        Ok(response)
     }
 
     /// CSRF-protected DELETE for a write action (e.g. unsubscribe).
     pub async fn delete_write(&mut self, path: &str) -> Result<Response> {
-        let token = self.csrf_token()?.to_string();
-        self.upstream_delete_with_csrf(path, &token).await
+        let token = self.ensure_csrf_token().await?;
+        let response = self.upstream_delete_with_csrf(path, &token).await?;
+        if is_auth_error_redirect(&response) {
+            self.csrf = None;
+            if self.fetch_csrf().await.is_ok()
+                && let Ok(fresh) = self.csrf_token().map(str::to_string)
+            {
+                return self.upstream_delete_with_csrf(path, &fresh).await;
+            }
+        }
+        Ok(response)
     }
 
-    /// Fetches a fresh CSRF token from `/token_dispenser.json`.
+    /// Fetches a fresh CSRF token from `/token_dispenser.json`, falling back to
+    /// an authenticated HTML page's `<meta name="csrf-token">` if the dispenser
+    /// endpoint fails transiently (403/404/429/503 or network error).
     async fn fetch_csrf(&mut self) -> Result<()> {
         let before = self.jar_signature();
-        let response = self
+        let response = match self
             .upstream_get(consts::TOKEN_PATH, Some(consts::TOKEN_TIMEOUT))
-            .await?;
+            .await
+        {
+            Ok(response) => response,
+            Err(err) => {
+                if self.try_csrf_from_html().await {
+                    return Ok(());
+                }
+                return Err(err);
+            }
+        };
         if before != self.jar_signature() {
             self.csrf = None;
         }
@@ -504,16 +675,55 @@ impl AccountSession {
                 self.client.set_jar(Jar::new());
                 Err(Error::LoggedOut)
             }
-            429 => Err(Error::RateLimited {
-                retry_after: response.retry_after,
-            }),
-            403 | 503 => Err(Error::BlockedByEdge {
-                status: response.status,
-            }),
+            429 => {
+                if self.try_csrf_from_html().await {
+                    return Ok(());
+                }
+                Err(Error::RateLimited {
+                    retry_after: response.retry_after,
+                })
+            }
+            403 | 503 => {
+                if self.try_csrf_from_html().await {
+                    return Ok(());
+                }
+                Err(Error::BlockedByEdge {
+                    status: response.status,
+                })
+            }
+            404 => {
+                if self.try_csrf_from_html().await {
+                    return Ok(());
+                }
+                Err(Error::UpstreamChanged(
+                    "token dispenser returned HTTP 404".into(),
+                ))
+            }
             status => Err(Error::UpstreamChanged(format!(
                 "token dispenser returned HTTP {status}"
             ))),
         }
+    }
+
+    async fn try_csrf_from_html(&mut self) -> bool {
+        let Ok(account) = validate_account(&self.account).map(str::to_string) else {
+            return false;
+        };
+        let path = format!(
+            "/users/{}/subscriptions",
+            percent_encode(&account, SpaceMode::Percent20)
+        );
+        let Ok(response) = self.upstream_get(&path, Some(consts::TOKEN_TIMEOUT)).await else {
+            return false;
+        };
+        if response.status != 200 {
+            return false;
+        }
+        let Some(token) = crate::ao3::parse::csrf_token_from_html(&response.body) else {
+            return false;
+        };
+        self.csrf = Some(SecretString::new(token));
+        true
     }
 
     /// Classifies the page served for `GET /users/login`.
@@ -677,10 +887,8 @@ fn classify_login_path(path: &str) -> Option<LoginRedirect> {
     }
 }
 
-fn parse_token_from_page(html: &str) -> Result<String> {
-    crate::ao3::parse::csrf_token_from_meta(html)
-        .map(str::to_string)
-        .ok_or(Error::CsrfMissing)
+fn is_auth_error_redirect(response: &Response) -> bool {
+    response.is_redirect() && response.location_contains("/auth_error")
 }
 
 #[cfg(test)]

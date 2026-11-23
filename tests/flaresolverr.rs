@@ -503,3 +503,146 @@ async fn login_validation_and_writes_all_use_solver_when_available() {
     handle.abort();
     drop(std::fs::remove_dir_all(dir));
 }
+
+#[tokio::test]
+async fn persistent_solver_session_and_auth_error_direct_fallback() {
+    let upstream = Server::start(vec![(
+        "POST /kudos.js",
+        Response::json("{}").with_status(201),
+    )]);
+    let base = upstream.url();
+    let solver = Server::start_sequence(vec![(
+        "POST /v1",
+        vec![
+            // Probe advertises sessions support (like real FlareSolverr).
+            Response::json(r#"{"status":"ok","version":"3.5.2","sessions":[]}"#),
+            // sessions.create
+            Response::json(r#"{"status":"ok","session":"ao3instance"}"#),
+            // GET /users/someone/subscriptions (with reversed meta attrs + cf_clearance)
+            Response::json(
+                json!({
+                    "status": "ok",
+                    "solution": {
+                        "url": format!("{base}/users/someone/subscriptions"),
+                        "status": 200,
+                        "response": r#"<html><head><meta content="sub-csrf" name="csrf-token"></head><body>subs</body></html>"#,
+                        "userAgent": "Mozilla/5.0 solver-browser",
+                        "cookies": [
+                            {"name": "cf_clearance", "value": "clear-tok", "domain": "127.0.0.1", "path": "/"},
+                            {"name": "_otwarchive_session", "value": "sess-1", "domain": "127.0.0.1", "path": "/"},
+                            {"name": "user_credentials", "value": "1", "domain": "127.0.0.1", "path": "/"}
+                        ]
+                    }
+                })
+                .to_string(),
+            ),
+            // GET /token_dispenser.json
+            Response::json(
+                json!({
+                    "status": "ok",
+                    "solution": {
+                        "url": format!("{base}/token_dispenser.json"),
+                        "status": 200,
+                        "response": r#"<html><body><pre>{"token":"solver-csrf-1"}</pre></body></html>"#,
+                        "userAgent": "Mozilla/5.0 solver-browser",
+                        "cookies": []
+                    }
+                })
+                .to_string(),
+            ),
+            // POST /kudos.js via FlareSolverr lands on /auth_error (Origin: null quirk)
+            Response::json(
+                json!({
+                    "status": "ok",
+                    "solution": {
+                        "url": format!("{base}/auth_error"),
+                        "status": 200,
+                        "response": "<html><body>Auth error</body></html>",
+                        "userAgent": "Mozilla/5.0 solver-browser",
+                        "cookies": []
+                    }
+                })
+                .to_string(),
+            ),
+            // Redirect to / after kudos
+            Response::json(
+                json!({
+                    "status": "ok",
+                    "solution": {
+                        "url": format!("{base}/"),
+                        "status": 200,
+                        "response": "<html><body>Home</body></html>",
+                        "userAgent": "Mozilla/5.0 solver-browser",
+                        "cookies": []
+                    }
+                })
+                .to_string(),
+            ),
+            // sessions.destroy on logout
+            Response::json(r#"{"status":"ok"}"#),
+        ],
+    )]);
+
+    let dir = support::temp_dir("solver-session-csrf");
+    let (root, store, handle) = serve_with_writes(&dir, &base, &solver.url()).await;
+
+    let imported = post_form(
+        &root,
+        "/session/import",
+        "account=someone&session_cookie=sess-1&credentials_cookie=1",
+    )
+    .await;
+    assert_eq!(imported.status(), 200);
+
+    // Kudos hits /auth_error through FlareSolverr and falls back cleanly to direct
+    // Client carrying the solver's cf_clearance, browser UA, Origin, and X-CSRF-Token.
+    let kudos = post_form(&root, "/write/kudos", "target_id=99&confirm=yes").await;
+    assert_eq!(kudos.status(), 200);
+    assert!(store.has_kudos("someone", "99").await.expect("kudos"));
+
+    let direct_posts = upstream.requests();
+    assert_eq!(direct_posts.len(), 1, "direct fallback completed the write");
+    assert_eq!(direct_posts[0].path, "/kudos.js");
+    assert_eq!(direct_posts[0].header("x-csrf-token"), Some("solver-csrf-1"));
+    assert_eq!(direct_posts[0].header("origin"), Some(base.as_str()));
+    assert_eq!(
+        direct_posts[0].header("user-agent"),
+        Some("Mozilla/5.0 solver-browser")
+    );
+    let cookie_hdr = direct_posts[0].header("cookie").unwrap_or_default();
+    assert!(
+        cookie_hdr.contains("cf_clearance=clear-tok"),
+        "direct fallback carries cf_clearance: {cookie_hdr}"
+    );
+    assert_eq!(
+        cookie_hdr.matches("cf_clearance=").count(),
+        1,
+        "cf_clearance must not be duplicated: {cookie_hdr}"
+    );
+
+    // Logout destroys the persistent FlareSolverr browser session.
+    let _ = post_form(&root, "/session/logout", "").await;
+
+    let solver_bodies: Vec<String> = solver.requests().into_iter().map(|r| r.body).collect();
+    assert!(
+        solver_bodies
+            .iter()
+            .any(|b| b.contains(r#""cmd":"sessions.create""#) && b.contains("ao3instance")),
+        "expected sessions.create: {solver_bodies:?}"
+    );
+    assert!(
+        solver_bodies
+            .iter()
+            .any(|b| b.contains(r#""cmd":"request.get""#) && b.contains(r#""session":"ao3instance""#)),
+        "expected persistent session on request.get: {solver_bodies:?}"
+    );
+    assert!(
+        solver_bodies
+            .iter()
+            .any(|b| b.contains(r#""cmd":"sessions.destroy""#) && b.contains("ao3instance")),
+        "expected sessions.destroy on logout: {solver_bodies:?}"
+    );
+
+    handle.abort();
+    drop(std::fs::remove_dir_all(dir));
+}

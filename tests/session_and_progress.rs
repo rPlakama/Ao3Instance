@@ -289,3 +289,200 @@ async fn authenticated_home_renders_ao3_modules() {
     handle.abort();
     drop(std::fs::remove_dir_all(dir));
 }
+
+#[tokio::test]
+async fn restored_session_survives_restart_and_allows_writes_and_persists_rotation() {
+    let dir = support::temp_dir("session-restart");
+    let routes = vec![
+        (
+            "GET /users/someone/subscriptions".to_string(),
+            Response::ok(
+                r#"<html><head><meta content="meta-csrf" name="csrf-token"></head><body>subs</body></html>"#,
+            )
+            .with_cookie("_otwarchive_session=rotated-after-restart; Path=/; HttpOnly"),
+        ),
+        (
+            "GET /token_dispenser.json".to_string(),
+            Response::json(r#"{"token":"fresh-csrf"}"#),
+        ),
+        (
+            "POST /kudos.js".to_string(),
+            Response::json("{}").with_status(201),
+        ),
+    ];
+    let upstream = Server::start(routes);
+
+    // First instance: persist a session carrying remember_user_token.
+    {
+        let (root, _store, handle) = start(&dir, &upstream).await;
+        let client = http();
+        let boundary = "----ao3testboundary";
+        let cookie_txt = "\
+# Netscape HTTP Cookie File
+#HttpOnly_.archiveofourown.org\tTRUE\t/\tTRUE\t1999999999\t_otwarchive_session\ts1
+.archiveofourown.org\tTRUE\t/\tTRUE\t1999999999\tuser_credentials\t1
+.archiveofourown.org\tTRUE\t/\tTRUE\t1999999999\tremember_user_token\trem-tok-99
+";
+        let body = format!(
+            "--{boundary}\r\n\
+             Content-Disposition: form-data; name=\"account\"\r\n\r\n\
+             someone\r\n\
+             --{boundary}\r\n\
+             Content-Disposition: form-data; name=\"cookie_file\"; filename=\"cookies.txt\"\r\n\
+             Content-Type: text/plain\r\n\r\n\
+             {cookie_txt}\r\n\
+             --{boundary}--\r\n"
+        );
+        let imported = client
+            .post(format!("{root}/session/import-file"))
+            .header(
+                "content-type",
+                format!("multipart/form-data; boundary={boundary}"),
+            )
+            .body(body)
+            .send()
+            .await
+            .expect("import file");
+        assert_eq!(imported.status(), 200);
+        let page = imported.text().await.expect("page");
+        assert!(page.contains("Cookie file imported for someone"), "{page}");
+        handle.abort();
+    }
+
+    // Second instance (simulating a NixOS update / service restart) on the same DB + key.
+    let config = Config::from_pairs([
+        ("AO3I_BASE_URL", upstream.url().as_str()),
+        ("AO3I_DATA_DIR", dir.to_str().expect("utf8 dir")),
+        ("XDG_CONFIG_HOME", dir.to_str().expect("utf8 dir")),
+        ("AO3I_MIN_SPACING_MS", "0"),
+        ("AO3I_WRITE_ENABLED", "true"),
+        ("AO3I_FLARESOLVERR", "off"),
+    ])
+    .expect("config");
+    let pool = db::open(&config.db_file).await.expect("db");
+    let store = Store::new(pool);
+    let app = server::router(&config, store.clone())
+        .await
+        .expect("router");
+    let (root, handle) = support::serve(app).await;
+    let client = http();
+
+    // Writes work immediately across the restart without signing in again.
+    let kudos = client
+        .post(format!("{root}/write/kudos"))
+        .header("content-type", "application/x-www-form-urlencoded")
+        .body("target_id=777&confirm=yes")
+        .send()
+        .await
+        .expect("kudos");
+    assert_eq!(kudos.status(), 200);
+    assert!(
+        store.has_kudos("someone", "777").await.expect("has kudos"),
+        "restored session must activate and complete writes across restarts"
+    );
+
+    // Session page shows active state, and rotated cookies + remember_user_token stayed persisted.
+    let session_html = client
+        .get(format!("{root}/session"))
+        .send()
+        .await
+        .expect("session page")
+        .text()
+        .await
+        .expect("body");
+    assert!(session_html.contains("active"), "{session_html}");
+    assert!(session_html.contains("type=\"file\""), "{session_html}");
+
+    let saved = store
+        .load_session()
+        .await
+        .expect("load")
+        .expect("persisted");
+    let key = SecretKey::load_or_create(&config.key_file).expect("key");
+    let jar = Jar::decrypt(&key, &saved.jar_enc).expect("decrypt");
+    assert_eq!(
+        jar.get("_otwarchive_session"),
+        Some("rotated-after-restart"),
+        "rotated session cookie must be persisted back to SQLite"
+    );
+    assert_eq!(jar.get("remember_user_token"), Some("rem-tok-99"));
+
+    // Probe button also verifies & stays active.
+    let probed = client
+        .post(format!("{root}/session/probe"))
+        .send()
+        .await
+        .expect("probe")
+        .text()
+        .await
+        .expect("body");
+    assert!(probed.contains("Session verified."), "{probed}");
+
+    handle.abort();
+    drop(std::fs::remove_dir_all(dir));
+}
+
+#[tokio::test]
+async fn cookie_file_upload_autodetects_account_when_blank() {
+    let dir = support::temp_dir("cookie-file-autodetect");
+    let upstream = Server::start(vec![
+        (
+            "GET /".to_string(),
+            Response::ok(
+                r#"<html><body><nav id="greeting"><p>Hi, <a href="/users/file_reader">file_reader</a>!</p></nav></body></html>"#,
+            ),
+        ),
+        (
+            "GET /users/file_reader/subscriptions".to_string(),
+            Response::ok("<html>subscriptions</html>"),
+        ),
+        (
+            "GET /token_dispenser.json".to_string(),
+            Response::json(r#"{"token":"tok-1"}"#),
+        ),
+    ]);
+    let (root, store, handle) = start(&dir, &upstream).await;
+    let client = http();
+
+    let boundary = "----ao3jsonboundary";
+    let json_cookies = r#"[
+        {"name": "_otwarchive_session", "value": "json-s1", "domain": ".archiveofourown.org"},
+        {"name": "user_credentials", "value": "1", "domain": ".archiveofourown.org"},
+        {"name": "remember_user_token", "value": "rem-json", "domain": ".archiveofourown.org"}
+    ]"#;
+    let body = format!(
+        "--{boundary}\r\n\
+         Content-Disposition: form-data; name=\"account\"\r\n\r\n\
+         \r\n\
+         --{boundary}\r\n\
+         Content-Disposition: form-data; name=\"cookie_file\"; filename=\"ao3.json\"\r\n\
+         Content-Type: application/json\r\n\r\n\
+         {json_cookies}\r\n\
+         --{boundary}--\r\n"
+    );
+    let response = client
+        .post(format!("{root}/session/import-file"))
+        .header(
+            "content-type",
+            format!("multipart/form-data; boundary={boundary}"),
+        )
+        .body(body)
+        .send()
+        .await
+        .expect("import json file");
+    assert_eq!(response.status(), 200);
+    let page = response.text().await.expect("page");
+    assert!(
+        page.contains("Cookie file imported for file_reader"),
+        "{page}"
+    );
+    let saved = store
+        .load_session()
+        .await
+        .expect("load")
+        .expect("persisted");
+    assert_eq!(saved.account, "file_reader");
+
+    handle.abort();
+    drop(std::fs::remove_dir_all(dir));
+}

@@ -39,10 +39,9 @@ pub(super) async fn home(
     let detailed = state.store.list_works_detailed(50).await?;
     let fandoms = state.store.list_fandoms().await?;
     let flash = query.notice.as_deref().and_then(notice_text);
-    let (account, usable) = session_identity(&state).await;
-    let cache_account = if usable { account.as_str() } else { "" };
+    let cache_account = super::cache::cache_account(&state).await;
     let refresh = query.refresh.as_deref() == Some("1");
-    let modules = match live_home_html(&state, cache_account, refresh).await {
+    let modules = match live_home_html(&state, &cache_account, refresh).await {
         Some(html) => crate::ao3::home::parse_home(&html),
         None => crate::ao3::home::HomeModules::default(),
     };
@@ -171,12 +170,19 @@ pub(super) async fn fetch_work_html(state: &AppState, id: &str) -> Handled<Strin
         let session = state.session.lock().await;
         (reachable, session.solver_may_receive_cookies())
     };
-    let mut session = state.session.lock().await;
-    let response = session
-        .client_mut()
-        .get(&path)
-        .await
-        .map_err(AppError::from)?;
+    let response = {
+        let mut session = state.session.lock().await;
+        let response = session
+            .client_mut()
+            .get(&path)
+            .await
+            .map_err(AppError::from)?;
+        session.sync_csrf_from_response(&response);
+        response
+    };
+    if response.jar_changed {
+        super::session::persist_if_complete(state).await;
+    }
     match response.status {
         200 => Ok(response.body),
         404 => Err(AppError::NotFound),
@@ -270,8 +276,16 @@ pub(super) async fn read_work(
     } else {
         query.notice.as_deref().and_then(notice_text)
     };
-    let (account, usable) = session_identity(&state).await;
-    let subscribed = if usable && !account.is_empty() {
+    let (account, usable, jar_complete) = {
+        let session = state.session.lock().await;
+        (
+            session.account().to_string(),
+            session.state().is_usable(),
+            session.jar().is_complete(),
+        )
+    };
+    let signed_in = !account.is_empty() && (usable || jar_complete);
+    let subscribed = if signed_in {
         state
             .store
             .get_subscription(&account, actions::WORK, &id)
@@ -280,7 +294,7 @@ pub(super) async fn read_work(
     } else {
         false
     };
-    let can_write = usable && !account.is_empty() && state.write_enabled;
+    let can_write = signed_in && state.write_enabled;
     let kudos_sent = can_write && state.store.has_kudos(&account, &id).await?;
     let bookmarked = can_write && state.store.has_bookmark(&account, &id).await?;
     let reading_state = if can_write {

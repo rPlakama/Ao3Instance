@@ -159,6 +159,16 @@ impl Jar {
         self.get(name).is_some()
     }
 
+    /// All live `(name, value)` pairs currently in the jar.
+    pub fn all_pairs(&self) -> Vec<(String, String)> {
+        let now = now_unix();
+        self.cookies
+            .iter()
+            .filter(|(_, cookie)| !cookie.is_expired(now) && !cookie.value.is_empty())
+            .map(|(name, cookie)| (name.clone(), cookie.value.clone()))
+            .collect()
+    }
+
     /// A `Cookie:` header value for the live cookies, or `None` when empty.
     pub fn cookie_header(&self) -> Option<String> {
         let now = now_unix();

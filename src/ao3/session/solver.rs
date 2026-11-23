@@ -81,6 +81,12 @@ impl AccountSession {
         self.client.clear_clearance();
     }
 
+    /// Destroys any persistent FlareSolverr browser session (e.g. on logout,
+    /// account switch, or a login CSRF mismatch).
+    pub async fn reset_solver_session(&self) {
+        self.solver.reset_session().await;
+    }
+
     /// Runs an upstream `GET` through FlareSolverr when available, falling back
     /// to the direct HTTP client only when the solver is absent or unreachable.
     pub async fn upstream_get(&mut self, path: &str, timeout: Option<Duration>) -> Result<Response> {
@@ -98,7 +104,9 @@ impl AccountSession {
     }
 
     /// Runs an upstream form `POST` through FlareSolverr when available,
-    /// falling back to the direct HTTP client if the solver is unreachable.
+    /// falling back to the direct HTTP client if the solver is unreachable or
+    /// if FlareSolverr's synthetic form POST triggers a Rails `/auth_error`
+    /// (`Origin: null` / `postData` encoding quirk).
     pub async fn upstream_post_form(
         &mut self,
         path: &str,
@@ -107,6 +115,14 @@ impl AccountSession {
         if self.solver_available().await {
             let body = form_urlencode(fields);
             match self.solve_request("POST", path, Some(&body), true).await {
+                Ok(response) if response.is_redirect() && response.location_contains("/auth_error") => {
+                    if let Ok(direct) = self.client.post_form(path, fields).await
+                        && !matches!(direct.status, 403 | 503)
+                    {
+                        return Ok(direct);
+                    }
+                    return Ok(response);
+                }
                 Ok(response) => return Ok(response),
                 Err(Error::SolverUnavailable(_)) => {}
                 Err(error) => return Err(error),
@@ -116,7 +132,8 @@ impl AccountSession {
     }
 
     /// Runs an upstream form `PATCH` through FlareSolverr (using Rails'
-    /// `_method=patch` override) when available, falling back to direct `PATCH`.
+    /// `_method=patch` override) when available, falling back to direct `PATCH`
+    /// if unreachable or if the browser form POST triggers `/auth_error`.
     pub async fn upstream_patch_form(
         &mut self,
         path: &str,
@@ -128,6 +145,14 @@ impl AccountSession {
             all.extend_from_slice(fields);
             let body = form_urlencode(&all);
             match self.solve_request("PATCH", path, Some(&body), true).await {
+                Ok(response) if response.is_redirect() && response.location_contains("/auth_error") => {
+                    if let Ok(direct) = self.client.patch_form(path, fields).await
+                        && !matches!(direct.status, 403 | 503)
+                    {
+                        return Ok(direct);
+                    }
+                    return Ok(response);
+                }
                 Ok(response) => return Ok(response),
                 Err(Error::SolverUnavailable(_)) => {}
                 Err(error) => return Err(error),
@@ -137,11 +162,20 @@ impl AccountSession {
     }
 
     /// Runs a CSRF-protected `DELETE` through FlareSolverr (using Rails'
-    /// `_method=delete` override) when available, falling back to direct `DELETE`.
+    /// `_method=delete` override) when available, falling back to direct
+    /// `DELETE` if unreachable or if the browser form POST triggers `/auth_error`.
     pub async fn upstream_delete_with_csrf(&mut self, path: &str, token: &str) -> Result<Response> {
         if self.solver_available().await {
             let body = form_urlencode(&[("_method", "delete"), ("authenticity_token", token)]);
             match self.solve_request("DELETE", path, Some(&body), true).await {
+                Ok(response) if response.is_redirect() && response.location_contains("/auth_error") => {
+                    if let Ok(direct) = self.client.delete_with_csrf(path, token).await
+                        && !matches!(direct.status, 403 | 503)
+                    {
+                        return Ok(direct);
+                    }
+                    return Ok(response);
+                }
                 Ok(response) => return Ok(response),
                 Err(Error::SolverUnavailable(_)) => {}
                 Err(error) => return Err(error),
@@ -222,6 +256,15 @@ impl AccountSession {
             &outcome.solution_url,
             self.client.base_url(),
         );
+        if jar_changed {
+            self.csrf = None;
+        }
+        if sent_cookies
+            && status == 200
+            && let Some(token) = crate::ao3::parse::csrf_token_from_html(&outcome.html)
+        {
+            self.csrf = Some(crate::crypto::SecretString::new(token));
+        }
         if status >= 400 {
             self.client.report(
                 HttpErrorEvent::new(
@@ -260,6 +303,7 @@ impl AccountSession {
     fn merge_solver_cookies(&mut self, outcome: &SolveOutcome, sent_cookies: bool) -> bool {
         let host = base_host(self.client.base_url());
         let merge_jar = sent_cookies || !self.client.jar().is_complete();
+        let before = self.client.jar().cookie_header();
         let mut clearance_parts: Vec<String> = Vec::new();
         for cookie in &outcome.cookies {
             let domain_ok = cookie
@@ -270,20 +314,21 @@ impl AccountSession {
             if !domain_ok {
                 continue;
             }
-            let cookie_path = cookie.path.as_deref().unwrap_or("/");
-            let mut header = format!(
-                "{}={}; Path={cookie_path}",
-                cookie.name,
-                cookie.value.expose()
-            );
-            if let Some(domain) = &cookie.domain {
-                header.push_str(&format!("; Domain={domain}"));
-            }
-            if merge_jar {
-                self.client.jar_mut().apply(&header);
-            }
             if cookie.name == "cf_clearance" || cookie.name == "__cf_bm" {
                 clearance_parts.push(format!("{}={}", cookie.name, cookie.value.expose()));
+                continue;
+            }
+            if merge_jar {
+                let cookie_path = cookie.path.as_deref().unwrap_or("/");
+                let mut header = format!(
+                    "{}={}; Path={cookie_path}",
+                    cookie.name,
+                    cookie.value.expose()
+                );
+                if let Some(domain) = &cookie.domain {
+                    header.push_str(&format!("; Domain={domain}"));
+                }
+                self.client.jar_mut().apply(&header);
             }
         }
 
@@ -295,7 +340,7 @@ impl AccountSession {
                 now_secs().saturating_add(ttl),
             );
         }
-        merge_jar
+        before != self.client.jar().cookie_header()
     }
 }
 
@@ -365,14 +410,10 @@ fn solver_error_kind(error: &Error) -> &'static str {
 }
 
 /// Cookie pairs worth handing to a browser that may need the signed-in view.
+/// Includes `remember_user_token` and all AO3 session cookies so Devise keeps
+/// the session alive across restarts and updates.
 fn jar_cookie_pairs(jar: &Jar) -> Vec<(String, String)> {
-    ["_otwarchive_session", "user_credentials", "view_adult"]
-        .into_iter()
-        .filter_map(|name| {
-            jar.get(name)
-                .map(|value| (name.to_string(), value.to_string()))
-        })
-        .collect()
+    jar.all_pairs()
 }
 
 /// Maps a final browser status onto the same typed errors as direct reads.

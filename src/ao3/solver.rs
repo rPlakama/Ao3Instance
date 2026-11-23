@@ -10,6 +10,7 @@
 //! `[redacted]` and a careless log line cannot leak them.
 
 use std::fmt;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
 use serde::Deserialize;
@@ -25,6 +26,11 @@ use crate::time::now_secs;
 /// times `MAX_BODY_BYTES`; this bound still stops a hostile local service from
 /// exhausting memory.
 const MAX_SOLVER_WIRE_BYTES: usize = consts::MAX_BODY_BYTES * 4;
+
+/// Named browser session reused across requests when the FlareSolverr server
+/// advertises session support, keeping cookies and CSRF tokens coherent between
+/// GET and POST requests.
+const FLARESOLVERR_SESSION_ID: &str = "ao3instance";
 
 /// Result of a liveness probe. Safe to render and log.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -92,6 +98,10 @@ pub struct Solver {
     probe_timeout: Duration,
     max_timeout_ms: u64,
     mode: SolverMode,
+    /// True once `sessions.list` confirms the server supports named sessions.
+    sessions_supported: AtomicBool,
+    /// True while [`FLARESOLVERR_SESSION_ID`] is believed live on the solver.
+    session_ready: AtomicBool,
 }
 
 impl Solver {
@@ -109,6 +119,8 @@ impl Solver {
             probe_timeout: consts::FLARESOLVERR_PROBE_TIMEOUT,
             max_timeout_ms: config.max_timeout_ms,
             mode: config.mode,
+            sessions_supported: AtomicBool::new(false),
+            session_ready: AtomicBool::new(false),
         })
     }
 
@@ -153,10 +165,67 @@ impl Solver {
         if api.status.as_deref() == Some("error") {
             return status;
         }
+        if let Some(sessions) = api.sessions {
+            self.sessions_supported.store(true, Ordering::Relaxed);
+            let exists = sessions.iter().any(|s| s == FLARESOLVERR_SESSION_ID);
+            self.session_ready.store(exists, Ordering::Relaxed);
+        }
         status.reachable = true;
         status.version = api.version;
         status.checked_at = now_secs();
         status
+    }
+
+    /// Destroys the named FlareSolverr browser session (if any) so the next
+    /// request starts with a fresh cookie jar (used on logout / cookie import).
+    pub async fn reset_session(&self) {
+        if !self.sessions_supported.load(Ordering::Relaxed) {
+            return;
+        }
+        if !self.session_ready.swap(false, Ordering::Relaxed) {
+            return;
+        }
+        drop(
+            self.http
+                .post(&self.endpoint)
+                .timeout(self.probe_timeout)
+                .json(&json!({
+                    "cmd": "sessions.destroy",
+                    "session": FLARESOLVERR_SESSION_ID,
+                }))
+                .send()
+                .await,
+        );
+    }
+
+    async fn ensure_session(&self) -> Option<&'static str> {
+        if !self.sessions_supported.load(Ordering::Relaxed) {
+            return None;
+        }
+        if self.session_ready.load(Ordering::Relaxed) {
+            return Some(FLARESOLVERR_SESSION_ID);
+        }
+        let response = self
+            .http
+            .post(&self.endpoint)
+            .timeout(consts::FLARESOLVERR_SOLVE_TIMEOUT)
+            .json(&json!({
+                "cmd": "sessions.create",
+                "session": FLARESOLVERR_SESSION_ID,
+            }))
+            .send()
+            .await
+            .ok()?;
+        if !response.status().is_success() {
+            return None;
+        }
+        let body = response.text().await.ok()?;
+        let api: ApiResponse = serde_json::from_str(&body).ok()?;
+        if api.status.as_deref() == Some("error") {
+            return None;
+        }
+        self.session_ready.store(true, Ordering::Relaxed);
+        Some(FLARESOLVERR_SESSION_ID)
     }
 
     /// Solves one `GET` in the local browser and returns the rendered page.
@@ -172,7 +241,7 @@ impl Solver {
             "returnScreenshot": false,
         });
         attach_cookies(&mut payload, cookies);
-        self.execute(payload).await
+        self.execute_with_session(payload).await
     }
 
     /// Sends one form `POST` through the local browser and returns the landed page.
@@ -194,15 +263,41 @@ impl Solver {
             "returnScreenshot": false,
         });
         attach_cookies(&mut payload, cookies);
-        self.execute(payload).await
+        self.execute_with_session(payload).await
     }
 
-    async fn execute(&self, payload: serde_json::Value) -> Result<SolveOutcome> {
+    async fn execute_with_session(&self, mut payload: serde_json::Value) -> Result<SolveOutcome> {
+        let had_session = if let Some(session_id) = self.ensure_session().await {
+            payload["session"] = serde_json::Value::String(session_id.to_string());
+            true
+        } else {
+            false
+        };
+        match self.execute(&payload).await {
+            Ok(outcome) => Ok(outcome),
+            Err(Error::SolverFailed(msg))
+                if had_session && msg.to_ascii_lowercase().contains("session") =>
+            {
+                // The FlareSolverr daemon restarted or evicted the session;
+                // recreate it once and retry.
+                self.session_ready.store(false, Ordering::Relaxed);
+                if let Some(session_id) = self.ensure_session().await {
+                    payload["session"] = serde_json::Value::String(session_id.to_string());
+                } else if let Some(map) = payload.as_object_mut() {
+                    map.remove("session");
+                }
+                self.execute(&payload).await
+            }
+            Err(error) => Err(error),
+        }
+    }
+
+    async fn execute(&self, payload: &serde_json::Value) -> Result<SolveOutcome> {
         let started = Instant::now();
         let mut response = self
             .http
             .post(&self.endpoint)
-            .json(&payload)
+            .json(payload)
             .send()
             .await
             .map_err(|error| {
@@ -281,6 +376,7 @@ struct ApiResponse {
     status: Option<String>,
     message: Option<String>,
     version: Option<String>,
+    sessions: Option<Vec<String>>,
     solution: Option<Solution>,
 }
 

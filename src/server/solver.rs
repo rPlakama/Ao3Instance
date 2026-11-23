@@ -134,8 +134,8 @@ pub(super) async fn solver_available(state: &AppState) -> bool {
     available
 }
 
-/// Syncs `AppState::solver_status` from the session and persists any newly
-/// captured Cloudflare clearance.
+/// Syncs `AppState::solver_status` from the session, persists any newly
+/// captured Cloudflare clearance, and persists rotated AO3 session cookies.
 pub(super) async fn sync_solver_state(state: &AppState) {
     let status = {
         let session = state.session.lock().await;
@@ -145,6 +145,7 @@ pub(super) async fn sync_solver_state(state: &AppState) {
     if let Err(err) = persist_clearance(state).await {
         eprintln!("persist solver clearance: {err}");
     }
+    super::session::persist_if_complete(state).await;
 }
 
 /// Runs one upstream `GET` through the local FlareSolverr, serializing solver
@@ -187,6 +188,9 @@ pub(super) async fn fetch_via_solver(
                 && let Err(err) = persist_clearance(state).await
             {
                 eprintln!("persist solver clearance: {err}");
+            }
+            if response.jar_changed {
+                super::session::persist_if_complete(state).await;
             }
             Ok(response)
         }

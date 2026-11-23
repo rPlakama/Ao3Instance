@@ -130,12 +130,17 @@ async fn fetch_live(
 
     let response = {
         let mut session = state.session.lock().await;
-        session
+        let response = session
             .client_mut()
             .get_with_timeout(path, Duration::from_secs(10))
             .await
+            .map_err(PageFetchError::Error)?;
+        session.sync_csrf_from_response(&response);
+        response
+    };
+    if response.jar_changed {
+        super::session::persist_if_complete(state).await;
     }
-    .map_err(PageFetchError::Error)?;
 
     if response.status == 200 {
         Ok(response.body)

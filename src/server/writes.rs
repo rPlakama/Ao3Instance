@@ -12,15 +12,41 @@ use axum::{
 };
 use serde::Deserialize;
 
+use super::AppState;
 use super::error::{AppError, Handled};
 use super::session::persist_session;
-use super::{AppState, session_identity};
 use crate::ao3::actions;
 use crate::ao3::pseuds::Pseud;
-use crate::ao3::session::AccountSession;
+use crate::ao3::session::{AccountSession, SessionState};
 use crate::error::Error;
 use crate::render;
 use crate::render::NavSection;
+
+/// Returns `(account, usable)`, lazily activating a restored (`Imported`)
+/// session from disk so writes keep working seamlessly after restarts/updates.
+async fn ensure_usable_session(state: &AppState) -> (String, bool) {
+    let (account, usable, needs_activation) = {
+        let session = state.session.lock().await;
+        (
+            session.account().to_string(),
+            session.state().is_usable(),
+            !session.account().is_empty()
+                && matches!(session.state(), SessionState::Imported | SessionState::Blocked)
+                && session.jar().is_complete(),
+        )
+    };
+    if usable || !needs_activation {
+        return (account, usable);
+    }
+    let activated = {
+        let _solver_guard = state.solver_lock.lock().await;
+        let mut session = state.session.lock().await;
+        drop(session.ensure_active().await);
+        (session.account().to_string(), session.state().is_usable())
+    };
+    super::solver::sync_solver_state(state).await;
+    activated
+}
 
 pub(super) fn notice_text(key: &str) -> Option<&'static str> {
     match key {
@@ -89,7 +115,7 @@ pub(super) async fn write_preview(
             "Writes are disabled (set AO3I_WRITE_ENABLED=true).".into(),
         ));
     }
-    let (account, usable) = session_identity(&state).await;
+    let (account, usable) = ensure_usable_session(&state).await;
     if !usable || account.is_empty() {
         return Err(AppError::Forbidden(
             "Sign in to AO3 on the Session page before writing.".into(),
@@ -181,7 +207,7 @@ pub(super) async fn write_subscribe(
         return Err(AppError::BadRequest("missing subscription target".into()));
     }
 
-    let (account, usable) = session_identity(&state).await;
+    let (account, usable) = ensure_usable_session(&state).await;
     if !usable || account.is_empty() {
         return Err(AppError::Forbidden("Sign in to AO3 first.".into()));
     }
@@ -261,7 +287,7 @@ pub(super) async fn write_unsubscribe(
         .pipe_kind()
         .ok_or_else(|| AppError::BadRequest("unknown subscription kind".into()))?;
     let target_id = form.target_id.trim().to_string();
-    let (account, usable) = session_identity(&state).await;
+    let (account, usable) = ensure_usable_session(&state).await;
     if !usable || account.is_empty() {
         return Err(AppError::Forbidden("Sign in to AO3 first.".into()));
     }
@@ -346,7 +372,7 @@ pub(super) async fn write_kudos(
     if target_id.is_empty() {
         return Err(AppError::BadRequest("missing kudos target".into()));
     }
-    let (account, usable) = session_identity(&state).await;
+    let (account, usable) = ensure_usable_session(&state).await;
     if !usable || account.is_empty() {
         return Err(AppError::Forbidden("Sign in to AO3 first.".into()));
     }
@@ -426,7 +452,7 @@ pub(super) async fn write_reading(
     if target_id.is_empty() {
         return Err(AppError::BadRequest("missing reading target".into()));
     }
-    let (account, usable) = session_identity(&state).await;
+    let (account, usable) = ensure_usable_session(&state).await;
     if !usable || account.is_empty() {
         return Err(AppError::Forbidden("Sign in to AO3 first.".into()));
     }
@@ -531,7 +557,7 @@ pub(super) async fn write_comment_preview(
         return Err(AppError::BadRequest("missing comment target".into()));
     }
     validate_comment_content(&form.content)?;
-    let (account, usable) = session_identity(&state).await;
+    let (account, usable) = ensure_usable_session(&state).await;
     if !usable || account.is_empty() {
         return Err(AppError::Forbidden("Sign in to AO3 first.".into()));
     }
@@ -582,7 +608,7 @@ pub(super) async fn write_comment(
         return Err(AppError::BadRequest("missing comment target".into()));
     }
     validate_comment_content(&form.content)?;
-    let (account, usable) = session_identity(&state).await;
+    let (account, usable) = ensure_usable_session(&state).await;
     if !usable || account.is_empty() {
         return Err(AppError::Forbidden("Sign in to AO3 first.".into()));
     }
@@ -666,7 +692,7 @@ pub(super) async fn write_bookmark(
     if target_id.is_empty() {
         return Err(AppError::BadRequest("missing bookmark target".into()));
     }
-    let (account, usable) = session_identity(&state).await;
+    let (account, usable) = ensure_usable_session(&state).await;
     if !usable || account.is_empty() {
         return Err(AppError::Forbidden("Sign in to AO3 first.".into()));
     }

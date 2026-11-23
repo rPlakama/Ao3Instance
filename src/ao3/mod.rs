@@ -3,6 +3,7 @@
 pub mod account_lists;
 pub mod actions;
 pub mod client;
+pub mod cookie_file;
 pub mod governor;
 pub mod home;
 pub mod jar;

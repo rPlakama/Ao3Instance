@@ -619,3 +619,67 @@ async fn empty_account_is_a_configuration_error() {
         .expect_err("empty account");
     assert!(matches!(err, Error::Config(_)));
 }
+
+#[tokio::test]
+async fn write_refreshes_stale_csrf_on_auth_error_and_retries_once() {
+    let server = Server::start_sequence(vec![
+        (
+            "GET /users/someone/subscriptions",
+            vec![Response::ok("<html>subscriptions</html>")],
+        ),
+        (
+            "GET /token_dispenser.json",
+            vec![
+                Response::json(r#"{"token":"stale-token"}"#),
+                Response::json(r#"{"token":"fresh-token"}"#),
+            ],
+        ),
+        (
+            "POST /kudos.js",
+            vec![
+                Response::redirect("/auth_error"),
+                Response::json("{}").with_status(201),
+            ],
+        ),
+    ]);
+    let mut session = active_session(&server, "someone").await;
+    assert_eq!(session.csrf_token().expect("initial"), "stale-token");
+
+    let response = session
+        .post_write("/kudos.js", &[("kudo[commentable_id]", "42")])
+        .await
+        .expect("write succeeds on retry");
+    assert_eq!(response.status, 201);
+    assert_eq!(session.csrf_token().expect("refreshed"), "fresh-token");
+
+    let posts: Vec<_> = server
+        .requests()
+        .into_iter()
+        .filter(|req| req.method == "POST" && req.path == "/kudos.js")
+        .collect();
+    assert_eq!(posts.len(), 2, "first attempt + one retry after refresh");
+    assert!(posts[0].body.contains("authenticity_token=stale-token"));
+    assert!(posts[1].body.contains("authenticity_token=fresh-token"));
+    assert_eq!(posts[1].header("x-csrf-token"), Some("fresh-token"));
+    assert_eq!(posts[1].header("origin"), Some(server.url().as_str()));
+}
+
+#[tokio::test]
+async fn fetch_csrf_falls_back_to_html_meta_when_token_dispenser_is_rate_limited() {
+    let server = Server::start(vec![
+        (
+            "GET /users/someone/subscriptions",
+            Response::ok(
+                r#"<html><head><meta content="html-fallback-csrf" name="csrf-token" /></head><body>subs</body></html>"#,
+            ),
+        ),
+        ("GET /token_dispenser.json", Response::new(429)),
+    ]);
+    let mut session = AccountSession::new(&config_for(&server)).expect("session");
+    let state = session
+        .import("someone", complete_jar())
+        .await
+        .expect("import falls back to HTML CSRF token");
+    assert_eq!(state, SessionState::Active);
+    assert_eq!(session.csrf_token().expect("token"), "html-fallback-csrf");
+}

@@ -211,19 +211,33 @@ impl Client {
 
     pub async fn post_form(&mut self, path: &str, fields: &[(&str, &str)]) -> Result<Response> {
         let body = form_urlencode(fields);
-        let request = self
+        let origin = self.base_url.clone();
+        let referer = format!("{origin}/");
+        let mut request = self
             .request(Method::POST, path)
             .header(CONTENT_TYPE, FORM_CONTENT_TYPE)
-            .body(body);
+            .header("origin", &origin)
+            .header("referer", &referer);
+        if let Some((_, token)) = fields.iter().find(|(k, _)| *k == "authenticity_token") {
+            request = request.header("x-csrf-token", *token);
+        }
+        let request = request.body(body);
         self.send(request, Method::POST, path).await
     }
 
     pub async fn patch_form(&mut self, path: &str, fields: &[(&str, &str)]) -> Result<Response> {
         let body = form_urlencode(fields);
-        let request = self
+        let origin = self.base_url.clone();
+        let referer = format!("{origin}/");
+        let mut request = self
             .request(Method::PATCH, path)
             .header(CONTENT_TYPE, FORM_CONTENT_TYPE)
-            .body(body);
+            .header("origin", &origin)
+            .header("referer", &referer);
+        if let Some((_, token)) = fields.iter().find(|(k, _)| *k == "authenticity_token") {
+            request = request.header("x-csrf-token", *token);
+        }
+        let request = request.body(body);
         self.send(request, Method::PATCH, path).await
     }
 
@@ -237,8 +251,12 @@ impl Client {
     /// `/auth_error` while looking like a success.
     pub async fn delete_with_csrf(&mut self, path: &str, token: &str) -> Result<Response> {
         let body = form_urlencode(&[("authenticity_token", token)]);
+        let origin = self.base_url.clone();
+        let referer = format!("{origin}/");
         let request = self
             .request(Method::DELETE, path)
+            .header("origin", &origin)
+            .header("referer", &referer)
             .header("x-csrf-token", token)
             .header(CONTENT_TYPE, FORM_CONTENT_TYPE)
             .body(body);

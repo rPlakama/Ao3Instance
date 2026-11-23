@@ -63,18 +63,137 @@ fn hex_nibble(byte: u8) -> Option<u8> {
     }
 }
 
-/// Extracts `<meta name="csrf-token" content="…">`.
-///
-/// Rails' `csrf_meta_tag` emits that attribute order. If AO3 ever changes it the
-/// function returns `None` and the caller raises `CsrfMissing` — visible, not
-/// silently wrong.
+/// Extracts `<meta name="csrf-token" content="…">` regardless of attribute
+/// order or quote style, bounded to a single `<meta …>` tag so it never leaks
+/// into another meta tag's `content` attribute.
 pub fn csrf_token_from_meta(html: &str) -> Option<&str> {
-    let anchor = html.find("name=\"csrf-token\"")?;
-    let rest = &html[anchor..];
-    let content = rest.find("content=\"")?;
-    let tail = &rest[content + "content=\"".len()..];
-    let end = tail.find('"')?;
-    Some(&tail[..end])
+    let bytes = html.as_bytes();
+    let mut pos = 0;
+    while pos < bytes.len() {
+        let rel = html[pos..].find('<')?;
+        let start = pos + rel;
+        let close = html[start..].find('>')?;
+        let tag = &html[start..start + close + 1];
+        let tag_head = tag.get(1..5).unwrap_or_default();
+        if tag_head.eq_ignore_ascii_case("meta")
+            && tag
+                .get(5..6)
+                .is_some_and(|ch| ch.bytes().all(|b| b.is_ascii_whitespace()))
+            && attr_value(tag, "name") == Some("csrf-token")
+            && let Some(token) = attr_value(tag, "content")
+            && !token.is_empty()
+        {
+            return Some(token);
+        }
+        pos = start + close + 1;
+    }
+    None
+}
+
+/// Extracts a Rails CSRF token from either `<meta name="csrf-token" content="…">`
+/// or a form's `<input name="authenticity_token" value="…">`.
+pub fn csrf_token_from_html(html: &str) -> Option<String> {
+    if let Some(token) = csrf_token_from_meta(html) {
+        return Some(token.to_string());
+    }
+    let bytes = html.as_bytes();
+    let mut pos = 0;
+    while pos < bytes.len() {
+        let rel = html[pos..].find('<')?;
+        let start = pos + rel;
+        let close = html[start..].find('>')?;
+        let tag = &html[start..start + close + 1];
+        let tag_head = tag.get(1..6).unwrap_or_default();
+        if tag_head.eq_ignore_ascii_case("input")
+            && tag
+                .get(6..7)
+                .is_some_and(|ch| ch.bytes().all(|b| b.is_ascii_whitespace()))
+            && attr_value(tag, "name") == Some("authenticity_token")
+            && let Some(token) = attr_value(tag, "value")
+            && !token.is_empty()
+        {
+            return Some(token.to_string());
+        }
+        pos = start + close + 1;
+    }
+    None
+}
+
+/// Extracts the signed-in AO3 login name from a rendered AO3 page (`<nav id="greeting">`
+/// containing `href="/users/<login>"` or `Hi, <login>!`).
+pub fn logged_in_account_from_html(html: &str) -> Option<String> {
+    let greeting_start = html
+        .find("id=\"greeting\"")
+        .or_else(|| html.find("id='greeting'"))?;
+    let snippet = &html[greeting_start..(greeting_start + 2048).min(html.len())];
+    let marker = "/users/";
+    let mut search = snippet;
+    while let Some(idx) = search.find(marker) {
+        let rest = &search[idx + marker.len()..];
+        let end = rest
+            .find(['/', '"', '\'', '?', '#', ' ', '>'])
+            .unwrap_or(rest.len());
+        let candidate = &rest[..end];
+        if !candidate.is_empty() && !matches!(candidate, "login" | "logout" | "password") {
+            let decoded = percent_decode(candidate).unwrap_or_else(|| candidate.to_string());
+            if !decoded.is_empty() {
+                return Some(decoded);
+            }
+        }
+        search = &rest[end..];
+    }
+    None
+}
+
+/// Extracts an attribute value (`name="val"` or `name='val'`) from a single
+/// HTML start tag slice.
+fn attr_value<'a>(tag: &'a str, name: &str) -> Option<&'a str> {
+    let bytes = tag.as_bytes();
+    let name_bytes = name.as_bytes();
+    let mut i = 1;
+    while i < bytes.len() {
+        while i < bytes.len() && !bytes[i].is_ascii_whitespace() {
+            // Skip over quoted attribute values so we don't match inside them.
+            if bytes[i] == b'"' || bytes[i] == b'\'' {
+                let quote = bytes[i];
+                i += 1;
+                while i < bytes.len() && bytes[i] != quote {
+                    i += 1;
+                }
+            }
+            i += 1;
+        }
+        while i < bytes.len() && bytes[i].is_ascii_whitespace() {
+            i += 1;
+        }
+        if i + name_bytes.len() >= bytes.len() {
+            break;
+        }
+        if bytes[i..i + name_bytes.len()].eq_ignore_ascii_case(name_bytes) {
+            let mut j = i + name_bytes.len();
+            while j < bytes.len() && bytes[j].is_ascii_whitespace() {
+                j += 1;
+            }
+            if j < bytes.len() && bytes[j] == b'=' {
+                j += 1;
+                while j < bytes.len() && bytes[j].is_ascii_whitespace() {
+                    j += 1;
+                }
+                if j < bytes.len() && (bytes[j] == b'"' || bytes[j] == b'\'') {
+                    let quote = bytes[j];
+                    let val_start = j + 1;
+                    let mut val_end = val_start;
+                    while val_end < bytes.len() && bytes[val_end] != quote {
+                        val_end += 1;
+                    }
+                    if val_end < bytes.len() {
+                        return Some(&tag[val_start..val_end]);
+                    }
+                }
+            }
+        }
+    }
+    None
 }
 
 /// Extracts the text of the first `class="flash …"` block, if present.
@@ -122,6 +241,22 @@ mod tests {
     #[test]
     fn extracts_csrf_meta() {
         assert_eq!(csrf_token_from_meta(LOGIN_PAGE), Some("abc123+/="));
+        // Reversed attribute order (common in Chromium DOM serialization).
+        let reversed = r#"<meta content="rev-tok" name="csrf-token"><meta name="viewport" content="width=device-width">"#;
+        assert_eq!(csrf_token_from_meta(reversed), Some("rev-tok"));
+        // Single quotes and input fallback.
+        let form = r#"<form><input type="hidden" value="form-tok" name='authenticity_token'></form>"#;
+        assert_eq!(csrf_token_from_html(form).as_deref(), Some("form-tok"));
+    }
+
+    #[test]
+    fn extracts_logged_in_account_from_greeting() {
+        let html = r#"<nav id="greeting"><ul><li><a href="/users/rPlakama">Hi, rPlakama!</a></li></ul></nav>"#;
+        assert_eq!(
+            logged_in_account_from_html(html).as_deref(),
+            Some("rPlakama")
+        );
+        assert_eq!(logged_in_account_from_html("<html>logged out</html>"), None);
     }
 
     #[test]

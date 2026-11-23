@@ -112,8 +112,27 @@ pub fn session_page(
     ));
     body.push_str(
         "<h3 id=\"cookie-import\" class=\"heading\">Import cookies (recommended: no password custody)</h3>\
+         <form class=\"verbose\" method=\"post\" action=\"/session/import-file\" enctype=\"multipart/form-data\">\
+         <fieldset><legend>Import from Cookie File</legend>\
+         <p class=\"note\">Pick an exported browser cookie file using your system file dialog \
+         (Netscape <code>cookies.txt</code>, JSON export from Cookie-Editor / EditThisCookie, or a \
+         raw <code>Cookie:</code> header file). Only <code>archiveofourown.org</code> cookies are \
+         kept (including <code>remember_user_token</code> so logins survive updates) and stored \
+         encrypted (AES-256-GCM).</p>\
+         <dl>\
+         <dt><label for=\"import_cookie_file\">Cookie file</label></dt>\
+         <dd><input id=\"import_cookie_file\" type=\"file\" name=\"cookie_file\" \
+         accept=\".txt,.json,text/plain,application/json\" required></dd>\
+         <dt><label for=\"import_file_account\">AO3 login (optional)</label></dt>\
+         <dd><input id=\"import_file_account\" type=\"text\" name=\"account\" \
+         placeholder=\"Leave blank to auto-detect from AO3\" autocomplete=\"username\"></dd>\
+         <dt>Adult content</dt>\
+         <dd><label class=\"check\"><input type=\"checkbox\" name=\"adult\" value=\"1\"> \
+         This account may read adult content</label></dd></dl>\
+         <p class=\"submit actions\"><button type=\"submit\">Import cookie file</button></p>\
+         </fieldset></form>\
          <form class=\"verbose\" method=\"post\" action=\"/session/import\">\
-         <fieldset><legend>Import AO3 Cookies</legend>\
+         <fieldset><legend>Or Paste AO3 Cookies Manually</legend>\
          <p class=\"note\">In your browser, sign in to archiveofourown.org, open DevTools → \
          Application → Cookies, and copy the values of <code>_otwarchive_session</code> and \
          <code>user_credentials</code>. They are stored encrypted (AES-256-GCM) with a key \

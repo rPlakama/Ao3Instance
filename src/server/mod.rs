@@ -128,6 +128,7 @@ pub async fn router(config: &Config, store: Store) -> Result<Router> {
         .flatten()
         .filter(|css| !css.trim().is_empty());
 
+    let mut restored_imported = false;
     if let Some(saved) = store.load_session().await? {
         match Jar::decrypt(&key, &saved.jar_enc) {
             Ok(jar) => match session.restore(&saved.account, jar) {
@@ -135,6 +136,7 @@ pub async fn router(config: &Config, store: Store) -> Result<Router> {
                     if let (Some(id), Some(name)) = (saved.pseud_id, saved.pseud_name) {
                         session.set_pseud(Pseud { id, name });
                     }
+                    restored_imported = state == crate::ao3::session::SessionState::Imported;
                     eprintln!("session restored for {} ({state})", saved.account);
                 }
                 Err(error) => eprintln!("stored session refused: {error}"),
@@ -156,6 +158,26 @@ pub async fn router(config: &Config, store: Store) -> Result<Router> {
         skin_css: tokio::sync::RwLock::new(saved_skin_css),
         solved_search: tokio::sync::Mutex::new(None),
     });
+    if restored_imported {
+        let bg_state = Arc::clone(&state);
+        tokio::spawn(async move {
+            let result = {
+                let _solver_guard = bg_state.solver_lock.lock().await;
+                let mut session = bg_state.session.lock().await;
+                session.ensure_active().await
+            };
+            match result {
+                Ok(new_state) => {
+                    session::persist_if_complete(&bg_state).await;
+                    solver::sync_solver_state(&bg_state).await;
+                    eprintln!("restored session verified on startup ({new_state})");
+                }
+                Err(error) => {
+                    eprintln!("restored session startup check deferred: {error}");
+                }
+            }
+        });
+    }
     let app = Router::new()
         .route("/", get(reads::home))
         .route("/open", post(reads::open_work))
@@ -167,6 +189,7 @@ pub async fn router(config: &Config, store: Store) -> Result<Router> {
         .route("/progress/auto", post(reads::auto_progress))
         .route("/session", get(session::session_page))
         .route("/session/import", post(session::session_import))
+        .route("/session/import-file", post(session::session_import_file))
         .route("/session/login", post(session::session_login))
         .route("/session/probe", post(session::session_probe))
         .route("/session/adult", post(session::session_adult))
