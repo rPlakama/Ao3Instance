@@ -187,6 +187,18 @@ impl AccountSession {
 
     /// Logs in with an AO3 username/password (ADR-0001 option B).
     pub async fn login(&mut self, account: &str, password: SecretString) -> Result<SessionState> {
+        self.login_with_solver(account, password, false).await
+    }
+
+    /// Logs in with an AO3 username/password, optionally loading the initial
+    /// `GET /users/login` page through the local solver so Cloudflare clearance
+    /// and the login CSRF token are captured together.
+    pub async fn login_with_solver(
+        &mut self,
+        account: &str,
+        password: SecretString,
+        use_solver: bool,
+    ) -> Result<SessionState> {
         self.ensure_alive()?;
         let account = validate_account(account)?;
         self.account = account.to_string();
@@ -196,11 +208,29 @@ impl AccountSession {
         self.client.set_jar(Jar::new());
         self.state = SessionState::LoggedOut;
 
-        let login_page = match self.client.get(consts::LOGIN_PATH).await {
-            Ok(page) => page,
-            Err(err) => {
-                self.wipe();
-                return Err(err);
+        let login_page = if use_solver {
+            match self.solve_get(consts::LOGIN_PATH, false).await {
+                Ok(page) => page,
+                Err(Error::SolverUnavailable(_)) => match self.client.get(consts::LOGIN_PATH).await
+                {
+                    Ok(page) => page,
+                    Err(err) => {
+                        self.wipe();
+                        return Err(err);
+                    }
+                },
+                Err(err) => {
+                    self.wipe();
+                    return Err(err);
+                }
+            }
+        } else {
+            match self.client.get(consts::LOGIN_PATH).await {
+                Ok(page) => page,
+                Err(err) => {
+                    self.wipe();
+                    return Err(err);
+                }
             }
         };
         self.classify_pre_login(&login_page)?;

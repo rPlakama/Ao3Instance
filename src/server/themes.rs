@@ -82,6 +82,13 @@ pub(super) async fn clear(State(state): State<Arc<AppState>>) -> Handled<Redirec
 }
 
 async fn fetch_public_page(state: &AppState, path: &str) -> Option<String> {
+    if super::solver::solver_available(state).await {
+        match super::solver::fetch_via_solver(state, path, false).await {
+            Ok(response) if response.status == 200 => return Some(response.body),
+            Err(crate::error::Error::SolverUnavailable(_)) => {}
+            Ok(_) | Err(_) => return None,
+        }
+    }
     let response = {
         let mut session = state.session.lock().await;
         session
@@ -90,17 +97,5 @@ async fn fetch_public_page(state: &AppState, path: &str) -> Option<String> {
             .await
             .ok()?
     };
-    if response.status == 200 {
-        return Some(response.body);
-    }
-    let available = {
-        let reachable = state.solver_status.read().await.reachable;
-        let session = state.session.lock().await;
-        reachable && session.solver_mode() != crate::config::SolverMode::Off
-    };
-    if available {
-        super::solver::solve_search(state, path, false).await.ok()
-    } else {
-        None
-    }
+    (response.status == 200).then_some(response.body)
 }

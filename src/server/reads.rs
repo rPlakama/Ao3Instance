@@ -151,6 +151,21 @@ pub(super) async fn fetch_work_html(state: &AppState, id: &str) -> Handled<Strin
     // One request, user-initiated; `view_full_work` asks AO3 for all chapters in
     // a single page (ADR-0002: no crawling, no paging picks).
     let path = format!("/works/{id}?view_full_work=true");
+    if super::solver::solver_available(state).await {
+        match super::solver::fetch_via_solver(state, &path, true).await {
+            Ok(response) => match response.status {
+                200 => return Ok(response.body),
+                404 => return Err(AppError::NotFound),
+                status => {
+                    return Err(AppError::Upstream(format!(
+                        "Unexpected HTTP {status} from AO3 through the local solver."
+                    )));
+                }
+            },
+            Err(Error::SolverUnavailable(_)) => {}
+            Err(error) => return Err(AppError::from(error)),
+        }
+    }
     let (solver_reachable, send_cookies_allowed) = {
         let reachable = state.solver_status.read().await.reachable;
         let session = state.session.lock().await;
@@ -463,11 +478,32 @@ async fn perform_search(app: &AppState, query: SearchQuery) -> Handled<Html<Stri
     }
     if live.has_criteria() && !edit {
         let path = live.path(live.page);
-        let solver_available = {
-            let status = app.solver_status.read().await.reachable;
-            let session = app.session.lock().await;
-            status && session.solver_mode() != crate::config::SolverMode::Off
-        };
+        if super::solver::solver_available(app).await {
+            match super::solver::fetch_via_solver(app, &path, true).await {
+                Ok(response) if response.status == 200 => {
+                    let results = crate::ao3::search::parse_search_results(&response.body)
+                        .map_err(AppError::from)?;
+                    let page = super::page_context(
+                        app,
+                        "Search Results — AO3Instance",
+                        NavSection::Search,
+                    )
+                    .await;
+                    return Ok(Html(render::live_search_results_page(
+                        &page, &live, &results,
+                    )));
+                }
+                Ok(response) => {
+                    return Err(AppError::Upstream(format!(
+                        "Unexpected HTTP {} from AO3 search.",
+                        response.status
+                    )));
+                }
+                Err(Error::SolverUnavailable(_)) => {}
+                Err(error) => return Err(AppError::from(error)),
+            }
+        }
+        let solver_available = super::solver::solver_available(app).await;
         let send_cookies_allowed = {
             let session = app.session.lock().await;
             session.solver_may_receive_cookies()
@@ -479,28 +515,7 @@ async fn perform_search(app: &AppState, query: SearchQuery) -> Handled<Html<Stri
                 .get_with_timeout(&path, std::time::Duration::from_secs(10))
                 .await
         };
-        let response = match direct {
-            Ok(response) => response,
-            Err(error) => {
-                if solver_available
-                    && let Ok(html) =
-                        super::solver::solve_search(app, &live.path(live.page), false).await
-                {
-                    let results =
-                        crate::ao3::search::parse_search_results(&html).map_err(AppError::from)?;
-                    let page = super::page_context(
-                        app,
-                        "Search Results — AO3Instance",
-                        NavSection::Search,
-                    )
-                    .await;
-                    return Ok(Html(render::live_search_results_page(
-                        &page, &live, &results,
-                    )));
-                }
-                return Err(AppError::from(error));
-            }
-        };
+        let response = direct.map_err(AppError::from)?;
         if response.location_contains("/users/login") {
             return Err(AppError::from(crate::error::Error::LoggedOut));
         }
@@ -508,24 +523,6 @@ async fn perform_search(app: &AppState, query: SearchQuery) -> Handled<Html<Stri
             200 => {}
             403 | 503 | 429 => {
                 let target = live.path(live.page);
-                // A search is itself one explicit user request. If AO3 blocks
-                // the direct client, try the same page once through the local
-                // browser and render that exact result set.
-                if solver_available
-                    && let Ok(html) = super::solver::solve_search(app, &target, false).await
-                {
-                    let results =
-                        crate::ao3::search::parse_search_results(&html).map_err(AppError::from)?;
-                    let page = super::page_context(
-                        app,
-                        "Search Results — AO3Instance",
-                        NavSection::Search,
-                    )
-                    .await;
-                    return Ok(Html(render::live_search_results_page(
-                        &page, &live, &results,
-                    )));
-                }
                 let mut retry = format!("/works/search?{}", live.form_query());
                 if live.page > 1 {
                     retry.push_str(&format!("&page={}", live.page));
@@ -661,42 +658,43 @@ async fn live_home_html(state: &AppState, account: &str, refresh: bool) -> Optio
         }
     }
 
-    let response = {
-        let mut session = state.session.lock().await;
-        session
-            .client_mut()
-            .get_with_timeout("/", std::time::Duration::from_secs(10))
-            .await
-            .ok()
-    };
-    if let Some(response) = response
-        && response.status == 200
-    {
-        *state.home_cache.lock().await = Some(super::HomeCache {
-            account: account.to_string(),
-            html: response.body.clone(),
-            at: crate::time::now_secs(),
-        });
-        return Some(response.body);
+    let mut try_direct = true;
+    if super::solver::solver_available(state).await {
+        match super::solver::fetch_via_solver(state, "/", !account.is_empty()).await {
+            Ok(response) if response.status == 200 => {
+                *state.home_cache.lock().await = Some(super::HomeCache {
+                    account: account.to_string(),
+                    html: response.body.clone(),
+                    at: crate::time::now_secs(),
+                });
+                return Some(response.body);
+            }
+            Err(Error::SolverUnavailable(_)) => {}
+            Ok(_) | Err(_) => {
+                try_direct = false;
+            }
+        }
     }
 
-    let (solver_available, send_cookies) = {
-        let reachable = state.solver_status.read().await.reachable;
-        let session = state.session.lock().await;
-        (
-            reachable && session.solver_mode() != crate::config::SolverMode::Off,
-            !account.is_empty() && session.solver_may_receive_cookies(),
-        )
-    };
-    if solver_available
-        && let Ok(body) = super::solver::solve_search(state, "/", send_cookies).await
-    {
-        *state.home_cache.lock().await = Some(super::HomeCache {
-            account: account.to_string(),
-            html: body.clone(),
-            at: crate::time::now_secs(),
-        });
-        return Some(body);
+    if try_direct {
+        let response = {
+            let mut session = state.session.lock().await;
+            session
+                .client_mut()
+                .get_with_timeout("/", std::time::Duration::from_secs(10))
+                .await
+                .ok()
+        };
+        if let Some(response) = response
+            && response.status == 200
+        {
+            *state.home_cache.lock().await = Some(super::HomeCache {
+                account: account.to_string(),
+                html: response.body.clone(),
+                at: crate::time::now_secs(),
+            });
+            return Some(response.body);
+        }
     }
 
     let stale = state

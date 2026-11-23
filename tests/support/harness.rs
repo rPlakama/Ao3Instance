@@ -24,6 +24,7 @@ pub fn config_for(dir: &Path, base: &str, writes: bool) -> Config {
             dir.to_str().expect("utf8 dir").to_string(),
         ),
         ("AO3I_MIN_SPACING_MS", "0".to_string()),
+        ("AO3I_FLARESOLVERR", "off".to_string()),
     ];
     if writes {
         pairs.push(("AO3I_WRITE_ENABLED", "true".to_string()));

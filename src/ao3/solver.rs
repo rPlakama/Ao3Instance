@@ -237,6 +237,13 @@ impl Solver {
             return Err(Error::SolverBodyCap);
         }
 
+        let solution_url = solution.url.unwrap_or_default();
+        if solution_url.starts_with("chrome-error://") {
+            return Err(Error::SolverFailed(
+                "browser could not reach upstream".into(),
+            ));
+        }
+
         Ok(SolveOutcome {
             status: solution.status.unwrap_or(200),
             html,
@@ -247,7 +254,7 @@ impl Solver {
                 .map(Into::into)
                 .collect(),
             user_agent: solution.user_agent.unwrap_or_default(),
-            solution_url: solution.url.unwrap_or_default(),
+            solution_url,
             latency_ms: u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX),
         })
     }

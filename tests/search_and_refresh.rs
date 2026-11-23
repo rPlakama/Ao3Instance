@@ -26,6 +26,7 @@ fn config_for(dir: &std::path::Path, base: &str) -> Config {
         ("AO3I_DATA_DIR", dir.to_str().expect("utf8 dir")),
         ("XDG_CONFIG_HOME", dir.to_str().expect("utf8 dir")),
         ("AO3I_MIN_SPACING_MS", "0"),
+        ("AO3I_FLARESOLVERR", "off"),
     ])
     .expect("config")
 }

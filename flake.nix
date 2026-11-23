@@ -114,6 +114,30 @@
           grep -qx "DATA_DIR=/srv/ao3instance-test" ${values}
           grep -qx "PORTS=9123" ${values}
           grep -q "ENV=AO3I_BIND=0.0.0.0" ${values}
+          ! grep -q "^ENV=AO3I_FLARESOLVERR_URL=" ${values}
+          touch $out
+        '';
+
+        ao3instance-module-flaresolverr-port =
+        let
+          configured = (nixpkgs.lib.nixosSystem {
+            inherit system;
+            modules = [
+              self.nixosModules.default
+              {
+                services.ao3instance = {
+                  enable = true;
+                  flaresolverrPort = 8192;
+                };
+              }
+            ];
+          }).config;
+          values = pkgs.writeText "ao3instance-module-flaresolverr-port.txt" ''
+            ${builtins.concatStringsSep "\n" (map (value: "ENV=${value}") configured.systemd.services.ao3instance.serviceConfig.Environment)}
+          '';
+        in
+        pkgs.runCommand "check-ao3instance-module-flaresolverr-port" { } ''
+          grep -qx "ENV=AO3I_FLARESOLVERR_URL=http://127.0.0.1:8192" ${values}
           touch $out
         '';
 

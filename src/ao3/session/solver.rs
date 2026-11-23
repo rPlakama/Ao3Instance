@@ -60,7 +60,8 @@ impl AccountSession {
             return Err(Error::Killed);
         }
         let url = format!("{}{}", self.client.base_url(), path);
-        let cookies = if send_cookies && self.solver_send_cookies {
+        let sent_cookies = send_cookies && self.solver_send_cookies;
+        let cookies = if sent_cookies {
             jar_cookie_pairs(self.client.jar())
         } else {
             Vec::new()
@@ -68,7 +69,7 @@ impl AccountSession {
         let outcome = self.solver.solve_get(&url, &cookies).await?;
 
         let final_path = sanitize_location(Some(&outcome.solution_url)).unwrap_or_default();
-        if final_path.starts_with("/users/login") {
+        if !path.starts_with(consts::LOGIN_PATH) && final_path.starts_with("/users/login") {
             return Err(Error::LoggedOut);
         }
         if final_path.starts_with("/lost_cookie") {
@@ -78,16 +79,15 @@ impl AccountSession {
             return Err(error);
         }
 
-        self.merge_solver_cookies(&outcome);
+        let jar_changed = self.merge_solver_cookies(&outcome, sent_cookies);
         Ok(Response {
             status: outcome.status,
             location: None,
             retry_after: None,
             body: outcome.html,
             set_cookies: Vec::new(),
-            // The browser may have rotated any cookie; dropping the CSRF token
-            // is always safe and is what a direct jar change would do.
-            jar_changed: true,
+            // Only signal jar rotation when AO3 cookies were merged back.
+            jar_changed,
             method: "GET".to_string(),
             path: sanitize_path(path),
             latency_ms: outcome.latency_ms,
@@ -98,10 +98,12 @@ impl AccountSession {
         })
     }
 
-    /// Merges only AO3-domain cookies back into the jar and, when Cloudflare
-    /// handed us a clearance, opens the scoped browser-UA window.
-    fn merge_solver_cookies(&mut self, outcome: &SolveOutcome) {
+    /// Captures Cloudflare clearance cookies into the scoped browser-UA window,
+    /// and merges AO3 cookies back into the jar only when the solver was handed
+    /// the session (or no complete session jar is installed yet).
+    fn merge_solver_cookies(&mut self, outcome: &SolveOutcome, sent_cookies: bool) -> bool {
         let host = base_host(self.client.base_url());
+        let merge_jar = sent_cookies || !self.client.jar().is_complete();
         let mut clearance_parts: Vec<String> = Vec::new();
         for cookie in &outcome.cookies {
             let domain_ok = cookie
@@ -121,22 +123,23 @@ impl AccountSession {
             if let Some(domain) = &cookie.domain {
                 header.push_str(&format!("; Domain={domain}"));
             }
-            self.client.jar_mut().apply(&header);
+            if merge_jar {
+                self.client.jar_mut().apply(&header);
+            }
             if cookie.name == "cf_clearance" || cookie.name == "__cf_bm" {
                 clearance_parts.push(format!("{}={}", cookie.name, cookie.value.expose()));
             }
         }
 
-        if clearance_parts.is_empty() || outcome.user_agent.is_empty() {
-            self.client.clear_clearance();
-            return;
+        if !clearance_parts.is_empty() && !outcome.user_agent.is_empty() {
+            let ttl = i64::try_from(consts::FLARESOLVERR_CLEARANCE_TTL.as_secs()).unwrap_or(0);
+            self.client.set_clearance(
+                &outcome.user_agent,
+                &clearance_parts.join("; "),
+                now_secs().saturating_add(ttl),
+            );
         }
-        let ttl = i64::try_from(consts::FLARESOLVERR_CLEARANCE_TTL.as_secs()).unwrap_or(0);
-        self.client.set_clearance(
-            &outcome.user_agent,
-            &clearance_parts.join("; "),
-            now_secs().saturating_add(ttl),
-        );
+        merge_jar
     }
 }
 

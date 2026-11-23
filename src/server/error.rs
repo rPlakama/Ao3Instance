@@ -18,9 +18,7 @@ pub(super) enum AppError {
     NotFound,
     Upstream(String),
     Unavailable(String),
-    /// Another solve is already running.
-    Conflict(String),
-    /// Local budget/cooldown, not an upstream limit.
+    /// Upstream rate limit through the local solver.
     TooManyRequests(String),
     /// AO3's edge refused a work; the page renders the explicit solve card.
     Blocked {
@@ -83,7 +81,6 @@ impl IntoResponse for AppError {
             ),
             Self::Upstream(message) => html_error(StatusCode::BAD_GATEWAY, &message),
             Self::Unavailable(message) => html_error(StatusCode::SERVICE_UNAVAILABLE, &message),
-            Self::Conflict(message) => html_error(StatusCode::CONFLICT, &message),
             Self::TooManyRequests(message) => html_error(StatusCode::TOO_MANY_REQUESTS, &message),
             Self::Internal(message) => html_error(StatusCode::INTERNAL_SERVER_ERROR, &message),
         }

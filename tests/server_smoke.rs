@@ -44,6 +44,7 @@ async fn app_opens_a_work_from_a_mock_upstream() {
         ("AO3I_DATA_DIR", dir.to_str().expect("utf8 temp dir")),
         ("XDG_CONFIG_HOME", dir.to_str().expect("utf8 temp dir")),
         ("AO3I_MIN_SPACING_MS", "0"),
+        ("AO3I_FLARESOLVERR", "off"),
         ("AO3I_PORT", "0"),
     ])
     .expect("config");
@@ -213,6 +214,7 @@ async fn unknown_cached_work_is_a_clean_404() {
         ("AO3I_DATA_DIR", dir.to_str().expect("utf8 temp dir")),
         ("XDG_CONFIG_HOME", dir.to_str().expect("utf8 temp dir")),
         ("AO3I_MIN_SPACING_MS", "0"),
+        ("AO3I_FLARESOLVERR", "off"),
     ])
     .expect("config");
     let pool = db::open(&config.db_file).await.expect("db");

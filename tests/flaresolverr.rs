@@ -47,6 +47,24 @@ fn solve_response(upstream_url: &str, work_id: &str) -> Response {
     Response::json(body.to_string())
 }
 
+fn solve_search_response(upstream_url: &str, path: &str) -> Response {
+    let html = std::fs::read_to_string("tests/fixtures/search_results.html").expect("fixture");
+    let body = json!({
+        "status": "ok",
+        "message": "",
+        "solution": {
+            "url": format!("{upstream_url}{path}"),
+            "status": 200,
+            "response": html,
+            "userAgent": "Mozilla/5.0 solver-browser",
+            "cookies": [
+                {"name": "cf_clearance", "value": "clear-secret", "domain": "127.0.0.1", "path": "/"}
+            ]
+        }
+    });
+    Response::json(body.to_string())
+}
+
 async fn serve(
     dir: &std::path::Path,
     upstream: &str,
@@ -86,7 +104,7 @@ async fn post_form(root: &str, path: &str, body: &str) -> reqwest::Response {
 }
 
 #[tokio::test]
-async fn solve_caches_the_page_and_keeps_the_clearance_secret() {
+async fn solver_is_always_used_when_available_and_keeps_clearance_secret() {
     let upstream = Server::start(vec![
         (
             "GET /works/777?view_full_work=true",
@@ -96,37 +114,37 @@ async fn solve_caches_the_page_and_keeps_the_clearance_secret() {
         ),
         (
             "GET /works/888?view_full_work=true",
-            Response::ok(fixture()),
+            Response::new(403),
         ),
     ]);
     let solver = Server::start_sequence(vec![(
         "POST /v1",
-        vec![probe_response(), solve_response(&upstream.url(), "777")],
+        vec![
+            probe_response(),
+            solve_response(&upstream.url(), "777"),
+            solve_response(&upstream.url(), "888"),
+        ],
     )]);
     let dir = support::temp_dir("solver-happy");
-    let (root, store, handle) = serve(&dir, &upstream.url(), &solver.url(), "on").await;
+    let (root, store, handle) = serve(&dir, &upstream.url(), &solver.url(), "auto").await;
 
     // Startup probe is the first solver call.
     assert_eq!(solver.requests().len(), 1, "one startup probe");
 
-    let blocked = post_form(&root, "/open", "id=777").await;
-    assert_eq!(blocked.status(), 502);
-    let body = blocked.text().await.expect("body");
-    assert!(body.contains("refused the request"), "{body}");
-    assert!(
-        body.contains("Solve &amp; cache this page") || body.contains("Solve & cache"),
-        "{body}"
-    );
-    assert_eq!(solver.requests().len(), 1, "no automatic solve");
-
-    let solved = post_form(&root, "/solve", "target=777&send_cookies=1").await;
-    assert_eq!(solved.status(), 200, "303 followed to the reader");
-    let body = solved.text().await.expect("reader");
+    // When the solver is available, /open uses it automatically without trying direct first.
+    let opened = post_form(&root, "/open", "id=777").await;
+    assert_eq!(opened.status(), 200, "303 followed to the reader");
+    let body = opened.text().await.expect("reader");
     assert!(
         body.contains("PLACEHOLDER: The Map and the Mirror"),
         "{body}"
     );
     assert!(body.contains("iframe"), "{body}");
+    assert!(
+        upstream.requests().is_empty(),
+        "direct upstream should not be called while solver is available"
+    );
+    assert_eq!(solver.requests().len(), 2, "probe + first work solve");
 
     let events = store.recent_solver_events(10).await.expect("events");
     assert_eq!(events.len(), 1, "{events:?}");
@@ -144,30 +162,49 @@ async fn solve_caches_the_page_and_keeps_the_clearance_secret() {
     assert!(!clearance.ciphertext.contains("session-secret"));
     assert!(clearance.expires_at > ao3instance::time::now_secs());
 
-    // The clearance window now rides on direct reads too.
-    let fresh = post_form(&root, "/open", "id=888").await;
-    assert_eq!(fresh.status(), 200);
-    let requests = upstream.requests();
-    let direct = requests
-        .iter()
-        .find(|request| request.path.contains("/works/888"))
-        .expect("direct fetch");
-    assert_eq!(
-        direct.header("user-agent"),
-        Some("Mozilla/5.0 solver-browser")
+    // Consecutive reads keep using the solver without a cooldown lockout.
+    let second = post_form(&root, "/open", "id=888").await;
+    assert_eq!(second.status(), 200);
+    assert!(
+        upstream.requests().is_empty(),
+        "direct upstream still unused while solver is available"
     );
-    let cookie = direct.header("cookie").unwrap_or_default();
-    assert!(cookie.contains("cf_clearance=clear-secret"), "{cookie}");
+    assert_eq!(solver.requests().len(), 3, "probe + two work solves");
 
-    // Cooldown: a second solve is refused before any solver traffic.
-    let solver_calls = solver.requests().len();
-    let again = post_form(&root, "/solve", "target=888").await;
-    assert_eq!(again.status(), 429);
-    assert_eq!(
-        solver.requests().len(),
-        solver_calls,
-        "budget must not call out"
+    handle.abort();
+    drop(std::fs::remove_dir_all(dir));
+}
+
+#[tokio::test]
+async fn search_always_uses_solver_when_available() {
+    let search_path = "/works/search?work_search%5Bquery%5D=mirror";
+    let upstream = Server::start(vec![(
+        format!("GET {search_path}"),
+        Response::new(429),
+    )]);
+    let solver = Server::start_sequence(vec![(
+        "POST /v1",
+        vec![
+            probe_response(),
+            solve_search_response(&upstream.url(), search_path),
+        ],
+    )]);
+    let dir = support::temp_dir("solver-search");
+    let (root, _store, handle) = serve(&dir, &upstream.url(), &solver.url(), "auto").await;
+
+    let response = http()
+        .get(format!("{root}/works/search?q=mirror"))
+        .send()
+        .await
+        .expect("search");
+    assert_eq!(response.status(), 200);
+    let body = response.text().await.expect("body");
+    assert!(body.contains("A Mirror of Small Things"), "{body}");
+    assert!(
+        upstream.requests().is_empty(),
+        "search should use the solver directly when available"
     );
+    assert_eq!(solver.requests().len(), 2, "probe + search solve");
 
     handle.abort();
     drop(std::fs::remove_dir_all(dir));
@@ -222,8 +259,7 @@ async fn captcha_is_typed_and_recorded() {
     let dir = support::temp_dir("solver-captcha");
     let (root, store, handle) = serve(&dir, &upstream.url(), &solver.url(), "on").await;
 
-    let _ = post_form(&root, "/open", "id=555").await;
-    let solve = post_form(&root, "/solve", "target=555").await;
+    let solve = post_form(&root, "/open", "id=555").await;
     assert_eq!(solve.status(), 502);
     let body = solve.text().await.expect("body");
     assert!(body.contains("captcha"), "{body}");

@@ -35,6 +35,18 @@ in
         only on trusted networks or put it behind a reverse proxy.
       '';
     };
+
+    flaresolverrPort = lib.mkOption {
+      type = lib.types.nullOr lib.types.port;
+      default = null;
+      example = 8191;
+      description = ''
+        Loopback TCP port of a host-provided FlareSolverr service. When set,
+        passes AO3I_FLARESOLVERR_URL=http://127.0.0.1:<port> to AO3Instance.
+        When null, AO3Instance uses its built-in default
+        (http://127.0.0.1:8191).
+      '';
+    };
   };
 
   config = lib.mkIf cfg.enable {
@@ -42,6 +54,10 @@ in
       {
         assertion = lib.hasPrefix "/" (toString cfg.dataDir);
         message = "services.ao3instance.dataDir must be an absolute path";
+      }
+      {
+        assertion = cfg.flaresolverrPort == null || cfg.flaresolverrPort > 0;
+        message = "services.ao3instance.flaresolverrPort must be a non-zero port";
       }
     ];
 
@@ -63,7 +79,10 @@ in
       description = "AO3Instance";
       wantedBy = [ "multi-user.target" ];
       wants = [ "network-online.target" ];
-      after = [ "network-online.target" ];
+      after = [
+        "network-online.target"
+        "flaresolverr.service"
+      ];
 
       serviceConfig = {
         Type = "simple";
@@ -71,10 +90,15 @@ in
         User = "ao3instance";
         Group = "ao3instance";
         WorkingDirectory = toString cfg.dataDir;
-        Environment = [
-          "AO3I_DATA_DIR=${toString cfg.dataDir}"
-          "AO3I_PORT=${toString cfg.port}"
-        ] ++ lib.optional cfg.openFirewall "AO3I_BIND=0.0.0.0";
+        Environment =
+          [
+            "AO3I_DATA_DIR=${toString cfg.dataDir}"
+            "AO3I_PORT=${toString cfg.port}"
+          ]
+          ++ lib.optional cfg.openFirewall "AO3I_BIND=0.0.0.0"
+          ++ lib.optional (
+            cfg.flaresolverrPort != null
+          ) "AO3I_FLARESOLVERR_URL=http://127.0.0.1:${toString cfg.flaresolverrPort}";
         Restart = "on-failure";
         RestartSec = 5;
         UMask = "0077";

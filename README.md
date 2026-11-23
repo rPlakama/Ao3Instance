@@ -64,8 +64,9 @@ Features:
   importing one stores its CSS locally as a custom theme; built-in themes clear
   the custom CSS again.
 - Structured HTTP diagnostics at `/diagnostics` (All / Upstream / Inbound).
-- An optional, explicit Cloudflare fallback that calls a **host-provided**
-  FlareSolverr; the project never builds, vendors or starts it.
+- Automatic use of a **host-provided** FlareSolverr whenever it is reachable
+  (falling back to direct HTTP when absent); the project never builds, vendors
+  or starts it.
 
 ## Running it
 
@@ -109,7 +110,9 @@ Configuration (environment, read once at startup): `AO3I_BIND`, `AO3I_PORT`,
 ```
 
 The module's settings are `dataDir` (where `ao3i.db` and `key` are written),
-`port`, and `openFirewall` (default `false`). With `openFirewall = true` the
+`port`, `openFirewall` (default `false`), and `flaresolverrPort` (default `null`,
+which lets AO3Instance use its built-in `http://127.0.0.1:8191` default; when
+set, passes `AO3I_FLARESOLVERR_URL=http://127.0.0.1:<port>`). With `openFirewall = true` the
 configured port is opened and the service binds to all interfaces; otherwise it
 is loopback-only. It creates a dedicated `ao3instance` system user. The app
 holds an AO3 session, so expose it only on trusted networks or behind a reverse

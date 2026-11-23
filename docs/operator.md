@@ -47,14 +47,14 @@ and must not be exposed to the open internet as-is.
 `AO3I_KEY_FILE` and `AO3I_DATA_DIR` cannot be set from a `.env` for security
 reasons; the app reads environment variables only.
 
-## Optional: Cloudflare fallback (host-provided FlareSolverr)
+## Host-provided FlareSolverr
 
-AO3's edge sometimes answers a read with `403`/`503`. With this service running,
-the work error page offers an explicit **Solve & cache this page** button. Live
-search is the one exception: if its single AO3 GET is blocked, the search handler
-may solve that exact result page once (same budget) and render it. The app
-never starts, installs or requires FlareSolverr; it only calls the local `/v1`
-API.
+Whenever a host-provided FlareSolverr is reachable (and `AO3I_FLARESOLVERR` is
+not `off`), AO3Instance always routes upstream reads (works, live search, live
+tag pages, home modules, public skins, and the initial login page) through it
+and falls back to the direct HTTP client only when FlareSolverr is absent or
+unreachable. The app never starts, installs or requires FlareSolverr; it only
+calls the local `/v1` API.
 
 On NixOS, one line makes it available to the system:
 
@@ -69,15 +69,17 @@ its host can reach. A container/bridge address needs
 
 Limits and behaviour:
 
-- One solve at a time, 5 min cooldown, 6 successful solves per rolling hour.
-- Reads only. Writes never go through the solver.
-- The AO3 session is sent to the browser only when both
-  `AO3I_FLARESOLVERR_SEND_COOKIES=true` and the user ticks the per-solve box.
+- Serialized one solve at a time (no parallel Chromium launches).
+- Reads only. Writes keep the direct client (riding on any captured Cloudflare
+  clearance).
+- The AO3 session is sent to the browser only when
+  `AO3I_FLARESOLVERR_SEND_COOKIES=true`.
 - The returned clearance is encrypted at rest and dropped on the next `403`;
   it is never displayed. `/diagnostics` shows reachability, version, clearance
   age and recent outcomes (never the cookie).
 - Set `AO3I_FLARESOLVERR=off` to disable the whole path; `auto` stays quiet when
-  the service is absent, `on` also warns about it in `/diagnostics`.
+  the service is absent and re-probes periodically, `on` also warns about it in
+  `/diagnostics`.
 
 ## Pages
 
@@ -101,13 +103,15 @@ so use `/themes/clear` to return to the built-in look.
 ## NixOS module
 
 `nixosModules.default` defines `services.ao3instance.dataDir`,
-`services.ao3instance.port` and `services.ao3instance.openFirewall`:
+`services.ao3instance.port`, `services.ao3instance.openFirewall`, and
+`services.ao3instance.flaresolverrPort`:
 
 ```nix
 services.ao3instance = {
   enable = true;
   dataDir = "/var/lib/ao3instance";
   port = 8099;
+  flaresolverrPort = 8191; # optional; sets AO3I_FLARESOLVERR_URL=http://127.0.0.1:<port>
 };
 ```
 

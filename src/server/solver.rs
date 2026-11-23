@@ -1,9 +1,10 @@
-//! The explicit flare-solver fallback and the diagnostics page.
+//! Host-provided FlareSolverr transport and diagnostics page.
 //!
-//! `POST /solve` is the only place a solve can start: the user presses a button
-//! on an edge-block error page. Nothing here runs on a `GET`, in the background,
-//! or for a write. The local budget (cooldown + rolling hour) and a single-flight
-//! lock keep one Chromium per solve and stop a clicked-again loop.
+//! When the local FlareSolverr is reachable (and `AO3I_FLARESOLVERR` is not
+//! `off`), read routes always send upstream `GET`s through it and fall back to
+//! the direct client only when the solver is absent or unreachable. Writes keep
+//! the direct client (riding on any captured Cloudflare clearance). The
+//! single-flight lock serializes solver requests so one Chromium runs at a time.
 
 use std::sync::Arc;
 use std::time::Instant;
@@ -17,6 +18,7 @@ use serde::Deserialize;
 use super::AppState;
 use super::error::{AppError, Handled};
 use super::reads::{cache_work_html, normalize_work_id};
+use crate::ao3::client::Response as UpstreamResponse;
 use crate::config::SolverMode;
 use crate::consts;
 use crate::crypto::AAD_SOLVER;
@@ -24,6 +26,9 @@ use crate::diag::{HttpDirection, HttpErrorEvent, Transport};
 use crate::error::Error as CoreError;
 use crate::render::{DiagnosticsView, NavSection, diagnostics_page};
 use crate::time::now_secs;
+
+/// How long to wait before re-probing an unreachable local solver.
+const SOLVER_REPROBE_INTERVAL_SECS: i64 = 30;
 
 #[derive(Deserialize)]
 pub(super) struct SolveForm {
@@ -87,59 +92,22 @@ pub(super) async fn solve(
         )
     })?;
 
-    let _guard = state.solver_lock.try_lock().map_err(|_| {
-        AppError::Conflict("A solve is already running; wait for it to finish.".into())
-    })?;
-    enforce_budget(&state).await?;
-
     if let SolveTarget::Search(path) = target {
         let next = local_search_return(form.next.as_deref())?;
         let send_cookies = form.send_cookies.is_some();
-        let started = Instant::now();
-        let result = {
-            let mut session = state.session.lock().await;
-            session.solve_get(&path, send_cookies).await
-        };
-        let latency_ms = elapsed_ms(started);
-        return match result {
-            Ok(response) if response.status == 200 => {
-                state
-                    .store
-                    .record_solver_event(
-                        "solved",
-                        &path,
-                        Some(200),
-                        Some(latency_ms),
-                        consts::SOLVER_EVENT_RETENTION,
-                    )
-                    .await?;
-                persist_clearance(&state).await?;
-                let separator = if next.contains('?') { '&' } else { '?' };
-                let redirect = format!("{next}{separator}solved=1");
-                *state.solved_search.lock().await = Some(super::SolvedSearch {
-                    html: response.body,
-                    at: now_secs(),
-                });
-                Ok(Redirect::to(&redirect))
-            }
-            Ok(response) => {
-                state
-                    .store
-                    .record_solver_event(
-                        "failed",
-                        &path,
-                        Some(response.status),
-                        Some(latency_ms),
-                        consts::SOLVER_EVENT_RETENTION,
-                    )
-                    .await?;
-                Err(status_error(response.status))
-            }
-            Err(error) => {
-                record_failure(&state, &path, &error, latency_ms).await?;
-                Err(AppError::from(error))
-            }
-        };
+        let response = fetch_via_solver(&state, &path, send_cookies)
+            .await
+            .map_err(AppError::from)?;
+        if response.status == 200 {
+            let separator = if next.contains('?') { '&' } else { '?' };
+            let redirect = format!("{next}{separator}solved=1");
+            *state.solved_search.lock().await = Some(super::SolvedSearch {
+                html: response.body,
+                at: now_secs(),
+            });
+            return Ok(Redirect::to(&redirect));
+        }
+        return Err(status_error(response.status));
     }
 
     let SolveTarget::Work(id) = target else {
@@ -147,60 +115,54 @@ pub(super) async fn solve(
     };
     let path = format!("/works/{id}?view_full_work=true");
     let send_cookies = form.send_cookies.is_some();
-    let started = Instant::now();
-    let result = {
-        let mut session = state.session.lock().await;
-        session.solve_get(&path, send_cookies).await
-    };
-    let latency_ms = elapsed_ms(started);
-
-    match result {
-        Ok(response) if response.status == 200 => {
-            state
-                .store
-                .record_solver_event(
-                    "solved",
-                    &path,
-                    Some(200),
-                    Some(latency_ms),
-                    consts::SOLVER_EVENT_RETENTION,
-                )
-                .await?;
-            persist_clearance(&state).await?;
-            let existing = state.store.get_work(&id).await?;
-            cache_work_html(&state, &id, response.body, existing).await
-        }
-        Ok(response) => {
-            state
-                .store
-                .record_solver_event(
-                    "failed",
-                    &path,
-                    Some(response.status),
-                    Some(latency_ms),
-                    consts::SOLVER_EVENT_RETENTION,
-                )
-                .await?;
-            Err(status_error(response.status))
-        }
-        Err(error) => {
-            record_failure(&state, &path, &error, latency_ms).await?;
-            Err(AppError::from(error))
-        }
+    let response = fetch_via_solver(&state, &path, send_cookies)
+        .await
+        .map_err(AppError::from)?;
+    if response.status == 200 {
+        let existing = state.store.get_work(&id).await?;
+        cache_work_html(&state, &id, response.body, existing).await
+    } else {
+        Err(status_error(response.status))
     }
 }
 
-/// One solver GET for a search, used only because the user submitted a search.
-/// The caller renders the returned page immediately; nothing is cached.
-pub(super) async fn solve_search(
+/// True when the local FlareSolverr is enabled and reachable. Re-probes if the
+/// solver was previously unreachable and the reprobe interval has elapsed.
+pub(super) async fn solver_available(state: &AppState) -> bool {
+    let mode = {
+        let session = state.session.lock().await;
+        session.solver_mode()
+    };
+    if mode == SolverMode::Off {
+        return false;
+    }
+    let (reachable, checked_at) = {
+        let status = state.solver_status.read().await;
+        (status.reachable, status.checked_at)
+    };
+    if reachable {
+        return true;
+    }
+    if now_secs().saturating_sub(checked_at) < SOLVER_REPROBE_INTERVAL_SECS {
+        return false;
+    }
+    let refreshed = {
+        let session = state.session.lock().await;
+        session.probe_solver().await
+    };
+    let is_reachable = refreshed.reachable;
+    *state.solver_status.write().await = refreshed;
+    is_reachable
+}
+
+/// Runs one upstream `GET` through the local FlareSolverr, serializing solver
+/// calls so at most one browser solve runs at a time.
+pub(super) async fn fetch_via_solver(
     state: &AppState,
     path: &str,
     send_cookies: bool,
-) -> Handled<String> {
-    let _guard = state.solver_lock.try_lock().map_err(|_| {
-        AppError::Conflict("A solve is already running; wait for it to finish.".into())
-    })?;
-    enforce_budget(state).await?;
+) -> std::result::Result<UpstreamResponse, CoreError> {
+    let _guard = state.solver_lock.lock().await;
     let started = Instant::now();
     let result = {
         let mut session = state.session.lock().await;
@@ -208,60 +170,44 @@ pub(super) async fn solve_search(
     };
     let latency_ms = elapsed_ms(started);
     match result {
-        Ok(response) if response.status == 200 => {
-            state
-                .store
-                .record_solver_event(
-                    "solved",
-                    path,
-                    Some(200),
-                    Some(latency_ms),
-                    consts::SOLVER_EVENT_RETENTION,
-                )
-                .await?;
-            persist_clearance(state).await?;
-            Ok(response.body)
-        }
         Ok(response) => {
-            state
+            let outcome = if response.status == 200 {
+                "solved"
+            } else {
+                "failed"
+            };
+            if let Err(err) = state
                 .store
                 .record_solver_event(
-                    "failed",
+                    outcome,
                     path,
                     Some(response.status),
                     Some(latency_ms),
                     consts::SOLVER_EVENT_RETENTION,
                 )
-                .await?;
-            Err(status_error(response.status))
+                .await
+            {
+                eprintln!("record solver event: {err}");
+            }
+            if response.status == 200
+                && let Err(err) = persist_clearance(state).await
+            {
+                eprintln!("persist solver clearance: {err}");
+            }
+            Ok(response)
         }
         Err(error) => {
-            record_failure(state, path, &error, latency_ms).await?;
-            Err(AppError::from(error))
+            if matches!(error, CoreError::SolverUnavailable(_)) {
+                let mut status = state.solver_status.write().await;
+                status.reachable = false;
+                status.checked_at = now_secs();
+            }
+            if let Err(err) = record_failure(state, path, &error, latency_ms).await {
+                eprintln!("record solver failure: {err}");
+            }
+            Err(error)
         }
     }
-}
-
-/// Cooldown and rolling-hour budget, checked before any solver traffic.
-pub(super) async fn enforce_budget(state: &AppState) -> Handled<()> {
-    let now = now_secs();
-    let cooldown = i64::try_from(consts::FLARESOLVERR_COOLDOWN.as_secs()).unwrap_or(0);
-    if let Some(last) = state.store.last_solved_at().await? {
-        let wait = cooldown.saturating_sub(now.saturating_sub(last));
-        if wait > 0 {
-            return Err(AppError::TooManyRequests(format!(
-                "A solve already ran recently; wait {wait}s before another."
-            )));
-        }
-    }
-    let solves = state.store.solves_since(now.saturating_sub(3_600)).await?;
-    if solves >= consts::FLARESOLVERR_MAX_SOLVES_PER_HOUR {
-        return Err(AppError::TooManyRequests(format!(
-            "Local solve budget reached ({solves}/{} this hour); try again later.",
-            consts::FLARESOLVERR_MAX_SOLVES_PER_HOUR
-        )));
-    }
-    Ok(())
 }
 
 /// Writes the failed outcome to both ledgers and one redacted diagnostic event.
@@ -270,7 +216,7 @@ async fn record_failure(
     path: &str,
     error: &CoreError,
     latency_ms: u64,
-) -> Handled<()> {
+) -> crate::error::Result<()> {
     let status = match error {
         CoreError::BlockedByEdge { status } => Some(*status),
         CoreError::RateLimited { .. } => Some(429),
@@ -322,16 +268,13 @@ async fn record_failure(
 }
 
 /// Encrypts and stores the clearance the browser handed back.
-async fn persist_clearance(state: &AppState) -> Handled<()> {
+pub(super) async fn persist_clearance(state: &AppState) -> crate::error::Result<()> {
     let snapshot = {
         let session = state.session.lock().await;
         session.clearance_snapshot()
     };
     if let Some((user_agent, cookie_header, expires_at)) = snapshot {
-        let ciphertext = state
-            .key
-            .encrypt(AAD_SOLVER, &cookie_header)
-            .map_err(AppError::from)?;
+        let ciphertext = state.key.encrypt(AAD_SOLVER, &cookie_header)?;
         state
             .store
             .save_solver_clearance(&ciphertext, &user_agent, expires_at)

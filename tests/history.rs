@@ -22,6 +22,7 @@ async fn serve(dir: &std::path::Path) -> (String, Store, tokio::task::JoinHandle
             dir.to_str().expect("utf8 dir").to_string(),
         ),
         ("AO3I_MIN_SPACING_MS", "0".to_string()),
+        ("AO3I_FLARESOLVERR", "off".to_string()),
     ])
     .expect("config");
     let pool = db::open(&config.db_file).await.expect("db");

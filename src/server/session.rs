@@ -112,6 +112,8 @@ pub(super) async fn session_import(
     jar.apply(&format!("user_credentials={credentials_cookie}; Path=/"));
     adult_cookie_jar(&mut jar, form.adult.is_some());
 
+    warm_solver_clearance(&state).await;
+
     let mut session = state.session.lock().await;
     match session.import(&account, jar).await {
         Ok(SessionState::Active) => {
@@ -146,27 +148,40 @@ pub(super) async fn session_login(
     if account.is_empty() {
         return Err(AppError::BadRequest("AO3 login is empty".into()));
     }
-    let mut session = state.session.lock().await;
-    match session
-        .login(&account, SecretString::new(form.password))
-        .await
-    {
-        Ok(SessionState::Active) => {
-            adult_cookie_jar(session.client_mut().jar_mut(), form.adult.is_some());
-            persist_session(&state, &session)
-                .await
-                .map_err(AppError::from)?;
-            Ok(redirect_session("ok", "Signed in to AO3."))
+    let use_solver = super::solver::solver_available(&state).await;
+    let outcome = {
+        let _solver_guard = if use_solver {
+            Some(state.solver_lock.lock().await)
+        } else {
+            None
+        };
+        let mut session = state.session.lock().await;
+        let result = session
+            .login_with_solver(&account, SecretString::new(form.password), use_solver)
+            .await;
+        match result {
+            Ok(SessionState::Active) => {
+                adult_cookie_jar(session.client_mut().jar_mut(), form.adult.is_some());
+                persist_session(&state, &session)
+                    .await
+                    .map_err(AppError::from)?;
+                Ok(redirect_session("ok", "Signed in to AO3."))
+            }
+            Ok(other) => Ok(redirect_session(
+                "error",
+                &format!("Signed in, but the session is not active: {other}."),
+            )),
+            Err(error) => Ok(redirect_session("error", &format!("Login failed: {error}"))),
         }
-        Ok(other) => Ok(redirect_session(
-            "error",
-            &format!("Signed in, but the session is not active: {other}."),
-        )),
-        Err(error) => Ok(redirect_session("error", &format!("Login failed: {error}"))),
+    };
+    if use_solver && let Err(err) = super::solver::persist_clearance(&state).await {
+        eprintln!("persist solver clearance: {err}");
     }
+    outcome
 }
 
 pub(super) async fn session_probe(State(state): State<Arc<AppState>>) -> Handled<Redirect> {
+    warm_solver_clearance(&state).await;
     let mut session = state.session.lock().await;
     match session.probe().await {
         Ok(SessionState::Active) => {
@@ -183,6 +198,18 @@ pub(super) async fn session_probe(State(state): State<Arc<AppState>>) -> Handled
             "error",
             &format!("Session check failed: {error}"),
         )),
+    }
+}
+
+/// Captures a fresh Cloudflare clearance via the local solver when available
+/// and none is active yet, so subsequent authenticated checks carry it.
+async fn warm_solver_clearance(state: &AppState) {
+    let has_clearance = {
+        let session = state.session.lock().await;
+        session.clearance_snapshot().is_some()
+    };
+    if !has_clearance && super::solver::solver_available(state).await {
+        drop(super::solver::fetch_via_solver(state, "/", false).await);
     }
 }
 
