@@ -177,7 +177,7 @@ async fn progress_is_saved_listed_and_offered_as_resume() {
         .await
         .expect("reader body");
     assert!(reader.contains("71% read"), "{reader}");
-    assert!(reader.contains("resume=42"), "{reader}");
+    assert!(reader.contains("data-resume=\"42\""), "{reader}");
 
     // The iframe beacon endpoint accepts a clamped automatic update.
     let beacon = client

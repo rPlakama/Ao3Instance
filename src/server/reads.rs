@@ -22,9 +22,8 @@ use crate::store::sha256_hex;
 
 /// CSP for the chapter iframe: no scripts, no forms, inline styles only, images
 /// from https only. Author content never runs in the app's origin.
-const CHAPTER_CSP: &str = "default-src 'none'; style-src 'unsafe-inline'; \
-     script-src 'unsafe-inline'; img-src https: data:; font-src data:; base-uri 'none'; \
-     form-action 'none'; frame-ancestors 'self'";
+const CHAPTER_CSP: &str = "default-src 'none'; style-src 'unsafe-inline'; img-src https: data:; \
+     font-src data:; base-uri 'none'; form-action 'none'; frame-ancestors 'self'";
 
 #[derive(Deserialize)]
 pub(super) struct HomeQuery {
@@ -301,7 +300,6 @@ pub(super) async fn read_work(
 #[derive(Deserialize)]
 pub(super) struct ChapterQuery {
     skin: Option<String>,
-    resume: Option<i64>,
 }
 
 pub(super) async fn read_chapter(
@@ -319,9 +317,7 @@ pub(super) async fn read_chapter(
         Some("reversi") => "reversi",
         _ => "default",
     };
-    let resume = query.resume.unwrap_or(0).clamp(0, 100);
-    let mut response =
-        Html(render::chapter_document(&work.title, chapter, skin, resume)).into_response();
+    let mut response = Html(render::chapter_document(&work.title, chapter, skin)).into_response();
     let headers = response.headers_mut();
     headers.insert(
         header::CONTENT_TYPE,

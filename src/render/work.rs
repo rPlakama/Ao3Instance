@@ -301,11 +301,11 @@ pub fn read_page(
                 ));
                 let resume = resume_pct.filter(|_| chapter.idx == current).unwrap_or(0);
                 body.push_str(&format!(
-                    "<iframe class=\"chapter\" sandbox=\"allow-scripts\" \
+                    "<iframe class=\"chapter\" sandbox=\"allow-same-origin\" \
                      referrerpolicy=\"no-referrer\" data-work-id=\"{id}\" \
                      data-chapter=\"{chapter_idx}\" data-total-chapters=\"{chapter_total}\" \
-                     title=\"Chapter {number} of {total}\" \
-                     src=\"/read/{id}/chapter/{chapter_idx}?v={fetched_at}&skin={skin}&resume={resume}\">\
+                     data-resume=\"{resume}\" title=\"Chapter {number} of {total}\" \
+                     src=\"/read/{id}/chapter/{chapter_idx}?v={fetched_at}&skin={skin}\">\
                      </iframe>",
                     number = position + 1,
                     total = total,
@@ -369,12 +369,7 @@ pub fn read_page(
 /// Iframes are separate documents: they do not inherit the parent page's
 /// palette, so the reader passes the active skin explicitly. Without this the
 /// chapter text would stay dark on a Reversi background.
-pub fn chapter_document(
-    work_title: &str,
-    chapter: &StoredChapter,
-    skin: &str,
-    resume_pct: i64,
-) -> String {
+pub fn chapter_document(work_title: &str, chapter: &StoredChapter, skin: &str) -> String {
     let skin = match skin {
         "reversi" => "reversi",
         _ => "default",
@@ -389,47 +384,6 @@ pub fn chapter_document(
             sanitize(notes)
         ));
     }
-    let progress_script = r#"<script>
-(function () {
-  var chapter = __CHAPTER__;
-  var resume = __RESUME__;
-  function maxScroll() {
-    return Math.max(0, document.documentElement.scrollHeight - window.innerHeight);
-  }
-  function percent() {
-    var m = maxScroll();
-    if (m <= 0) return 100;
-    return Math.min(100, Math.max(0, window.scrollY / m * 100));
-  }
-  function post() {
-    try {
-      parent.postMessage({type: "ao3i:progress", chapter: chapter, pct: percent()}, "*");
-    } catch (e) {}
-  }
-  window.addEventListener("load", function () {
-    setTimeout(function () {
-      if (resume > 0) {
-        var m = maxScroll();
-        if (m > 0) window.scrollTo(0, m * resume / 100);
-      }
-      post();
-    }, 80);
-  });
-  // Retry until the parent's listener is definitely attached.
-  [500, 1500, 3000].forEach(function (delay) { setTimeout(post, delay); });
-  window.addEventListener("message", function (event) {
-    if (event.data && event.data.type === "ao3i:request") post();
-  });
-  var raf = 0;
-  window.addEventListener("scroll", function () {
-    if (raf) return;
-    raf = requestAnimationFrame(function () { raf = 0; post(); });
-  }, {passive: true});
-  window.addEventListener("pagehide", post);
-})();
-</script>"#
-        .replace("__CHAPTER__", &chapter.idx.to_string())
-        .replace("__RESUME__", &resume_pct.clamp(0, 100).to_string());
     format!(
         "<!DOCTYPE html><html lang=\"en\" data-skin=\"{skin}\"><head><meta charset=\"utf-8\">\
          <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\
@@ -450,7 +404,7 @@ pub fn chapter_document(
          .notes-sep{{border:0;border-top:1px solid #ccc4;margin:1.5rem 0 1rem;}} \
          .notes{{font-size:.92rem;color:#8a857e;}} \
          blockquote{{border-left:3px solid #ccc4;margin:1rem 0;padding-left:1rem;color:#8a857e;}}</style>\
-         </head><body>{body}{progress_script}</body></html>",
+         </head><body>{body}</body></html>",
         escape(work_title)
     )
 }
@@ -486,7 +440,7 @@ mod tests {
             body_html: "<p>body</p><script>bad()</script>".into(),
             notes_html: Some("<p>note</p>".into()),
         };
-        let doc = chapter_document("Work <One>", &chapter, "default", 0);
+        let doc = chapter_document("Work <One>", &chapter, "default");
         assert!(doc.contains("Work &lt;One&gt;"));
         assert!(
             !doc.contains("<h3 class=\"chapter-title\""),
@@ -497,12 +451,12 @@ mod tests {
         assert!(doc.contains("Chapter notes"));
         assert!(doc.contains("data-skin=\"default\""));
 
-        let dark = chapter_document("w", &chapter, "reversi", 0);
+        let dark = chapter_document("w", &chapter, "reversi");
         assert!(dark.contains("data-skin=\"reversi\""));
         assert!(dark.contains(":root[data-skin=\"reversi\"] body{color:#eee;}"));
         assert_eq!(
-            chapter_document("w", &chapter, "neon", 0),
-            chapter_document("w", &chapter, "default", 0),
+            chapter_document("w", &chapter, "neon"),
+            chapter_document("w", &chapter, "default"),
             "unknown skins fall back to the light document"
         );
     }

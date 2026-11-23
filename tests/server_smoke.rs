@@ -121,7 +121,7 @@ async fn app_opens_a_work_from_a_mock_upstream() {
     assert!(reader.contains("/read/12345/chapter/1"));
     assert!(reader.contains("class=\"reading-progress\""), "{reader}");
     assert!(reader.contains("/assets/reader.js"), "{reader}");
-    assert!(reader.contains("sandbox=\"allow-scripts\""), "{reader}");
+    assert!(reader.contains("sandbox=\"allow-same-origin\""), "{reader}");
 
     let reader_js = http
         .get(format!("{root}/assets/reader.js"))
@@ -131,7 +131,7 @@ async fn app_opens_a_work_from_a_mock_upstream() {
     assert_eq!(reader_js.status(), 200);
     let js = reader_js.text().await.expect("reader js body");
     assert!(js.contains("/progress/auto"), "{js}");
-    assert!(js.contains("ao3i:progress"), "{js}");
+    assert!(js.contains("data-resume"), "{js}");
 
     // Chapter iframe document: sanitized, with its own CSP.
     let chapter = http
@@ -153,8 +153,8 @@ async fn app_opens_a_work_from_a_mock_upstream() {
     assert!(chapter_html.contains("</p>"), "chapter body is rendered");
     assert!(!chapter_html.contains("bad()"), "author scripts stripped");
     assert!(
-        chapter_html.contains("ao3i:progress"),
-        "our progress script is present"
+        !chapter_html.contains("<script"),
+        "the script-free same-origin iframe is tracked by the parent"
     );
 
     // Cache-first: re-opening the cached work must not touch the upstream.

@@ -1,5 +1,6 @@
-/* Local reading-position tracker. The chapter iframe posts scroll percentages;
-   this script saves them and updates the reader's progress bar. */
+/* Local reading-position tracker.
+   The chapter iframe is same-origin but script-free (sandbox="allow-same-origin"),
+   so this parent script can observe its scroll position directly. */
 (function () {
     "use strict";
     var frames = Array.prototype.slice.call(
@@ -38,14 +39,6 @@
         } catch (e) {}
     }
 
-    function requestProgress() {
-        frames.forEach(function (frame) {
-            try {
-                frame.contentWindow.postMessage({type: "ao3i:request"}, "*");
-            } catch (e) {}
-        });
-    }
-
     function schedule(chapter, pct) {
         paint(chapter, pct);
         pending = {
@@ -59,19 +52,50 @@
         }
     }
 
-    window.addEventListener("message", function (event) {
-        if (frames.indexOf(event.source) === -1) return;
-        var data = event.data;
-        if (!data || data.type !== "ao3i:progress") return;
-        var chapter = Number(data.chapter);
-        var pct = Number(data.pct);
-        if (!Number.isInteger(chapter) || chapter < 1 || !Number.isFinite(pct)) return;
-        schedule(chapter, pct);
-    });
+    function setup(frame) {
+        var win = frame.contentWindow;
+        if (!win) return;
+        var chapter = parseInt(frame.getAttribute("data-chapter"), 10);
+        if (!Number.isInteger(chapter) || chapter < 1) return;
+        var resume = Number(frame.getAttribute("data-resume")) || 0;
 
-    requestProgress();
-    window.setTimeout(requestProgress, 500);
-    window.setTimeout(requestProgress, 1500);
+        function maxScroll() {
+            var doc = frame.contentDocument;
+            if (!doc) return 0;
+            return Math.max(0, doc.documentElement.scrollHeight - win.innerHeight);
+        }
+
+        function percent() {
+            var m = maxScroll();
+            if (m <= 0) return 100;
+            return Math.min(100, Math.max(0, win.scrollY / m * 100));
+        }
+
+        function update() { schedule(chapter, percent()); }
+
+        function restore() {
+            if (resume > 0) {
+                var m = maxScroll();
+                if (m > 0) win.scrollTo(0, m * resume / 100);
+            }
+            update();
+        }
+
+        var raf = 0;
+        win.addEventListener("scroll", function () {
+            if (raf) return;
+            raf = window.requestAnimationFrame(function () { raf = 0; update(); });
+        }, {passive: true});
+
+        var doc = frame.contentDocument;
+        if (doc && doc.readyState === "complete") {
+            restore();
+        } else {
+            frame.addEventListener("load", restore, {once: true});
+        }
+    }
+
+    frames.forEach(setup);
 
     window.addEventListener("pagehide", function () {
         if (!pending) return;
