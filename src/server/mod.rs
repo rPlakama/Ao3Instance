@@ -97,6 +97,13 @@ pub async fn router(config: &Config, store: Store) -> Result<Router> {
         }
     }
     let solver_status = session.probe_solver().await;
+    let saved_skin = store
+        .get_setting("display.skin")
+        .await
+        .ok()
+        .flatten()
+        .filter(|skin| matches!(skin.as_str(), "auto" | "default" | "reversi"))
+        .unwrap_or_else(|| "default".to_string());
 
     if let Some(saved) = store.load_session().await? {
         match Jar::decrypt(&key, &saved.jar_enc) {
@@ -122,7 +129,7 @@ pub async fn router(config: &Config, store: Store) -> Result<Router> {
         diag_tx,
         solver_status: tokio::sync::RwLock::new(solver_status),
         solver_lock: tokio::sync::Mutex::new(()),
-        skin: tokio::sync::RwLock::new("default".to_string()),
+        skin: tokio::sync::RwLock::new(saved_skin),
         solved_search: tokio::sync::Mutex::new(None),
     });
     let app = Router::new()

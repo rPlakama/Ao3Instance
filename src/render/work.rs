@@ -388,7 +388,9 @@ pub fn chapter_document(work_title: &str, chapter: &StoredChapter, skin: &str) -
         "<!DOCTYPE html><html lang=\"en\" data-skin=\"{skin}\"><head><meta charset=\"utf-8\">\
          <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\
          <title>{} — chapter</title><style>\
-         :root{{color-scheme:light dark;}} \
+         :root{{color-scheme:light;}} \
+         :root[data-skin=\"auto\"]{{color-scheme:light dark;}} \
+         :root[data-skin=\"reversi\"]{{color-scheme:dark;}} \
          body{{margin:0;padding:0 1.25rem;color:#2a2a2a;background:transparent;\
          font:16px/1.7 Georgia,serif;}} \
          a{{color:#8c2f39;}} img{{max-width:100%;height:auto;}} \

@@ -50,8 +50,10 @@ Features:
   cache does not store media classifications.
 - Local-only **History** (`/history`): latest reads/caches with a range
   dropdown (`Today` / `Last 7 days` / `Everything`).
-- A reader with chapter jump and an **Entire Work** mode, plus classic and
-  Reversi display skins (`POST /skin`).
+- A reader with chapter jump, **Entire Work** mode and automatic progress/resume.
+- Appearance settings: **Auto** (system light/dark), **Classic** (light) and
+  **Reversi** (dark), persisted locally; choose them under
+  `/session#appearance` or from the footer.
 - Structured HTTP diagnostics at `/diagnostics` (All / Upstream / Inbound).
 - An optional, explicit Cloudflare fallback that calls a **host-provided**
   FlareSolverr; the project never builds, vendors or starts it.

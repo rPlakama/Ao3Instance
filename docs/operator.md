@@ -91,9 +91,10 @@ Limits and behaviour:
 `/users/login`, `/works/search` and `/works/{id}` mirror AO3 URLs; uncached
 works show an offline miss card instead of fetching on a `GET`.
 
-Display skins: the footer switches Classic / Reversi with `POST /skin` (a
-single-operator global preference); with no explicit choice, Reversi follows the
-OS `prefers-color-scheme`.
+Appearance: `/session#appearance` and the footer offer Auto (follow the OS
+`prefers-color-scheme`), Classic (always light) and Reversi (always dark) via
+`POST /skin`. The choice is stored in the local `settings` table and survives
+restarts; the default is Classic.
 
 ## First use
 

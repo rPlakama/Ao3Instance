@@ -8,6 +8,7 @@ mod access;
 mod errors;
 mod lists;
 mod session;
+mod settings;
 mod solver;
 #[cfg(test)]
 mod tests;

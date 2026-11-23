@@ -472,6 +472,36 @@ async fn skin_toggle_persists_and_required_tags_render() {
     assert!(chapter.contains("data-skin=\"reversi\""), "{chapter}");
     assert!(chapter.contains("color:#eee"), "light text for dark iframe");
 
+    let auto = client
+        .post(format!("{root}/skin"))
+        .header("content-type", "application/x-www-form-urlencoded")
+        .body("skin=auto")
+        .send()
+        .await
+        .expect("auto skin");
+    assert_eq!(auto.status(), 200);
+    let home = client.get(&root).send().await.expect("home auto");
+    assert!(
+        home.text()
+            .await
+            .expect("body")
+            .contains("data-skin=\"auto\"")
+    );
+    assert_eq!(
+        store.get_setting("display.skin").await.expect("setting"),
+        Some("auto".to_string())
+    );
+
+    let session = client
+        .get(format!("{root}/session"))
+        .send()
+        .await
+        .expect("session");
+    let session = session.text().await.expect("body");
+    assert!(session.contains("id=\"appearance\""), "{session}");
+    assert!(session.contains("value=\"auto\" checked"), "{session}");
+    assert!(session.contains("Theme settings"), "{session}");
+
     let bad = client
         .post(format!("{root}/skin"))
         .header("content-type", "application/x-www-form-urlencoded")

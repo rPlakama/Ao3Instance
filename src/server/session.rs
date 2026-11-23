@@ -234,6 +234,7 @@ mod tests {
 #[derive(Deserialize)]
 pub(super) struct SkinForm {
     skin: String,
+    next: Option<String>,
 }
 
 /// Single-operator display preference; the cookie-free global is deliberate.
@@ -244,14 +245,21 @@ pub(super) async fn skin(
     let skin = match form.skin.trim() {
         "reversi" => "reversi",
         "default" => "default",
+        "auto" => "auto",
         other => {
             return Err(AppError::BadRequest(format!(
-                "unknown skin {other:?}; expected default or reversi"
+                "unknown skin {other:?}; expected auto, default or reversi"
             )));
         }
     };
+    state.store.set_setting("display.skin", skin).await?;
     *state.skin.write().await = skin.to_string();
-    Ok(Redirect::to("/"))
+    let next = form
+        .next
+        .as_deref()
+        .filter(|next| next.starts_with('/') && !next.starts_with("//"))
+        .unwrap_or("/");
+    Ok(Redirect::to(next))
 }
 
 pub(super) async fn logout_confirm(State(state): State<Arc<AppState>>) -> Handled<Html<String>> {

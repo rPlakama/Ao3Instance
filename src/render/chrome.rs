@@ -273,9 +273,9 @@ fn navigation(ctx: &PageContext) -> String {
          <label class=\"landmark\" for=\"site_search\">Search</label>\
          <input class=\"text\" id=\"site_search\" type=\"search\" name=\"q\" \
          aria-describedby=\"site_search_tooltip\">\
+         <span class=\"submit actions\"><button type=\"submit\">Search</button></span>\
          <span class=\"tip\" role=\"tooltip\" id=\"site_search_tooltip\">tip: \
          <a href=\"/works/search?q=fluff%20sort%3Akudos\">fluff sort:kudos</a></span>\
-         <span class=\"submit actions\"><button type=\"submit\">Search</button></span>\
          </p></fieldset></form></li></ul>"
     )
 }
@@ -335,11 +335,15 @@ fn footer(ctx: &PageContext) -> String {
          <li><a href=\"/diagnostics\">{solver_state}</a></li></ul></div>\
          <div><h4>Display</h4><ul>\
          <li><form class=\"inline\" method=\"post\" action=\"/skin\">\
+         <input type=\"hidden\" name=\"skin\" value=\"auto\">\
+         <button type=\"submit\">Auto</button></form>\
+         <form class=\"inline\" method=\"post\" action=\"/skin\">\
          <input type=\"hidden\" name=\"skin\" value=\"default\">\
          <button type=\"submit\">Classic</button></form>\
          <form class=\"inline\" method=\"post\" action=\"/skin\">\
          <input type=\"hidden\" name=\"skin\" value=\"reversi\">\
          <button type=\"submit\">Reversi</button></form></li>\
+         <li><a href=\"/session#appearance\">Theme settings</a></li>\
          <li><a href=\"/\">Back to the start</a></li>\
          <li>Content belongs to its authors</li></ul></div>\
          </div></footer>",

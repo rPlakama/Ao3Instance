@@ -129,6 +129,13 @@ chapter iframe, and `/read/<id>` restores the saved chapter plus within-chapter
 scroll percentage. Home, `/reading` and the
 dashboard show overall percentages.
 
+**Mobile + appearance settings (2026-11-23):** narrow-phone header/nav/search
+rules were corrected (single-row logo/greeting, fixed-width dropdown panels,
+full-width search with inline button, full-width tip line), the accidental
+OS-dark button styling was scoped to auto/reversi skins, and appearance is now a
+persisted three-way setting (Auto / Classic / Reversi) exposed on the Session
+page and footer via `POST /skin` (`settings` table, migration 0012).
+
 **Known deviations (documented, not blockers):** required-tag marks are
 styled text badges rather than SVG artwork; the skin is a single-operator
 global preference rather than a per-browser cookie; a release/version bump is
