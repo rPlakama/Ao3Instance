@@ -708,3 +708,92 @@ async fn filtered_search_narrows_and_can_reorder() {
 
     drop(std::fs::remove_dir_all(&dir));
 }
+
+#[tokio::test]
+async fn page_cache_round_trip_freshness_and_invalidation() {
+    let (store, dir) = test_store("page-cache").await;
+
+    assert!(
+        store
+            .get_cached_page("someone", "/users/someone/bookmarks")
+            .await
+            .unwrap()
+            .is_none()
+    );
+
+    store
+        .put_cached_page("someone", "/users/someone/bookmarks", "<html>bm1</html>")
+        .await
+        .unwrap();
+    store
+        .put_cached_page(
+            "someone",
+            "/users/someone/bookmarks?page=2",
+            "<html>bm2</html>",
+        )
+        .await
+        .unwrap();
+    store
+        .put_cached_page("someone", "/users/someone/subscriptions", "<html>sub</html>")
+        .await
+        .unwrap();
+    store
+        .put_cached_page("", "/media", "<html>media</html>")
+        .await
+        .unwrap();
+
+    let hit = store
+        .get_cached_page("someone", "/users/someone/bookmarks")
+        .await
+        .unwrap()
+        .expect("cached bookmarks");
+    assert_eq!(hit.body, "<html>bm1</html>");
+    assert!(hit.is_fresh(hit.fetched_at + 1_799));
+    assert!(!hit.is_fresh(hit.fetched_at + 1_800));
+
+    // Prefix invalidation removes only the matching list pages for that account.
+    store
+        .invalidate_cached_prefix("someone", "/users/someone/bookmarks")
+        .await
+        .unwrap();
+    assert!(
+        store
+            .get_cached_page("someone", "/users/someone/bookmarks")
+            .await
+            .unwrap()
+            .is_none()
+    );
+    assert!(
+        store
+            .get_cached_page("someone", "/users/someone/bookmarks?page=2")
+            .await
+            .unwrap()
+            .is_none()
+    );
+    assert!(
+        store
+            .get_cached_page("someone", "/users/someone/subscriptions")
+            .await
+            .unwrap()
+            .is_some()
+    );
+
+    // Account invalidation removes all entries for that account, keeping signed-out cache.
+    store.invalidate_account_pages("someone").await.unwrap();
+    assert!(
+        store
+            .get_cached_page("someone", "/users/someone/subscriptions")
+            .await
+            .unwrap()
+            .is_none()
+    );
+    assert!(
+        store
+            .get_cached_page("", "/media")
+            .await
+            .unwrap()
+            .is_some()
+    );
+
+    drop(std::fs::remove_dir_all(&dir));
+}

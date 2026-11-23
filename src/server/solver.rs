@@ -22,13 +22,9 @@ use crate::ao3::client::Response as UpstreamResponse;
 use crate::config::SolverMode;
 use crate::consts;
 use crate::crypto::AAD_SOLVER;
-use crate::diag::{HttpDirection, HttpErrorEvent, Transport};
 use crate::error::Error as CoreError;
 use crate::render::{DiagnosticsView, NavSection, diagnostics_page};
 use crate::time::now_secs;
-
-/// How long to wait before re-probing an unreachable local solver.
-const SOLVER_REPROBE_INTERVAL_SECS: i64 = 30;
 
 #[derive(Deserialize)]
 pub(super) struct SolveForm {
@@ -129,30 +125,26 @@ pub(super) async fn solve(
 /// True when the local FlareSolverr is enabled and reachable. Re-probes if the
 /// solver was previously unreachable and the reprobe interval has elapsed.
 pub(super) async fn solver_available(state: &AppState) -> bool {
-    let mode = {
+    let (available, status) = {
+        let mut session = state.session.lock().await;
+        let available = session.solver_available().await;
+        (available, session.solver_status().clone())
+    };
+    *state.solver_status.write().await = status;
+    available
+}
+
+/// Syncs `AppState::solver_status` from the session and persists any newly
+/// captured Cloudflare clearance.
+pub(super) async fn sync_solver_state(state: &AppState) {
+    let status = {
         let session = state.session.lock().await;
-        session.solver_mode()
+        session.solver_status().clone()
     };
-    if mode == SolverMode::Off {
-        return false;
+    *state.solver_status.write().await = status;
+    if let Err(err) = persist_clearance(state).await {
+        eprintln!("persist solver clearance: {err}");
     }
-    let (reachable, checked_at) = {
-        let status = state.solver_status.read().await;
-        (status.reachable, status.checked_at)
-    };
-    if reachable {
-        return true;
-    }
-    if now_secs().saturating_sub(checked_at) < SOLVER_REPROBE_INTERVAL_SECS {
-        return false;
-    }
-    let refreshed = {
-        let session = state.session.lock().await;
-        session.probe_solver().await
-    };
-    let is_reachable = refreshed.reachable;
-    *state.solver_status.write().await = refreshed;
-    is_reachable
 }
 
 /// Runs one upstream `GET` through the local FlareSolverr, serializing solver
@@ -164,10 +156,12 @@ pub(super) async fn fetch_via_solver(
 ) -> std::result::Result<UpstreamResponse, CoreError> {
     let _guard = state.solver_lock.lock().await;
     let started = Instant::now();
-    let result = {
+    let (result, status) = {
         let mut session = state.session.lock().await;
-        session.solve_get(path, send_cookies).await
+        let result = session.solve_get(path, send_cookies).await;
+        (result, session.solver_status().clone())
     };
+    *state.solver_status.write().await = status;
     let latency_ms = elapsed_ms(started);
     match result {
         Ok(response) => {
@@ -197,11 +191,6 @@ pub(super) async fn fetch_via_solver(
             Ok(response)
         }
         Err(error) => {
-            if matches!(error, CoreError::SolverUnavailable(_)) {
-                let mut status = state.solver_status.write().await;
-                status.reachable = false;
-                status.checked_at = now_secs();
-            }
             if let Err(err) = record_failure(state, path, &error, latency_ms).await {
                 eprintln!("record solver failure: {err}");
             }
@@ -210,7 +199,8 @@ pub(super) async fn fetch_via_solver(
     }
 }
 
-/// Writes the failed outcome to both ledgers and one redacted diagnostic event.
+/// Writes the failed outcome to the solver event ledger (HTTP diagnostics are
+/// already emitted by `AccountSession::solve_request`).
 async fn record_failure(
     state: &AppState,
     path: &str,
@@ -252,18 +242,6 @@ async fn record_failure(
             consts::SOLVER_EVENT_RETENTION,
         )
         .await?;
-
-    let mut event = HttpErrorEvent::new(
-        HttpDirection::Upstream,
-        Transport::Solver,
-        "GET",
-        path,
-        diag_kind(error),
-        error.to_string(),
-    )
-    .with_latency(latency_ms);
-    event.status = status;
-    drop(state.diag_tx.try_send(event));
     Ok(())
 }
 
@@ -333,7 +311,7 @@ pub(super) async fn diagnostics(
 
 pub(super) async fn probe(State(state): State<Arc<AppState>>) -> Handled<Redirect> {
     let status = {
-        let session = state.session.lock().await;
+        let mut session = state.session.lock().await;
         session.probe_solver().await
     };
     *state.solver_status.write().await = status;
@@ -395,34 +373,6 @@ fn outcome_for(error: &CoreError) -> &'static str {
         | CoreError::UpstreamChanged(_)
         | CoreError::SolverFailed(_)
         | CoreError::SolverBodyCap => "failed",
-    }
-}
-
-fn diag_kind(error: &CoreError) -> &'static str {
-    match error {
-        CoreError::SolverCaptcha => "solver_captcha",
-        CoreError::SolverUnavailable(_) => "solver_unreachable",
-        CoreError::SolverBodyCap => "solver_body_cap",
-        CoreError::SolverDisabled
-        | CoreError::Config(_)
-        | CoreError::Io(_)
-        | CoreError::Store(_)
-        | CoreError::Crypto(_)
-        | CoreError::Network(_)
-        | CoreError::LoginRejected(_)
-        | CoreError::PasswordChangeRequired
-        | CoreError::LoggedOut
-        | CoreError::Validation(_)
-        | CoreError::SpamRejected
-        | CoreError::SessionIncomplete
-        | CoreError::CsrfMissing
-        | CoreError::CsrfExpired
-        | CoreError::LogoutFailed(_)
-        | CoreError::Killed
-        | CoreError::RateLimited { .. }
-        | CoreError::BlockedByEdge { .. }
-        | CoreError::UpstreamChanged(_)
-        | CoreError::SolverFailed(_) => "solver_error",
     }
 }
 

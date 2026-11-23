@@ -159,7 +159,8 @@ fn greeting(ctx: &PageContext) -> String {
          <li><a href=\"/dashboard\">My Dashboard</a></li>\
          <li><a href=\"/subscriptions\">My Subscriptions</a></li>\
          <li><a href=\"/bookmarks\">My Bookmarks</a></li>\
-         <li><a href=\"/reading\">Marked for Later</a></li>\
+         <li><a href=\"/reading\">My History</a></li>\
+         <li><a href=\"/reading?show=to-read\">Marked for Later</a></li>\
          <li><a href=\"/history\">Local History</a></li>\
          <li><a href=\"/session\">My Preferences</a></li>\
          <li><a href=\"/themes\">Site Skins</a></li>\
@@ -209,44 +210,32 @@ fn navigation(ctx: &PageContext) -> String {
         ctx.active,
         &[
             ("All Fandoms", "/fandoms", false),
-            (
-                "Anime & Manga",
-                "https://archiveofourown.org/media/Anime%20*a*%20Manga/fandoms",
-                true,
-            ),
+            ("Anime & Manga", "/media/Anime%20*a*%20Manga/fandoms", false),
             (
                 "Books & Literature",
-                "https://archiveofourown.org/media/Books%20*a*%20Literature/fandoms",
-                true,
+                "/media/Books%20*a*%20Literature/fandoms",
+                false,
             ),
             (
                 "Cartoons & Comics & Graphic Novels",
-                "https://archiveofourown.org/media/Cartoons%20*a*%20Comics%20*a*%20Graphic%20Novels/fandoms",
-                true,
+                "/media/Cartoons%20*a*%20Comics%20*a*%20Graphic%20Novels/fandoms",
+                false,
             ),
             (
                 "Celebrities & Real People",
-                "https://archiveofourown.org/media/Celebrities%20*a*%20Real%20People/fandoms",
-                true,
+                "/media/Celebrities%20*a*%20Real%20People/fandoms",
+                false,
             ),
-            ("Movies", "https://archiveofourown.org/media/Movies/fandoms", true),
-            (
-                "Music & Bands",
-                "https://archiveofourown.org/media/Music%20*a*%20Bands/fandoms",
-                true,
-            ),
-            ("Other Media", "https://archiveofourown.org/media/Other%20Media/fandoms", true),
-            ("Theater", "https://archiveofourown.org/media/Theater/fandoms", true),
-            ("TV Shows", "https://archiveofourown.org/media/TV%20Shows/fandoms", true),
-            (
-                "Video Games",
-                "https://archiveofourown.org/media/Video%20Games/fandoms",
-                true,
-            ),
+            ("Movies", "/media/Movies/fandoms", false),
+            ("Music & Bands", "/media/Music%20*a*%20Bands/fandoms", false),
+            ("Other Media", "/media/Other%20Media/fandoms", false),
+            ("Theater", "/media/Theater/fandoms", false),
+            ("TV Shows", "/media/TV%20Shows/fandoms", false),
+            ("Video Games", "/media/Video%20Games/fandoms", false),
             (
                 "Uncategorized Fandoms",
-                "https://archiveofourown.org/media/Uncategorized%20Fandoms/fandoms",
-                true,
+                "/media/Uncategorized%20Fandoms/fandoms",
+                false,
             ),
         ],
     ));

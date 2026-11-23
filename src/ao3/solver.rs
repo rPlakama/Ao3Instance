@@ -160,15 +160,10 @@ impl Solver {
     }
 
     /// Solves one `GET` in the local browser and returns the rendered page.
-    ///
-    /// `cookies` may only carry the AO3 jar when the caller has the operator's
-    /// and user's explicit permission; the payload is built without them
-    /// otherwise.
     pub async fn solve_get(&self, url: &str, cookies: &[(String, String)]) -> Result<SolveOutcome> {
         if self.mode == SolverMode::Off {
             return Err(Error::SolverDisabled);
         }
-        let started = Instant::now();
         let mut payload = json!({
             "cmd": "request.get",
             "url": url,
@@ -176,14 +171,34 @@ impl Solver {
             "disableMedia": true,
             "returnScreenshot": false,
         });
-        if !cookies.is_empty() {
-            let wire: Vec<serde_json::Value> = cookies
-                .iter()
-                .map(|(name, value)| json!({"name": name, "value": value}))
-                .collect();
-            payload["cookies"] = serde_json::Value::Array(wire);
-        }
+        attach_cookies(&mut payload, cookies);
+        self.execute(payload).await
+    }
 
+    /// Sends one form `POST` through the local browser and returns the landed page.
+    pub async fn solve_post(
+        &self,
+        url: &str,
+        post_data: &str,
+        cookies: &[(String, String)],
+    ) -> Result<SolveOutcome> {
+        if self.mode == SolverMode::Off {
+            return Err(Error::SolverDisabled);
+        }
+        let mut payload = json!({
+            "cmd": "request.post",
+            "url": url,
+            "postData": post_data,
+            "maxTimeout": self.max_timeout_ms,
+            "disableMedia": true,
+            "returnScreenshot": false,
+        });
+        attach_cookies(&mut payload, cookies);
+        self.execute(payload).await
+    }
+
+    async fn execute(&self, payload: serde_json::Value) -> Result<SolveOutcome> {
+        let started = Instant::now();
         let mut response = self
             .http
             .post(&self.endpoint)
@@ -304,6 +319,33 @@ impl From<RawCookie> for SolverCookie {
             secure: raw.secure,
         }
     }
+}
+
+fn attach_cookies(payload: &mut serde_json::Value, cookies: &[(String, String)]) {
+    if !cookies.is_empty() {
+        let wire: Vec<serde_json::Value> = cookies
+            .iter()
+            .map(|(name, value)| json!({"name": name, "value": value}))
+            .collect();
+        payload["cookies"] = serde_json::Value::Array(wire);
+    }
+}
+
+/// Extracts raw JSON from either a direct JSON response or Chromium's
+/// HTML-wrapped `<pre>{...}</pre>` document returned by FlareSolverr.
+pub(crate) fn extract_json_body(body: &str) -> String {
+    let trimmed = body.trim();
+    if trimmed.starts_with('{') || trimmed.starts_with('[') {
+        return trimmed.to_string();
+    }
+    let doc = scraper::Html::parse_document(body);
+    let Ok(selector) = scraper::Selector::parse("pre") else {
+        return trimmed.to_string();
+    };
+    doc.select(&selector)
+        .next()
+        .map(|node| node.text().collect::<String>().trim().to_string())
+        .unwrap_or_else(|| trimmed.to_string())
 }
 
 fn transport_detail(error: &reqwest::Error) -> &'static str {

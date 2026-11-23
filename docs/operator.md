@@ -38,10 +38,10 @@ and must not be exposed to the open internet as-is.
 | `AO3I_MIN_SPACING_MS` | `2000` | floor between upstream requests |
 | `AO3I_LOG_HTTP_ERRORS` | `true` | one structured HTTP-error line on stderr |
 | `AO3I_HTTP_LOG_RETENTION` | `500` | rows kept in `http_error_log` |
-| `AO3I_FLARESOLVERR` | `auto` | `auto` \| `on` \| `off` for the optional fallback |
+| `AO3I_FLARESOLVERR` | `auto` | `auto` \| `on` \| `off` for the host-provided solver |
 | `AO3I_FLARESOLVERR_URL` | `http://127.0.0.1:8191` | solver origin; loopback-only unless `ALLOW_REMOTE` |
 | `AO3I_FLARESOLVERR_ALLOW_REMOTE` | `false` | permit a non-loopback solver host (container/bridge) |
-| `AO3I_FLARESOLVERR_SEND_COOKIES` | `false` | allow the AO3 jar to reach the solver (still per-solve opt-in) |
+| `AO3I_FLARESOLVERR_SEND_COOKIES` | `true` | send the AO3 cookie jar to the local solver |
 | `AO3I_FLARESOLVERR_MAX_TIMEOUT_MS` | `60000` | challenge-solving budget, `5000..=180000` |
 
 `AO3I_KEY_FILE` and `AO3I_DATA_DIR` cannot be set from a `.env` for security
@@ -50,11 +50,11 @@ reasons; the app reads environment variables only.
 ## Host-provided FlareSolverr
 
 Whenever a host-provided FlareSolverr is reachable (and `AO3I_FLARESOLVERR` is
-not `off`), AO3Instance always routes upstream reads (works, live search, live
-tag pages, home modules, public skins, and the initial login page) through it
-and falls back to the direct HTTP client only when FlareSolverr is absent or
-unreachable. The app never starts, installs or requires FlareSolverr; it only
-calls the local `/v1` API.
+not `off`), AO3Instance always routes **every** upstream interaction with AO3
+(reads, search, tags, home, public skins, login, session verification, CSRF
+fetches, and writes) through it and falls back to the direct HTTP client only
+when FlareSolverr is absent or unreachable. The app never starts, installs or
+requires FlareSolverr; it only calls the local `/v1` API.
 
 On NixOS, one line makes it available to the system:
 
@@ -70,10 +70,11 @@ its host can reach. A container/bridge address needs
 Limits and behaviour:
 
 - Serialized one solve at a time (no parallel Chromium launches).
-- Reads only. Writes keep the direct client (riding on any captured Cloudflare
-  clearance).
-- The AO3 session is sent to the browser only when
-  `AO3I_FLARESOLVERR_SEND_COOKIES=true`.
+- Handles both `GET` (`request.get`) and form writes (`request.post`, using
+  Rails' `_method` override for `PATCH`/`DELETE`).
+- Session cookies are forwarded to the local solver by default
+  (`AO3I_FLARESOLVERR_SEND_COOKIES=true`) so authenticated pages, session
+  checks, and writes work through it.
 - The returned clearance is encrypted at rest and dropped on the next `403`;
   it is never displayed. `/diagnostics` shows reachability, version, clearance
   age and recent outcomes (never the cookie).
@@ -83,12 +84,16 @@ Limits and behaviour:
 
 ## Pages
 
-`/` AO3-shaped home (favorites, cached news, continue reading, open-work box) ·
+`/` AO3-shaped home (favorites, cached news, continue reading, open-work box; 30-min cached) ·
 `/works` cached library with filters ·
-`/fandoms` A–Z directory · `/dashboard` statistics and shortcuts ·
-`/subscriptions`, `/bookmarks`, `/reading` local ledgers ·
-`/read/<id>` reader (chapter jump, Entire Work) · `/session` AO3 login/import ·
-`/works/search` AO3 Work Search: one live AO3 request per submit, results shown AO3-style (not cached); `?local=1` searches the cache · `/tags/search` cached tag search · `/tags/<tag>/works` live AO3 tag page with cached fallback · `/open/<id>` one-click cache+read · `/audit` write ledger ·
+`/fandoms` live AO3 `/media` directory and `/media/<slug>/fandoms` A–Z lists (30-min cached, offline fallback) ·
+`/dashboard` live AO3 subscriptions, bookmarks, reading history and local cache stats ·
+`/subscriptions`, `/bookmarks`, `/reading` (`?show=to-read` for Marked for Later) live AO3 account lists (30-min cached, offline fallback) ·
+`/read/<id>` reader (chapter jump, Entire Work) · `/session` AO3 login/import (logout is local-only) ·
+`/works/search` AO3 Work Search (30-min cached, `?refresh=1` to force refresh, `?local=1` searches cached works) ·
+`/tags/search` live AO3 tag search (30-min cached, offline fallback) ·
+`/tags/<tag>/works` live AO3 tag page (30-min cached, offline fallback) ·
+`/open/<id>` one-click cache+read · `/audit` write ledger ·
 `/diagnostics` HTTP failures, solver state and clear · `/about` instance notes.
 `/users/login`, `/works/search` and `/works/{id}` mirror AO3 URLs; uncached
 works show an offline miss card instead of fetching on a `GET`.

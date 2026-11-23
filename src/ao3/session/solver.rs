@@ -1,20 +1,33 @@
-//! Solver integration on the account session: explicit solves, cookie merging
-//! and the scoped Cloudflare clearance window.
+//! Solver integration on the account session: unified transport routing,
+//! cookie merging, redirect synthesis, and the scoped Cloudflare clearance
+//! window.
 //!
-//! Read-only by construction: these methods only ask the host-provided
-//! FlareSolverr for one `GET` at a time. Writes keep the direct client.
+//! Whenever the host-provided FlareSolverr is reachable (and not disabled via
+//! `AO3I_FLARESOLVERR=off`), every AO3 interaction (`GET`, `POST`, `PATCH`,
+//! `DELETE`) goes through it, falling back to the direct client only when the
+//! solver is absent or unreachable.
 
-use super::{AccountSession, Jar, Response, SessionState};
+use std::time::Duration;
+
+use super::{AccountSession, Jar, Response, SessionState, redirect_path};
+use crate::ao3::client::{classify_status, form_urlencode};
 use crate::ao3::solver::{SolveOutcome, SolverStatus};
 use crate::config::SolverMode;
 use crate::consts;
-use crate::diag::{Transport, sanitize_location, sanitize_path};
+use crate::diag::{HttpDirection, HttpErrorEvent, Transport, sanitize_path};
 use crate::error::{Error, Result};
 use crate::time::now_secs;
+
+/// How long to wait before re-probing an unreachable local solver.
+const SOLVER_REPROBE_INTERVAL_SECS: i64 = 30;
 
 impl AccountSession {
     pub fn solver_mode(&self) -> SolverMode {
         self.solver.mode()
+    }
+
+    pub fn solver_status(&self) -> &SolverStatus {
+        &self.solver_status
     }
 
     /// Operator allow-list for handing the AO3 jar to the local browser.
@@ -22,9 +35,27 @@ impl AccountSession {
         self.solver_send_cookies
     }
 
-    /// Liveness probe; never touches AO3 and never fatal.
-    pub async fn probe_solver(&self) -> SolverStatus {
-        self.solver.probe().await
+    /// Liveness probe; never touches AO3 and never fatal. Updates the cached
+    /// status on the session.
+    pub async fn probe_solver(&mut self) -> SolverStatus {
+        let status = self.solver.probe().await;
+        self.solver_status = status.clone();
+        status
+    }
+
+    /// True when the local solver is enabled and reachable. Re-probes when a
+    /// previous failure is older than [`SOLVER_REPROBE_INTERVAL_SECS`].
+    pub async fn solver_available(&mut self) -> bool {
+        if self.solver.mode() == SolverMode::Off {
+            return false;
+        }
+        if self.solver_status.reachable {
+            return true;
+        }
+        if now_secs().saturating_sub(self.solver_status.checked_at) < SOLVER_REPROBE_INTERVAL_SECS {
+            return false;
+        }
+        self.probe_solver().await.reachable
     }
 
     /// The active clearance, for encrypted persistence. Never log the cookie.
@@ -50,45 +81,170 @@ impl AccountSession {
         self.client.clear_clearance();
     }
 
-    /// Solves exactly one user-requested read through the host-provided solver.
-    ///
-    /// Read-only by construction: the method only ever asks FlareSolverr for a
-    /// `GET`, never touches a write path, and returns a [`Response`] shaped like
-    /// a direct one so the existing parser/cache code is reused.
+    /// Runs an upstream `GET` through FlareSolverr when available, falling back
+    /// to the direct HTTP client only when the solver is absent or unreachable.
+    pub async fn upstream_get(&mut self, path: &str, timeout: Option<Duration>) -> Result<Response> {
+        if self.solver_available().await {
+            match self.solve_request("GET", path, None, true).await {
+                Ok(response) => return Ok(response),
+                Err(Error::SolverUnavailable(_)) => {}
+                Err(error) => return Err(error),
+            }
+        }
+        match timeout {
+            Some(budget) => self.client.get_with_timeout(path, budget).await,
+            None => self.client.get(path).await,
+        }
+    }
+
+    /// Runs an upstream form `POST` through FlareSolverr when available,
+    /// falling back to the direct HTTP client if the solver is unreachable.
+    pub async fn upstream_post_form(
+        &mut self,
+        path: &str,
+        fields: &[(&str, &str)],
+    ) -> Result<Response> {
+        if self.solver_available().await {
+            let body = form_urlencode(fields);
+            match self.solve_request("POST", path, Some(&body), true).await {
+                Ok(response) => return Ok(response),
+                Err(Error::SolverUnavailable(_)) => {}
+                Err(error) => return Err(error),
+            }
+        }
+        self.client.post_form(path, fields).await
+    }
+
+    /// Runs an upstream form `PATCH` through FlareSolverr (using Rails'
+    /// `_method=patch` override) when available, falling back to direct `PATCH`.
+    pub async fn upstream_patch_form(
+        &mut self,
+        path: &str,
+        fields: &[(&str, &str)],
+    ) -> Result<Response> {
+        if self.solver_available().await {
+            let mut all = Vec::with_capacity(fields.len() + 1);
+            all.push(("_method", "patch"));
+            all.extend_from_slice(fields);
+            let body = form_urlencode(&all);
+            match self.solve_request("PATCH", path, Some(&body), true).await {
+                Ok(response) => return Ok(response),
+                Err(Error::SolverUnavailable(_)) => {}
+                Err(error) => return Err(error),
+            }
+        }
+        self.client.patch_form(path, fields).await
+    }
+
+    /// Runs a CSRF-protected `DELETE` through FlareSolverr (using Rails'
+    /// `_method=delete` override) when available, falling back to direct `DELETE`.
+    pub async fn upstream_delete_with_csrf(&mut self, path: &str, token: &str) -> Result<Response> {
+        if self.solver_available().await {
+            let body = form_urlencode(&[("_method", "delete"), ("authenticity_token", token)]);
+            match self.solve_request("DELETE", path, Some(&body), true).await {
+                Ok(response) => return Ok(response),
+                Err(Error::SolverUnavailable(_)) => {}
+                Err(error) => return Err(error),
+            }
+        }
+        self.client.delete_with_csrf(path, token).await
+    }
+
+    /// Solves one `GET` through the host-provided solver and maps auth redirects
+    /// and edge/rate-limit statuses onto typed errors.
     pub async fn solve_get(&mut self, path: &str, send_cookies: bool) -> Result<Response> {
+        let response = self.solve_request("GET", path, None, send_cookies).await?;
+        if !path.starts_with(consts::LOGIN_PATH) && response.location_contains("/users/login") {
+            return Err(Error::LoggedOut);
+        }
+        if response.location_contains("/lost_cookie") {
+            return Err(Error::SessionIncomplete);
+        }
+        if let Some(error) = status_error(response.status) {
+            return Err(error);
+        }
+        Ok(response)
+    }
+
+    /// Low-level solver transport for `GET` and `POST` (`PATCH`/`DELETE` via
+    /// Rails `_method`). Synthesizes redirect `302` + `Location` from the
+    /// browser's final URL so callers classify responses identically to direct
+    /// requests.
+    async fn solve_request(
+        &mut self,
+        method: &str,
+        path: &str,
+        post_data: Option<&str>,
+        send_cookies: bool,
+    ) -> Result<Response> {
         if self.state == SessionState::Killed {
             return Err(Error::Killed);
         }
         let url = format!("{}{}", self.client.base_url(), path);
-        let sent_cookies = send_cookies && self.solver_send_cookies;
+        // Login POST always carries the pre-login `_otwarchive_session` cookie
+        // minted by `GET /users/login` so Rails accepts its CSRF token.
+        let is_login_post = post_data.is_some() && path.starts_with(consts::LOGIN_PATH);
+        let sent_cookies = (send_cookies && self.solver_send_cookies) || is_login_post;
         let cookies = if sent_cookies {
             jar_cookie_pairs(self.client.jar())
         } else {
             Vec::new()
         };
-        let outcome = self.solver.solve_get(&url, &cookies).await?;
 
-        let final_path = sanitize_location(Some(&outcome.solution_url)).unwrap_or_default();
-        if !path.starts_with(consts::LOGIN_PATH) && final_path.starts_with("/users/login") {
-            return Err(Error::LoggedOut);
-        }
-        if final_path.starts_with("/lost_cookie") {
-            return Err(Error::SessionIncomplete);
-        }
-        if let Some(error) = status_error(outcome.status) {
-            return Err(error);
-        }
+        let result = match post_data {
+            Some(data) => self.solver.solve_post(&url, data, &cookies).await,
+            None => self.solver.solve_get(&url, &cookies).await,
+        };
+        let outcome = match result {
+            Ok(outcome) => outcome,
+            Err(error) => {
+                if matches!(error, Error::SolverUnavailable(_)) {
+                    self.solver_status.reachable = false;
+                    self.solver_status.checked_at = now_secs();
+                }
+                self.client.report(HttpErrorEvent::new(
+                    HttpDirection::Upstream,
+                    Transport::Solver,
+                    method,
+                    path,
+                    solver_error_kind(&error),
+                    error.to_string(),
+                ));
+                return Err(error);
+            }
+        };
 
         let jar_changed = self.merge_solver_cookies(&outcome, sent_cookies);
+        let (status, location) = classify_solver_landing(
+            path,
+            post_data.is_some(),
+            outcome.status,
+            &outcome.solution_url,
+            self.client.base_url(),
+        );
+        if status >= 400 {
+            self.client.report(
+                HttpErrorEvent::new(
+                    HttpDirection::Upstream,
+                    Transport::Solver,
+                    method,
+                    path,
+                    classify_status(status),
+                    format!("upstream answered HTTP {status} via solver"),
+                )
+                .with_status(status)
+                .with_latency(outcome.latency_ms),
+            );
+        }
+
         Ok(Response {
-            status: outcome.status,
-            location: None,
+            status,
+            location,
             retry_after: None,
             body: outcome.html,
             set_cookies: Vec::new(),
-            // Only signal jar rotation when AO3 cookies were merged back.
             jar_changed,
-            method: "GET".to_string(),
+            method: method.to_string(),
             path: sanitize_path(path),
             latency_ms: outcome.latency_ms,
             server_header: None,
@@ -140,6 +296,71 @@ impl AccountSession {
             );
         }
         merge_jar
+    }
+}
+
+/// Synthesizes a `302` + `Location` when Chromium followed a redirect so
+/// downstream classifiers see the same shape as direct no-redirect requests.
+fn classify_solver_landing(
+    requested: &str,
+    is_mutation: bool,
+    status: u16,
+    solution_url: &str,
+    base_url: &str,
+) -> (u16, Option<String>) {
+    if status != 200 || solution_url.is_empty() {
+        return (status, None);
+    }
+    let requested_path = requested.split(['?', '#']).next().unwrap_or(requested);
+    let Some(final_path) = redirect_path(solution_url, base_url) else {
+        // Off-origin redirect after a mutation (e.g. login) should still surface
+        // as a redirect so the session layer rejects it fail-closed.
+        if is_mutation {
+            return (302, Some(solution_url.to_string()));
+        }
+        return (status, None);
+    };
+    let auth_redirect = (final_path.starts_with("/users/login")
+        && !requested_path.starts_with("/users/login"))
+        || final_path.starts_with("/lost_cookie")
+        || final_path.starts_with("/auth_error");
+    let redirected = if is_mutation {
+        final_path != requested_path || auth_redirect
+    } else {
+        auth_redirect
+    };
+    if redirected {
+        (302, Some(solution_url.to_string()))
+    } else {
+        (status, None)
+    }
+}
+
+fn solver_error_kind(error: &Error) -> &'static str {
+    match error {
+        Error::SolverCaptcha => "solver_captcha",
+        Error::SolverUnavailable(_) => "solver_unreachable",
+        Error::SolverBodyCap => "solver_body_cap",
+        Error::Config(_)
+        | Error::Io(_)
+        | Error::Store(_)
+        | Error::Crypto(_)
+        | Error::Network(_)
+        | Error::LoginRejected(_)
+        | Error::PasswordChangeRequired
+        | Error::LoggedOut
+        | Error::Validation(_)
+        | Error::SpamRejected
+        | Error::SessionIncomplete
+        | Error::CsrfMissing
+        | Error::CsrfExpired
+        | Error::LogoutFailed(_)
+        | Error::Killed
+        | Error::RateLimited { .. }
+        | Error::BlockedByEdge { .. }
+        | Error::UpstreamChanged(_)
+        | Error::SolverDisabled
+        | Error::SolverFailed(_) => "solver_error",
     }
 }
 

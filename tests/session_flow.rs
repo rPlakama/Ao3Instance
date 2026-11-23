@@ -40,6 +40,7 @@ fn config_for(server: &Server) -> Config {
         ("AO3I_DATA_DIR", "/tmp/ao3i-test"),
         ("XDG_CONFIG_HOME", "/tmp/xdg-test"),
         ("AO3I_MIN_SPACING_MS", "0"),
+        ("AO3I_FLARESOLVERR", "off"),
     ])
     .expect("test config")
 }

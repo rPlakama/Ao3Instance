@@ -112,25 +112,28 @@ pub(super) async fn session_import(
     jar.apply(&format!("user_credentials={credentials_cookie}; Path=/"));
     adult_cookie_jar(&mut jar, form.adult.is_some());
 
-    warm_solver_clearance(&state).await;
-
-    let mut session = state.session.lock().await;
-    match session.import(&account, jar).await {
-        Ok(SessionState::Active) => {
-            persist_session(&state, &session)
-                .await
-                .map_err(AppError::from)?;
-            Ok(redirect_session("ok", "Session imported and verified."))
+    let outcome = {
+        let _solver_guard = state.solver_lock.lock().await;
+        let mut session = state.session.lock().await;
+        match session.import(&account, jar).await {
+            Ok(SessionState::Active) => {
+                persist_session(&state, &session)
+                    .await
+                    .map_err(AppError::from)?;
+                Ok(redirect_session("ok", "Session imported and verified."))
+            }
+            Ok(other) => Ok(redirect_session(
+                "error",
+                &format!("Session imported but not active: {other}."),
+            )),
+            Err(error) => Ok(redirect_session(
+                "error",
+                &format!("Session import failed: {error}"),
+            )),
         }
-        Ok(other) => Ok(redirect_session(
-            "error",
-            &format!("Session imported but not active: {other}."),
-        )),
-        Err(error) => Ok(redirect_session(
-            "error",
-            &format!("Session import failed: {error}"),
-        )),
-    }
+    };
+    super::solver::sync_solver_state(&state).await;
+    outcome
 }
 
 #[derive(Deserialize)]
@@ -148,16 +151,11 @@ pub(super) async fn session_login(
     if account.is_empty() {
         return Err(AppError::BadRequest("AO3 login is empty".into()));
     }
-    let use_solver = super::solver::solver_available(&state).await;
     let outcome = {
-        let _solver_guard = if use_solver {
-            Some(state.solver_lock.lock().await)
-        } else {
-            None
-        };
+        let _solver_guard = state.solver_lock.lock().await;
         let mut session = state.session.lock().await;
         let result = session
-            .login_with_solver(&account, SecretString::new(form.password), use_solver)
+            .login(&account, SecretString::new(form.password))
             .await;
         match result {
             Ok(SessionState::Active) => {
@@ -174,43 +172,33 @@ pub(super) async fn session_login(
             Err(error) => Ok(redirect_session("error", &format!("Login failed: {error}"))),
         }
     };
-    if use_solver && let Err(err) = super::solver::persist_clearance(&state).await {
-        eprintln!("persist solver clearance: {err}");
-    }
+    super::solver::sync_solver_state(&state).await;
     outcome
 }
 
 pub(super) async fn session_probe(State(state): State<Arc<AppState>>) -> Handled<Redirect> {
-    warm_solver_clearance(&state).await;
-    let mut session = state.session.lock().await;
-    match session.probe().await {
-        Ok(SessionState::Active) => {
-            persist_session(&state, &session)
-                .await
-                .map_err(AppError::from)?;
-            Ok(redirect_session("ok", "Session verified."))
+    let outcome = {
+        let _solver_guard = state.solver_lock.lock().await;
+        let mut session = state.session.lock().await;
+        match session.probe().await {
+            Ok(SessionState::Active) => {
+                persist_session(&state, &session)
+                    .await
+                    .map_err(AppError::from)?;
+                Ok(redirect_session("ok", "Session verified."))
+            }
+            Ok(other) => Ok(redirect_session(
+                "error",
+                &format!("Session is not active: {other}."),
+            )),
+            Err(error) => Ok(redirect_session(
+                "error",
+                &format!("Session check failed: {error}"),
+            )),
         }
-        Ok(other) => Ok(redirect_session(
-            "error",
-            &format!("Session is not active: {other}."),
-        )),
-        Err(error) => Ok(redirect_session(
-            "error",
-            &format!("Session check failed: {error}"),
-        )),
-    }
-}
-
-/// Captures a fresh Cloudflare clearance via the local solver when available
-/// and none is active yet, so subsequent authenticated checks carry it.
-async fn warm_solver_clearance(state: &AppState) {
-    let has_clearance = {
-        let session = state.session.lock().await;
-        session.clearance_snapshot().is_some()
     };
-    if !has_clearance && super::solver::solver_available(state).await {
-        drop(super::solver::fetch_via_solver(state, "/", false).await);
-    }
+    super::solver::sync_solver_state(&state).await;
+    outcome
 }
 
 pub(super) async fn session_adult(State(state): State<Arc<AppState>>) -> Handled<Redirect> {
@@ -232,16 +220,19 @@ pub(super) async fn session_adult(State(state): State<Arc<AppState>>) -> Handled
 }
 
 pub(super) async fn session_logout(State(state): State<Arc<AppState>>) -> Handled<Redirect> {
-    let mut session = state.session.lock().await;
-    let logout = session.logout().await;
-    state.store.delete_session().await.map_err(AppError::from)?;
-    match logout {
-        Ok(_) => Ok(redirect_session("ok", "Logged out of AO3.")),
-        Err(error) => Ok(redirect_session(
-            "error",
-            &format!("Local session cleared, but upstream logout failed: {error}"),
-        )),
+    let prev_account = {
+        let mut session = state.session.lock().await;
+        let prev = session.account().to_string();
+        session.clear_local();
+        prev
+    };
+    if !prev_account.is_empty()
+        && let Err(err) = state.store.invalidate_account_pages(&prev_account).await
+    {
+        eprintln!("invalidate account page_cache: {err}");
     }
+    state.store.delete_session().await.map_err(AppError::from)?;
+    Ok(redirect_session("ok", "Account removed locally."))
 }
 
 #[cfg(test)]

@@ -701,22 +701,43 @@ pub fn live_search_results_page(
     ctx: &PageContext,
     query: &LiveSearchQuery,
     results: &LiveSearchResults,
+    cache_meta: Option<(bool, i64)>,
 ) -> String {
     let summary = if results.summary.is_empty() {
         query.query.clone()
     } else {
         results.summary.clone()
     };
+    let form_query = query.form_query();
+    let page_suffix = if query.page > 1 {
+        format!("&page={}", query.page)
+    } else {
+        String::new()
+    };
+    let refresh_href = format!("/works/search?{form_query}{page_suffix}&refresh=1");
     let mut body = String::from("<h2 class=\"heading\">Search Results</h2>");
     body.push_str(&format!(
         "<h4 class=\"heading\">You searched for: {}</h4>",
         escape(&summary)
     ));
     body.push_str(&format!(
-        "<ul class=\"navigation actions\" role=\"navigation\"><li>\
-         <a href=\"/works/search?{}&edit_search=true\">Edit Your Search</a></li></ul>",
-        query.form_query()
+        "<ul class=\"navigation actions\" role=\"navigation\">\
+         <li><a href=\"/works/search?{form_query}&edit_search=true\">Edit Your Search</a></li>\
+         <li><a href=\"{refresh_href}\">Refresh results</a></li></ul>"
     ));
+    if let Some((from_cache, fetched_at)) = cache_meta {
+        let status = if from_cache {
+            format!(
+                "Cached from archiveofourown.org at {} (30-min cache)",
+                escape(&crate::time::format_utc(fetched_at))
+            )
+        } else {
+            "Live results from archiveofourown.org (cached for 30 min)".to_string()
+        };
+        body.push_str(&format!(
+            "<p class=\"meta\">{status} · <a href=\"{refresh_href}\">Refresh now</a></p>"
+        ));
+    }
     if results.total == 0 {
         body.push_str(
             "<p>No results found. You may want to edit your search to make it less \
@@ -1087,6 +1108,7 @@ pub fn live_tag_page(
     page: i64,
     results: &LiveSearchResults,
     filter: &TagFilter,
+    cache_meta: Option<(bool, i64)>,
 ) -> String {
     let total = i64::try_from(results.total).unwrap_or(i64::MAX);
     let per_page = 20;
@@ -1108,6 +1130,13 @@ pub fn live_tag_page(
             escape(tag)
         )
     };
+    let tag_path = format!("/tags/{}/works", percent_encode(tag, SpaceMode::Percent20));
+    let extra_query = filter.to_query();
+    let refresh_href = if extra_query.is_empty() {
+        format!("{tag_path}?page={page}&refresh=1")
+    } else {
+        format!("{tag_path}?{extra_query}&page={page}&refresh=1")
+    };
     let mut body = format!("<h2 class=\"heading\">{heading}</h2>");
     body.push_str(&format!(
         "<div class=\"navigation actions module\">\
@@ -1117,11 +1146,23 @@ pub fn live_tag_page(
          <li><a href=\"/bookmarks\">Bookmarks</a></li>\
          <li><a href=\"/works\">Clear tag</a></li>\
          <li><a href=\"/works/search?include_tags={}\">Search within this tag on AO3</a></li>\
+         <li><a href=\"{refresh_href}\">Refresh</a></li>\
          </ul></div>",
         percent_encode(tag, SpaceMode::Percent20)
     ));
-    let tag_path = format!("/tags/{}/works", percent_encode(tag, SpaceMode::Percent20));
-    let extra_query = filter.to_query();
+    if let Some((from_cache, fetched_at)) = cache_meta {
+        let status = if from_cache {
+            format!(
+                "Cached from archiveofourown.org at {} (30-min cache)",
+                escape(&crate::time::format_utc(fetched_at))
+            )
+        } else {
+            "Live from archiveofourown.org (cached for 30 min)".to_string()
+        };
+        body.push_str(&format!(
+            "<p class=\"meta\">{status} · <a href=\"{refresh_href}\">Refresh now</a></p>"
+        ));
+    }
     let pager = crate::render::pagination(page, per_page, total, &tag_path, &extra_query);
     body.push_str("<div class=\"browse-grid\"><section class=\"browse-results\">");
     if results.works.is_empty() {

@@ -160,11 +160,11 @@ pub fn logout_confirm_page(ctx: &PageContext, account: &str) -> String {
     };
     let body = format!(
         "<h2 class=\"heading\">Log out?</h2>\
-         <div class=\"flash caution\">This clears {who} from this instance and asks AO3 \
-         to end it upstream. Cached works and reading progress are not affected.</div>\
+         <div class=\"flash caution\">This removes {who} from this instance locally \
+         without contacting AO3. Cached works and reading progress are not affected.</div>\
          <ul class=\"actions\">\
          <li><form class=\"inline\" method=\"post\" action=\"/session/logout\">\
-         <button type=\"submit\">Log out of AO3</button></form></li>\
+         <button type=\"submit\">Remove local session</button></form></li>\
          <li><a href=\"/\">Cancel</a></li>\
          <li><a href=\"/session\">Back to session</a></li></ul>"
     );

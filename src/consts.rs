@@ -67,3 +67,9 @@ pub const FLARESOLVERR_MAX_SOLVES_PER_HOUR: i64 = 6;
 pub const FLARESOLVERR_CLEARANCE_TTL: Duration = Duration::from_secs(1_800);
 /// Solver events kept in SQLite before pruning.
 pub const SOLVER_EVENT_RETENTION: i64 = 200;
+
+/// Freshness window for cached live AO3 pages (search, tags, account lists,
+/// fandoms, home, public skins): 30 minutes.
+pub const PAGE_CACHE_TTL_SECS: i64 = 30 * 60;
+/// Maximum cached AO3 pages kept in SQLite before oldest entries are pruned.
+pub const PAGE_CACHE_MAX_ROWS: i64 = 500;

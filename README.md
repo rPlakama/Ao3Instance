@@ -27,18 +27,19 @@ Features:
   Reading, and the personal shortcuts row.
 - AO3-style pages: header/nav/footer, work blurbs, required-tag badges,
   browse filters, fandoms, dashboard, subscriptions, bookmarks, reading history.
-- Work Search modelled on AO3's form: submitting it performs **one literal AO3
-  search** via the user's session and renders AO3's result entries (summary,
-  Found count, required tags, stats, date, Edit Your Search, numbered pages).
-  Results are not cached until you open a work. A blocked direct search may use
-  one local-browser solve of that exact result page; `?local=1` keeps an offline
-  cache-only search. Signed-out results match AO3's signed-out set; import your
-  session on `/session` for account-specific results. See
-  [docs/search-parity.md](docs/search-parity.md).
-- Live tag pages: every tag chip opens `/tags/<tag>/works`, fetched from AO3
-  with a cached fallback, including tags on uncached search results. The tag
-  page carries AO3's Sort and Filter sidebar (sort, Include/Exclude tag groups,
-  other tags, completion/word-count/language/search-within).
+- Work Search modelled on AO3's form: submitting it queries AO3 via the user's
+  session (through FlareSolverr whenever available), caches the result page in
+  SQLite for 30 minutes (`?refresh=1` to force a fresh fetch), and renders AO3's
+  result entries (summary, Found count, required tags, stats, date, Edit Your
+  Search, numbered pages). Works themselves are cached when you open them;
+  `?local=1` keeps an offline cache-only search.
+- Live tag pages & Tag Search: every tag chip opens `/tags/<tag>/works` and
+  `/tags/search` queries AO3's tag search, both cached for 30 minutes with an
+  offline cached fallback.
+- Live AO3 account lists & Fandoms: `/subscriptions`, `/bookmarks`, `/reading`
+  (History & Marked for Later), `/dashboard`, `/fandoms` (`/media`), and
+  `/media/<slug>/fandoms` fetch real AO3 data (cached for 30 minutes, with
+  offline fallback and `?refresh=1`).
 - One-click work opening: a title in live results goes through `/open/<id>`,
   caches on first use and lands in the reader.
 - Automatic reading progress: the reader tracks scroll percentage inside the

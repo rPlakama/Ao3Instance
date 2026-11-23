@@ -93,6 +93,33 @@ async fn serve(
     (root, store, handle)
 }
 
+async fn serve_with_writes(
+    dir: &std::path::Path,
+    upstream: &str,
+    solver_url: &str,
+) -> (String, Store, tokio::task::JoinHandle<()>) {
+    let pairs = vec![
+        ("AO3I_BASE_URL", upstream.to_string()),
+        ("AO3I_DATA_DIR", dir.to_str().expect("utf8 dir").to_string()),
+        (
+            "XDG_CONFIG_HOME",
+            dir.to_str().expect("utf8 dir").to_string(),
+        ),
+        ("AO3I_MIN_SPACING_MS", "0".to_string()),
+        ("AO3I_WRITE_ENABLED", "true".to_string()),
+        ("AO3I_FLARESOLVERR", "auto".to_string()),
+        ("AO3I_FLARESOLVERR_URL", solver_url.to_string()),
+    ];
+    let config = Config::from_pairs(pairs).expect("config");
+    let pool = db::open(&config.db_file).await.expect("db");
+    let store = Store::new(pool);
+    let app = server::router(&config, store.clone())
+        .await
+        .expect("router");
+    let (root, handle) = support::serve(app).await;
+    (root, store, handle)
+}
+
 async fn post_form(root: &str, path: &str, body: &str) -> reqwest::Response {
     http()
         .post(format!("{root}{path}"))
@@ -302,6 +329,176 @@ async fn off_mode_never_probes_and_refuses_to_solve() {
     let _ = post_form(&root, "/open", "id=321").await;
     let solve = post_form(&root, "/solve", "target=321").await;
     assert_eq!(solve.status(), 403);
+
+    handle.abort();
+    drop(std::fs::remove_dir_all(dir));
+}
+
+#[tokio::test]
+async fn login_validation_and_writes_all_use_solver_when_available() {
+    let upstream = Server::empty();
+    let base = upstream.url();
+    let login_get = Response::json(
+        json!({
+            "status": "ok",
+            "solution": {
+                "url": format!("{base}/users/login"),
+                "status": 200,
+                "response": r#"<html><head><meta name="csrf-token" content="login-tok"/></head><body></body></html>"#,
+                "userAgent": "Mozilla/5.0 solver-browser",
+                "cookies": [
+                    {"name": "_otwarchive_session", "value": "pre-login-sess", "domain": "127.0.0.1", "path": "/"}
+                ]
+            }
+        })
+        .to_string(),
+    );
+    let login_post = Response::json(
+        json!({
+            "status": "ok",
+            "solution": {
+                "url": format!("{base}/users/someone"),
+                "status": 200,
+                "response": "<html><body>Welcome someone</body></html>",
+                "userAgent": "Mozilla/5.0 solver-browser",
+                "cookies": [
+                    {"name": "_otwarchive_session", "value": "authed-sess", "domain": "127.0.0.1", "path": "/"},
+                    {"name": "user_credentials", "value": "1", "domain": "127.0.0.1", "path": "/"},
+                    {"name": "cf_clearance", "value": "clear-secret", "domain": "127.0.0.1", "path": "/"}
+                ]
+            }
+        })
+        .to_string(),
+    );
+    let subs_get = Response::json(
+        json!({
+            "status": "ok",
+            "solution": {
+                "url": format!("{base}/users/someone/subscriptions"),
+                "status": 200,
+                "response": "<html><body>Subscriptions</body></html>",
+                "userAgent": "Mozilla/5.0 solver-browser",
+                "cookies": []
+            }
+        })
+        .to_string(),
+    );
+    // Real FlareSolverr/Chromium wraps .json responses inside <pre>.
+    let token_get = Response::json(
+        json!({
+            "status": "ok",
+            "solution": {
+                "url": format!("{base}/token_dispenser.json"),
+                "status": 200,
+                "response": r#"<html><body><pre>{"token":"solver-csrf"}</pre></body></html>"#,
+                "userAgent": "Mozilla/5.0 solver-browser",
+                "cookies": []
+            }
+        })
+        .to_string(),
+    );
+    let kudos_post = Response::json(
+        json!({
+            "status": "ok",
+            "solution": {
+                "url": format!("{base}/kudos.js"),
+                "status": 201,
+                "response": r#"<html><body><pre>{}</pre></body></html>"#,
+                "userAgent": "Mozilla/5.0 solver-browser",
+                "cookies": []
+            }
+        })
+        .to_string(),
+    );
+
+    let home_get = Response::json(
+        json!({
+            "status": "ok",
+            "solution": {
+                "url": format!("{base}/"),
+                "status": 200,
+                "response": "<html><body>Home</body></html>",
+                "userAgent": "Mozilla/5.0 solver-browser",
+                "cookies": []
+            }
+        })
+        .to_string(),
+    );
+
+    let solver = Server::start_sequence(vec![(
+        "POST /v1",
+        vec![
+            probe_response(),
+            login_get,
+            login_post,
+            subs_get,
+            token_get,
+            kudos_post,
+            home_get,
+        ],
+    )]);
+    let dir = support::temp_dir("solver-all-interactions");
+    let (root, store, handle) = serve_with_writes(&dir, &base, &solver.url()).await;
+
+    // Login uses solver for GET /users/login, POST /users/login, probe, and token_dispenser.
+    let login = post_form(&root, "/session/login", "account=someone&password=secret").await;
+    assert_eq!(login.status(), 200);
+    let login_body = login.text().await.expect("login body");
+    assert!(login_body.contains("Signed in to AO3."), "{login_body}");
+
+    // Writes (kudos) also go through FlareSolverr via request.post.
+    let kudos = post_form(&root, "/write/kudos", "target_id=42&confirm=yes").await;
+    assert_eq!(kudos.status(), 200);
+    assert!(store.has_kudos("someone", "42").await.expect("kudos"));
+
+    // Zero direct requests ever reached AO3.
+    assert!(
+        upstream.requests().is_empty(),
+        "expected every interaction to use FlareSolverr, got: {:?}",
+        upstream.requests()
+    );
+    let solver_reqs = solver.requests();
+    assert_eq!(
+        solver_reqs.len(),
+        7,
+        "probe + 4 login/validation + 1 kudos + 1 home redirect"
+    );
+    assert!(
+        solver_reqs[2].body.contains(r#""cmd":"request.post""#)
+            && solver_reqs[2].body.contains("authenticity_token=login-tok"),
+        "login POST went through solver: {}",
+        solver_reqs[2].body
+    );
+    assert!(
+        solver_reqs[5].body.contains(r#""cmd":"request.post""#)
+            && solver_reqs[5].body.contains("authenticity_token=solver-csrf"),
+        "kudos POST went through solver: {}",
+        solver_reqs[5].body
+    );
+
+    // Logout is local-only: removes account without contacting AO3 or FlareSolverr.
+    let solver_calls_before_logout = solver.requests().len();
+    let logout = post_form(&root, "/session/logout", "").await;
+    assert_eq!(logout.status(), 200);
+    let logout_body = logout.text().await.expect("logout body");
+    assert!(
+        logout_body.contains("Account removed locally."),
+        "{logout_body}"
+    );
+    assert!(
+        !logout_body.contains("signed in as"),
+        "account name must be cleared on logout: {logout_body}"
+    );
+    assert!(store.load_session().await.expect("session").is_none());
+    assert_eq!(
+        solver.requests().len(),
+        solver_calls_before_logout,
+        "logout must not contact FlareSolverr"
+    );
+    assert!(
+        upstream.requests().is_empty(),
+        "logout must not contact AO3"
+    );
 
     handle.abort();
     drop(std::fs::remove_dir_all(dir));

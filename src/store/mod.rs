@@ -7,6 +7,7 @@
 mod access;
 mod errors;
 mod lists;
+mod page_cache;
 mod session;
 mod settings;
 mod solver;
@@ -190,5 +191,6 @@ pub use lists::{
     BookmarkEntry, BrowseResult, BrowseSort, CacheStats, ReadingEntry, ReadingStatus,
     SubscriptionEntry, TagHit, WorkFilter,
 };
+pub use page_cache::CachedPage;
 pub use solver::{SolverEventRow, StoredClearance};
 pub use works::sha256_hex;

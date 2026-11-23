@@ -56,12 +56,15 @@ pub use about::about_page;
 pub use audit::{audit_page, challenge_error_page, confirm_page, error_page};
 pub use browse::{browse_page, filter_from};
 pub use chrome::{NavSection, PageContext, SolverSummary};
-pub use dashboard::dashboard_page;
+pub use dashboard::{DashboardLive, dashboard_page};
 pub use diagnostics::{DiagnosticsView, diagnostics_page};
-pub use fandoms::fandoms_page;
+pub use fandoms::{fandoms_page, live_media_page, live_medium_fandoms_page};
 pub use history::history_page;
 pub use home::home_page;
-pub use lists::{bookmarks_page, reading_page, subscriptions_page};
+pub use lists::{
+    bookmarks_page, live_bookmarks_page, live_readings_page, live_subscriptions_page, reading_page,
+    subscriptions_page,
+};
 pub use not_cached::not_cached_page;
 pub use pagination::pagination;
 pub use search::{TagFilter, live_tag_page, search_challenge_page};
@@ -70,7 +73,7 @@ pub use search::{
     search_form_page, search_results_page,
 };
 pub use session::{logout_confirm_page, session_page};
-pub use tag_search::tag_search_page;
+pub use tag_search::{live_tag_search_page, tag_search_page};
 pub use themes::themes_page;
 pub use work::{ReadContext, chapter_document, read_page};
 

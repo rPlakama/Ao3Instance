@@ -192,7 +192,7 @@ impl Client {
         }
     }
 
-    fn report(&self, event: HttpErrorEvent) {
+    pub(crate) fn report(&self, event: HttpErrorEvent) {
         if let Some(sink) = &self.sink {
             sink(&event);
         }
@@ -503,7 +503,7 @@ fn transport_detail(error: &reqwest::Error) -> &'static str {
 }
 
 /// Maps an upstream status onto the diagnostic classifier (`docs/failure-matrix.md`).
-fn classify_status(status: u16) -> &'static str {
+pub(crate) fn classify_status(status: u16) -> &'static str {
     match status {
         429 => "rate_limited",
         403 | 503 => "blocked_by_edge",

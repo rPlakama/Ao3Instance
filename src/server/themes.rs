@@ -16,13 +16,15 @@ use crate::render::{self, NavSection};
 pub(super) struct ThemesQuery {
     applied: Option<String>,
     error: Option<String>,
+    refresh: Option<String>,
 }
 
 pub(super) async fn themes(
     State(state): State<Arc<AppState>>,
     Query(query): Query<ThemesQuery>,
 ) -> Handled<Html<String>> {
-    let html = fetch_public_page(&state, "/skins").await;
+    let refresh = query.refresh.as_deref() == Some("1");
+    let html = fetch_public_page(&state, "/skins", refresh).await;
     let skins = html
         .as_deref()
         .map(crate::ao3::skins::parse_skin_list)
@@ -53,7 +55,7 @@ pub(super) async fn apply(
         ));
     }
     let path = format!("/skins/{rest}");
-    let html = fetch_public_page(&state, &path).await.ok_or_else(|| {
+    let html = fetch_public_page(&state, &path, false).await.ok_or_else(|| {
         AppError::BadRequest(
             "AO3 did not return the public skin; check Diagnostics and try again.".into(),
         )
@@ -81,21 +83,8 @@ pub(super) async fn clear(State(state): State<Arc<AppState>>) -> Handled<Redirec
     Ok(Redirect::to("/themes"))
 }
 
-async fn fetch_public_page(state: &AppState, path: &str) -> Option<String> {
-    if super::solver::solver_available(state).await {
-        match super::solver::fetch_via_solver(state, path, false).await {
-            Ok(response) if response.status == 200 => return Some(response.body),
-            Err(crate::error::Error::SolverUnavailable(_)) => {}
-            Ok(_) | Err(_) => return None,
-        }
-    }
-    let response = {
-        let mut session = state.session.lock().await;
-        session
-            .client_mut()
-            .get_with_timeout(path, std::time::Duration::from_secs(10))
-            .await
-            .ok()?
-    };
-    (response.status == 200).then_some(response.body)
+async fn fetch_public_page(state: &AppState, path: &str, refresh: bool) -> Option<String> {
+    super::cache::fetch_cached_optional(state, "", path, false, refresh)
+        .await
+        .map(|fetched| fetched.body)
 }

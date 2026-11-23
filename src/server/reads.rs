@@ -388,6 +388,7 @@ pub(super) struct SearchQuery {
     exclude_tags: Option<String>,
     local: Option<String>,
     solved: Option<String>,
+    refresh: Option<String>,
 }
 
 pub(super) async fn search(
@@ -472,87 +473,74 @@ async fn perform_search(app: &AppState, query: SearchQuery) -> Handled<Html<Stri
             let page =
                 super::page_context(app, "Search Results — AO3Instance", NavSection::Search).await;
             return Ok(Html(render::live_search_results_page(
-                &page, &live, &results,
+                &page, &live, &results, None,
             )));
         }
     }
     if live.has_criteria() && !edit {
         let path = live.path(live.page);
-        if super::solver::solver_available(app).await {
-            match super::solver::fetch_via_solver(app, &path, true).await {
-                Ok(response) if response.status == 200 => {
-                    let results = crate::ao3::search::parse_search_results(&response.body)
-                        .map_err(AppError::from)?;
-                    let page = super::page_context(
-                        app,
-                        "Search Results — AO3Instance",
-                        NavSection::Search,
-                    )
-                    .await;
-                    return Ok(Html(render::live_search_results_page(
-                        &page, &live, &results,
-                    )));
-                }
-                Ok(response) => {
-                    return Err(AppError::Upstream(format!(
-                        "Unexpected HTTP {} from AO3 search.",
-                        response.status
-                    )));
-                }
-                Err(Error::SolverUnavailable(_)) => {}
-                Err(error) => return Err(AppError::from(error)),
-            }
-        }
-        let solver_available = super::solver::solver_available(app).await;
-        let send_cookies_allowed = {
-            let session = app.session.lock().await;
-            session.solver_may_receive_cookies()
-        };
-        let direct = {
-            let mut session = app.session.lock().await;
-            session
-                .client_mut()
-                .get_with_timeout(&path, std::time::Duration::from_secs(10))
-                .await
-        };
-        let response = direct.map_err(AppError::from)?;
-        if response.location_contains("/users/login") {
-            return Err(AppError::from(crate::error::Error::LoggedOut));
-        }
-        match response.status {
-            200 => {}
-            403 | 503 | 429 => {
-                let target = live.path(live.page);
-                let mut retry = format!("/works/search?{}", live.form_query());
-                if live.page > 1 {
-                    retry.push_str(&format!("&page={}", live.page));
-                }
-                return Err(AppError::BlockedSearch {
-                    status: response.status,
-                    target,
-                    retry,
-                    solver_available,
-                    send_cookies_allowed,
-                });
-            }
-            302 | 303 => {
-                return Err(AppError::Upstream(
-                    "AO3 redirected the search; sign in on the Session page.".into(),
-                ));
-            }
-            status => {
-                return Err(AppError::Upstream(format!(
-                    "Unexpected HTTP {status} from AO3 search."
+        let refresh = query.refresh.as_deref() == Some("1");
+        let cache_account = super::cache::cache_account(app).await;
+        match super::cache::fetch_cached_page(app, &cache_account, &path, true, refresh).await {
+            Ok(fetched) => {
+                let results = crate::ao3::search::parse_search_results(&fetched.body)
+                    .map_err(AppError::from)?;
+                let page = super::page_context(
+                    app,
+                    "Search Results — AO3Instance",
+                    NavSection::Search,
+                )
+                .await;
+                return Ok(Html(render::live_search_results_page(
+                    &page,
+                    &live,
+                    &results,
+                    Some((fetched.from_cache, fetched.fetched_at)),
                 )));
             }
+            Err(super::cache::PageFetchError::Error(error)) => {
+                return Err(AppError::from(error));
+            }
+            Err(super::cache::PageFetchError::Status { status, location }) => {
+                if location
+                    .as_deref()
+                    .is_some_and(|loc| loc.contains("/users/login"))
+                {
+                    return Err(AppError::from(crate::error::Error::LoggedOut));
+                }
+                match status {
+                    403 | 503 | 429 => {
+                        let solver_available = super::solver::solver_available(app).await;
+                        let send_cookies_allowed = {
+                            let session = app.session.lock().await;
+                            session.solver_may_receive_cookies()
+                        };
+                        let target = live.path(live.page);
+                        let mut retry = format!("/works/search?{}", live.form_query());
+                        if live.page > 1 {
+                            retry.push_str(&format!("&page={}", live.page));
+                        }
+                        return Err(AppError::BlockedSearch {
+                            status,
+                            target,
+                            retry,
+                            solver_available,
+                            send_cookies_allowed,
+                        });
+                    }
+                    302 | 303 => {
+                        return Err(AppError::Upstream(
+                            "AO3 redirected the search; sign in on the Session page.".into(),
+                        ));
+                    }
+                    other => {
+                        return Err(AppError::Upstream(format!(
+                            "Unexpected HTTP {other} from AO3 search."
+                        )));
+                    }
+                }
+            }
         }
-        let results =
-            crate::ao3::search::parse_search_results(&response.body).map_err(AppError::from)?;
-        let page =
-            super::page_context(app, "Search Results — AO3Instance", NavSection::Search).await;
-        return Ok(Html(render::live_search_results_page(
-            &page, &live, &results,
-        )));
     }
 
     let page = super::page_context(app, "Work Search — AO3Instance", NavSection::Search).await;
@@ -644,77 +632,12 @@ pub(super) async fn auto_progress(
     Ok(axum::http::StatusCode::NO_CONTENT)
 }
 
-/// One authenticated AO3 home fetch, cached briefly for the single local user.
+/// One AO3 home fetch, cached in SQLite for 30 minutes (with stale-on-error
+/// fallback when AO3 is unreachable).
 async fn live_home_html(state: &AppState, account: &str, refresh: bool) -> Option<String> {
-    {
-        let cache = state.home_cache.lock().await;
-        if let Some(cached) = cache.as_ref()
-            && cached.account == account
-        {
-            let fresh = crate::time::now_secs().saturating_sub(cached.at) < 300;
-            if !refresh && fresh {
-                return Some(cached.html.clone());
-            }
-        }
-    }
-
-    let mut try_direct = true;
-    if super::solver::solver_available(state).await {
-        match super::solver::fetch_via_solver(state, "/", !account.is_empty()).await {
-            Ok(response) if response.status == 200 => {
-                *state.home_cache.lock().await = Some(super::HomeCache {
-                    account: account.to_string(),
-                    html: response.body.clone(),
-                    at: crate::time::now_secs(),
-                });
-                return Some(response.body);
-            }
-            Err(Error::SolverUnavailable(_)) => {}
-            Ok(_) | Err(_) => {
-                try_direct = false;
-            }
-        }
-    }
-
-    if try_direct {
-        let response = {
-            let mut session = state.session.lock().await;
-            session
-                .client_mut()
-                .get_with_timeout("/", std::time::Duration::from_secs(10))
-                .await
-                .ok()
-        };
-        if let Some(response) = response
-            && response.status == 200
-        {
-            *state.home_cache.lock().await = Some(super::HomeCache {
-                account: account.to_string(),
-                html: response.body.clone(),
-                at: crate::time::now_secs(),
-            });
-            return Some(response.body);
-        }
-    }
-
-    let stale = state
-        .home_cache
-        .lock()
+    super::cache::fetch_cached_optional(state, account, "/", !account.is_empty(), refresh)
         .await
-        .as_ref()
-        .filter(|cached| cached.account == account)
-        .map(|cached| cached.html.clone());
-    if stale.is_some() {
-        return stale;
-    }
-    // Negative-cache the failure so a blocked home does not stall every visit;
-    // the explicit "Refresh AO3 home" link forces a retry.
-    *state.home_cache.lock().await = Some(super::HomeCache {
-        account: account.to_string(),
-        html: String::new(),
-        at: crate::time::now_secs(),
-    });
-    Some(String::new())
+        .map(|fetched| fetched.body)
 }
 
 #[derive(Deserialize)]

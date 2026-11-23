@@ -104,7 +104,8 @@ pub async fn subscribe(
 
     match response.status {
         200 | 201 => {
-            let parsed: SuccessEnvelope = serde_json::from_str(&response.body).map_err(|_| {
+            let json = crate::ao3::solver::extract_json_body(&response.body);
+            let parsed: SuccessEnvelope = serde_json::from_str(&json).map_err(|_| {
                 Error::UpstreamChanged("subscription success envelope is not JSON".into())
             })?;
             Ok(SubscribeOutcome {
@@ -113,7 +114,8 @@ pub async fn subscribe(
             })
         }
         422 => {
-            let parsed: ErrorsEnvelope = serde_json::from_str(&response.body).unwrap_or_default();
+            let json = crate::ao3::solver::extract_json_body(&response.body);
+            let parsed: ErrorsEnvelope = serde_json::from_str(&json).unwrap_or_default();
             let message = if parsed.errors.is_empty() {
                 "AO3 rejected the subscription".to_string()
             } else {
@@ -138,14 +140,16 @@ pub async fn unsubscribe(
     let response = session.delete_write(&path).await?;
     match response.status {
         200 | 204 => {
-            let parsed: SuccessEnvelope = serde_json::from_str(&response.body).unwrap_or_default();
+            let json = crate::ao3::solver::extract_json_body(&response.body);
+            let parsed: SuccessEnvelope = serde_json::from_str(&json).unwrap_or_default();
             Ok(parsed.item_success_message)
         }
         404 => Err(Error::Validation(
             "AO3 no longer has that subscription (already removed)".into(),
         )),
         422 => {
-            let parsed: ErrorsEnvelope = serde_json::from_str(&response.body).unwrap_or_default();
+            let json = crate::ao3::solver::extract_json_body(&response.body);
+            let parsed: ErrorsEnvelope = serde_json::from_str(&json).unwrap_or_default();
             Err(Error::Validation(if parsed.errors.is_empty() {
                 "AO3 rejected the unsubscribe".to_string()
             } else {
@@ -178,8 +182,8 @@ pub async fn kudos(session: &mut AccountSession, work_id: &str) -> Result<KudosO
             message: None,
         }),
         422 => {
-            let parsed: ErrorMessageEnvelope =
-                serde_json::from_str(&response.body).unwrap_or_default();
+            let json = crate::ao3::solver::extract_json_body(&response.body);
+            let parsed: ErrorMessageEnvelope = serde_json::from_str(&json).unwrap_or_default();
             let message = parsed
                 .error_message
                 .unwrap_or_else(|| "AO3 rejected the kudos".to_string());
@@ -237,7 +241,7 @@ pub async fn discover_default_pseud(session: &mut AccountSession, login: &str) -
         "/users/{}/pseuds",
         percent_encode(login, SpaceMode::Percent20)
     );
-    let response = session.client_mut().get(&path).await?;
+    let response = session.upstream_get(&path, None).await?;
     match response.status {
         200 => {
             pseuds::ensure_pseuds_page(&response.body)?;

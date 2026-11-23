@@ -154,6 +154,7 @@ pub(super) struct WriteForm {
     kind: String,
     target_id: String,
     confirm: Option<String>,
+    subscription_id: Option<i64>,
 }
 
 pub(super) async fn write_subscribe(
@@ -203,15 +204,18 @@ pub(super) async fn write_subscribe(
         .record_intent(&account, "subscribe", kind, &target_id)
         .await?;
     let result = {
+        let _solver_guard = state.solver_lock.lock().await;
         let mut session = state.session.lock().await;
         actions::subscribe(&mut session, &account, kind, &target_id).await
     };
+    super::solver::sync_solver_state(&state).await;
     match result {
         Ok(outcome) => {
             state
                 .store
                 .upsert_subscription(&account, kind, &target_id, outcome.item_id, "active")
                 .await?;
+            invalidate_user_list(&state, &account, "subscriptions").await;
             state
                 .store
                 .finish_intent(intent, "done", "subscribed", outcome.message.as_deref())
@@ -261,18 +265,23 @@ pub(super) async fn write_unsubscribe(
     if !usable || account.is_empty() {
         return Err(AppError::Forbidden("Sign in to AO3 first.".into()));
     }
-    let Some(row) = state
-        .store
-        .get_subscription(&account, kind, &target_id)
-        .await?
-    else {
-        return Ok(redirect_after_write(&state, kind, &target_id, "not_subscribed").await);
-    };
-    if row.state != "active" {
-        return Ok(redirect_after_write(&state, kind, &target_id, "not_subscribed").await);
-    }
-    let Some(subscription_id) = row.subscription_id else {
-        return Ok(redirect_after_write(&state, kind, &target_id, "not_subscribed").await);
+    let subscription_id = if let Some(id) = form.subscription_id {
+        id
+    } else {
+        let Some(row) = state
+            .store
+            .get_subscription(&account, kind, &target_id)
+            .await?
+        else {
+            return Ok(redirect_after_write(&state, kind, &target_id, "not_subscribed").await);
+        };
+        if row.state != "active" {
+            return Ok(redirect_after_write(&state, kind, &target_id, "not_subscribed").await);
+        }
+        let Some(subscription_id) = row.subscription_id else {
+            return Ok(redirect_after_write(&state, kind, &target_id, "not_subscribed").await);
+        };
+        subscription_id
     };
 
     state
@@ -285,15 +294,18 @@ pub(super) async fn write_unsubscribe(
         .record_intent(&account, "unsubscribe", kind, &target_id)
         .await?;
     let result = {
+        let _solver_guard = state.solver_lock.lock().await;
         let mut session = state.session.lock().await;
         actions::unsubscribe(&mut session, &account, subscription_id).await
     };
+    super::solver::sync_solver_state(&state).await;
     match result {
         Ok(message) => {
             state
                 .store
                 .upsert_subscription(&account, kind, &target_id, None, "removed")
                 .await?;
+            invalidate_user_list(&state, &account, "subscriptions").await;
             state
                 .store
                 .finish_intent(intent, "done", "unsubscribed", message.as_deref())
@@ -352,9 +364,11 @@ pub(super) async fn write_kudos(
         .record_intent(&account, "kudos", actions::WORK, &target_id)
         .await?;
     let result = {
+        let _solver_guard = state.solver_lock.lock().await;
         let mut session = state.session.lock().await;
         actions::kudos(&mut session, &target_id).await
     };
+    super::solver::sync_solver_state(&state).await;
     match result {
         Ok(outcome) if outcome.already => {
             state.store.mark_kudos(&account, &target_id).await?;
@@ -432,9 +446,11 @@ pub(super) async fn write_reading(
         .record_intent(&account, action, actions::WORK, &target_id)
         .await?;
     let result = {
+        let _solver_guard = state.solver_lock.lock().await;
         let mut session = state.session.lock().await;
         actions::set_reading_flag(&mut session, &target_id, for_later).await
     };
+    super::solver::sync_solver_state(&state).await;
     match result {
         Ok(()) => {
             state
@@ -445,6 +461,7 @@ pub(super) async fn write_reading(
                     if for_later { "for_later" } else { "read" },
                 )
                 .await?;
+            invalidate_user_list(&state, &account, "readings").await;
             state
                 .store
                 .finish_intent(intent, "done", action, None)
@@ -519,9 +536,11 @@ pub(super) async fn write_comment_preview(
         return Err(AppError::Forbidden("Sign in to AO3 first.".into()));
     }
     let pseud = {
+        let _solver_guard = state.solver_lock.lock().await;
         let mut session = state.session.lock().await;
         ensure_pseud(&state, &mut session, &account).await?
     };
+    super::solver::sync_solver_state(&state).await;
     let title = state
         .store
         .get_work(&target_id)
@@ -575,6 +594,7 @@ pub(super) async fn write_comment(
         .map_err(AppError::from)?;
 
     let (intent, result) = {
+        let _solver_guard = state.solver_lock.lock().await;
         let mut session = state.session.lock().await;
         let pseud = ensure_pseud(&state, &mut session, &account).await?;
         let intent = state
@@ -585,6 +605,7 @@ pub(super) async fn write_comment(
             actions::post_comment(&mut session, &target_id, pseud.id, form.content.as_str()).await;
         (intent, result)
     };
+    super::solver::sync_solver_state(&state).await;
 
     match result {
         Ok(outcome) => {
@@ -662,6 +683,7 @@ pub(super) async fn write_bookmark(
         .map_err(AppError::from)?;
 
     let (intent, result) = {
+        let _solver_guard = state.solver_lock.lock().await;
         let mut session = state.session.lock().await;
         let pseud = ensure_pseud(&state, &mut session, &account).await?;
         let intent = state
@@ -671,6 +693,7 @@ pub(super) async fn write_bookmark(
         let result = actions::bookmark(&mut session, &target_id, pseud.id).await;
         (intent, result)
     };
+    super::solver::sync_solver_state(&state).await;
 
     match result {
         Ok(bookmark_id) => {
@@ -678,6 +701,7 @@ pub(super) async fn write_bookmark(
                 .store
                 .mark_bookmark(&account, &target_id, bookmark_id)
                 .await?;
+            invalidate_user_list(&state, &account, "bookmarks").await;
             let evidence = bookmark_id.map(|id| format!("bookmark {id}"));
             state
                 .store
@@ -694,6 +718,16 @@ pub(super) async fn write_bookmark(
         }
     }
 }
+/// Invalidates the 30-minute cached AO3 list pages for an account after a
+/// write mutates that list upstream.
+async fn invalidate_user_list(state: &AppState, account: &str, list: &str) {
+    let seg = crate::ao3::parse::percent_encode(account, crate::ao3::parse::SpaceMode::Percent20);
+    let prefix = format!("/users/{seg}/{list}");
+    if let Err(err) = state.store.invalidate_cached_prefix(account, &prefix).await {
+        eprintln!("invalidate page_cache {prefix}: {err}");
+    }
+}
+
 /// `&str` → normalized subscription kind (form-friendly).
 trait KindStr {
     fn pipe_kind(self) -> Option<&'static str>;

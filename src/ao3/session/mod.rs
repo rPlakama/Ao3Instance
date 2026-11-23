@@ -23,11 +23,12 @@ use crate::ao3::client::{Client, Response};
 use crate::ao3::jar::Jar;
 use crate::ao3::parse::{SpaceMode, percent_decode, percent_encode};
 use crate::ao3::pseuds::Pseud;
-use crate::ao3::solver::Solver;
+use crate::ao3::solver::{Solver, SolverStatus};
 use crate::config::Config;
 use crate::consts;
 use crate::crypto::SecretString;
 use crate::error::{Error, Result};
+use crate::time::now_secs;
 
 mod solver;
 
@@ -84,6 +85,7 @@ pub struct AccountSession {
     pseud: Option<Pseud>,
     client: Client,
     solver: Solver,
+    solver_status: SolverStatus,
     /// Operator gate: the jar may only reach the solver when this is true.
     solver_send_cookies: bool,
 }
@@ -96,6 +98,12 @@ impl AccountSession {
             config.min_request_spacing,
         )?;
         let solver = Solver::new(&config.solver)?;
+        let solver_status = SolverStatus {
+            mode: config.solver.mode,
+            reachable: false,
+            version: None,
+            checked_at: now_secs(),
+        };
         Ok(Self {
             account: String::new(),
             state: SessionState::LoggedOut,
@@ -103,6 +111,7 @@ impl AccountSession {
             pseud: None,
             client,
             solver,
+            solver_status,
             solver_send_cookies: config.solver.send_cookies,
         })
     }
@@ -187,18 +196,6 @@ impl AccountSession {
 
     /// Logs in with an AO3 username/password (ADR-0001 option B).
     pub async fn login(&mut self, account: &str, password: SecretString) -> Result<SessionState> {
-        self.login_with_solver(account, password, false).await
-    }
-
-    /// Logs in with an AO3 username/password, optionally loading the initial
-    /// `GET /users/login` page through the local solver so Cloudflare clearance
-    /// and the login CSRF token are captured together.
-    pub async fn login_with_solver(
-        &mut self,
-        account: &str,
-        password: SecretString,
-        use_solver: bool,
-    ) -> Result<SessionState> {
         self.ensure_alive()?;
         let account = validate_account(account)?;
         self.account = account.to_string();
@@ -208,37 +205,18 @@ impl AccountSession {
         self.client.set_jar(Jar::new());
         self.state = SessionState::LoggedOut;
 
-        let login_page = if use_solver {
-            match self.solve_get(consts::LOGIN_PATH, false).await {
-                Ok(page) => page,
-                Err(Error::SolverUnavailable(_)) => match self.client.get(consts::LOGIN_PATH).await
-                {
-                    Ok(page) => page,
-                    Err(err) => {
-                        self.wipe();
-                        return Err(err);
-                    }
-                },
-                Err(err) => {
-                    self.wipe();
-                    return Err(err);
-                }
-            }
-        } else {
-            match self.client.get(consts::LOGIN_PATH).await {
-                Ok(page) => page,
-                Err(err) => {
-                    self.wipe();
-                    return Err(err);
-                }
+        let login_page = match self.upstream_get(consts::LOGIN_PATH, None).await {
+            Ok(page) => page,
+            Err(err) => {
+                self.wipe();
+                return Err(err);
             }
         };
         self.classify_pre_login(&login_page)?;
         let token = parse_token_from_page(&login_page.body)?;
 
         let response = match self
-            .client
-            .post_form(
+            .upstream_post_form(
                 consts::LOGIN_PATH,
                 &[
                     ("user[login]", account),
@@ -309,7 +287,7 @@ impl AccountSession {
         );
 
         let before = self.jar_signature();
-        let response = match self.client.get(&path).await {
+        let response = match self.upstream_get(&path, None).await {
             Ok(response) => response,
             Err(err) => {
                 // Not proven either way: keep the jar, but stop claiming Active.
@@ -412,13 +390,19 @@ impl AccountSession {
         attempt.map(|()| self.state)
     }
 
+    /// Removes the local account, cookie jar, CSRF token and pseud without
+    /// contacting AO3.
+    pub fn clear_local(&mut self) {
+        self.account.clear();
+        self.wipe();
+    }
+
     async fn delete_logout(&mut self) -> Result<()> {
         let Some(token) = self.csrf.as_ref().map(|token| token.expose().to_string()) else {
             return Err(Error::LogoutFailed("no csrf token available".into()));
         };
         match self
-            .client
-            .delete_with_csrf(consts::LOGOUT_PATH, &token)
+            .upstream_delete_with_csrf(consts::LOGOUT_PATH, &token)
             .await
         {
             Ok(response) if response.location_contains("/auth_error") => Err(Error::CsrfExpired),
@@ -473,7 +457,7 @@ impl AccountSession {
         let token = self.csrf_token()?.to_string();
         let mut all: Vec<(&str, &str)> = fields.to_vec();
         all.push(("authenticity_token", token.as_str()));
-        self.client.post_form(path, &all).await
+        self.upstream_post_form(path, &all).await
     }
 
     /// CSRF-protected PATCH for a write action (reading flags).
@@ -481,28 +465,28 @@ impl AccountSession {
         let token = self.csrf_token()?.to_string();
         let mut all: Vec<(&str, &str)> = fields.to_vec();
         all.push(("authenticity_token", token.as_str()));
-        self.client.patch_form(path, &all).await
+        self.upstream_patch_form(path, &all).await
     }
 
     /// CSRF-protected DELETE for a write action (e.g. unsubscribe).
     pub async fn delete_write(&mut self, path: &str) -> Result<Response> {
         let token = self.csrf_token()?.to_string();
-        self.client.delete_with_csrf(path, &token).await
+        self.upstream_delete_with_csrf(path, &token).await
     }
 
     /// Fetches a fresh CSRF token from `/token_dispenser.json`.
     async fn fetch_csrf(&mut self) -> Result<()> {
         let before = self.jar_signature();
         let response = self
-            .client
-            .get_with_timeout(consts::TOKEN_PATH, consts::TOKEN_TIMEOUT)
+            .upstream_get(consts::TOKEN_PATH, Some(consts::TOKEN_TIMEOUT))
             .await?;
         if before != self.jar_signature() {
             self.csrf = None;
         }
         match response.status {
             200 => {
-                let parsed: TokenDispenser = serde_json::from_str(&response.body)
+                let json = crate::ao3::solver::extract_json_body(&response.body);
+                let parsed: TokenDispenser = serde_json::from_str(&json)
                     .map_err(|_| Error::UpstreamChanged("token dispenser is not JSON".into()))?;
                 if parsed.token.is_empty() {
                     return Err(Error::CsrfMissing);
@@ -613,7 +597,7 @@ impl AccountSession {
         Ok(())
     }
 
-    /// Local wipe: jar, token, state.
+    /// Local wipe: jar, token, pseud, state.
     fn wipe(&mut self) {
         self.client.set_jar(Jar::new());
         self.csrf = None;

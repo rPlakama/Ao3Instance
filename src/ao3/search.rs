@@ -519,20 +519,25 @@ fn text(element: &ElementRef<'_>) -> String {
         .join(" ")
 }
 
-fn parse_number(text: &str) -> Option<u64> {
+pub(crate) fn parse_number(text: &str) -> Option<u64> {
     let digits: String = text.chars().filter(char::is_ascii_digit).collect();
     (!digits.is_empty()).then(|| digits.parse().ok()).flatten()
 }
 
-/// Tag pages say `1 - 20 of 9,432 Works in Tag` or `1 Work in Tag`, rather than
-/// the search page's `9,432 Found`.
-fn parse_total_from_heading(text: &str) -> Option<u64> {
+/// Tag and bookmark pages say `1 - 20 of 9,432 Works in Tag`,
+/// `1 - 20 of 42 Bookmarks by user`, or `1 Work in Tag`.
+pub(crate) fn parse_total_from_heading(text: &str) -> Option<u64> {
     if let Some((_, tail)) = text.split_once(" of ") {
         return tail.split_whitespace().next().and_then(parse_number);
     }
     let mut words = text.split_whitespace();
     let count = words.next().and_then(parse_number)?;
-    if words.any(|word| word.eq_ignore_ascii_case("work") || word.eq_ignore_ascii_case("works")) {
+    if words.any(|word| {
+        word.eq_ignore_ascii_case("work")
+            || word.eq_ignore_ascii_case("works")
+            || word.eq_ignore_ascii_case("bookmark")
+            || word.eq_ignore_ascii_case("bookmarks")
+    }) {
         Some(count)
     } else {
         None

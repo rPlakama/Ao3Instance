@@ -79,7 +79,7 @@ impl Default for SolverConfig {
             mode: SolverMode::Auto,
             origin: consts::FLARESOLVERR_DEFAULT_URL.to_string(),
             allow_remote: false,
-            send_cookies: false,
+            send_cookies: true,
             max_timeout_ms: consts::FLARESOLVERR_MAX_TIMEOUT_MS,
         }
     }
@@ -113,7 +113,7 @@ impl Config {
         let mut solver_mode = SolverMode::Auto;
         let mut solver_url = consts::FLARESOLVERR_DEFAULT_URL.to_string();
         let mut solver_allow_remote = false;
-        let mut solver_send_cookies = false;
+        let mut solver_send_cookies = true;
         let mut solver_max_timeout = consts::FLARESOLVERR_MAX_TIMEOUT_MS;
         let mut xdg_config_home: Option<PathBuf> = None;
         let mut home: Option<PathBuf> = None;

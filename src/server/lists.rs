@@ -113,13 +113,21 @@ pub(super) async fn tag_browse(
         ..crate::ao3::search::LiveSearchQuery::default()
     };
     let path = live_query.path(page);
-    if let Some(body) = fetch_live_tag_page(&state, &path).await
-        && let Ok(results) = crate::ao3::search::parse_search_results(&body)
+    let refresh = first(&pairs, "refresh").as_deref() == Some("1");
+    let cache_account = super::cache::cache_account(&state).await;
+    if let Some(fetched) =
+        super::cache::fetch_cached_optional(&state, &cache_account, &path, true, refresh).await
+        && let Ok(results) = crate::ao3::search::parse_search_results(&fetched.body)
     {
         let page_ctx =
             super::page_context(&state, &format!("{tag} — AO3Instance"), NavSection::Fandoms).await;
         return Ok(Html(render::live_tag_page(
-            &page_ctx, &tag, page, &results, &filter,
+            &page_ctx,
+            &tag,
+            page,
+            &results,
+            &filter,
+            Some((fetched.from_cache, fetched.fetched_at)),
         )));
     }
     // Offline/cached fallback: the tag page still shows local works.
@@ -180,25 +188,6 @@ fn all(pairs: &[(String, String)], key: &str) -> Vec<String> {
         .collect()
 }
 
-async fn fetch_live_tag_page(state: &AppState, path: &str) -> Option<String> {
-    if super::solver::solver_available(state).await {
-        match super::solver::fetch_via_solver(state, path, true).await {
-            Ok(response) if response.status == 200 => return Some(response.body),
-            Err(crate::error::Error::SolverUnavailable(_)) => {}
-            Ok(_) | Err(_) => return None,
-        }
-    }
-    let response = {
-        let mut session = state.session.lock().await;
-        session
-            .client_mut()
-            .get_with_timeout(path, std::time::Duration::from_secs(10))
-            .await
-            .ok()?
-    };
-    (response.status == 200).then_some(response.body)
-}
-
 async fn render_browse(
     state: &AppState,
     query: BrowseQuery,
@@ -234,18 +223,132 @@ async fn render_browse(
     Ok(Html(render::browse_page(&page, &result, &filter)))
 }
 
-pub(super) async fn fandoms(State(state): State<Arc<AppState>>) -> Handled<Html<String>> {
+#[derive(Deserialize)]
+pub(super) struct FandomsQuery {
+    local: Option<String>,
+    refresh: Option<String>,
+}
+
+pub(super) async fn fandoms(
+    State(state): State<Arc<AppState>>,
+    Query(query): Query<FandomsQuery>,
+) -> Handled<Html<String>> {
+    let local = query.local.as_deref() == Some("1");
+    let refresh = query.refresh.as_deref() == Some("1");
+    if !local
+        && let Some(fetched) =
+            super::cache::fetch_cached_optional(&state, "", "/media", false, refresh).await
+    {
+        let media = crate::ao3::account_lists::parse_media_index(&fetched.body);
+        if !media.is_empty() {
+            let page =
+                super::page_context(&state, "Fandoms — AO3Instance", NavSection::Fandoms).await;
+            return Ok(Html(render::live_media_page(
+                &page,
+                &media,
+                Some((fetched.from_cache, fetched.fetched_at)),
+            )));
+        }
+    }
     let fandoms = state.store.list_fandoms().await?;
     let page = super::page_context(&state, "Fandoms — AO3Instance", NavSection::Fandoms).await;
     Ok(Html(render::fandoms_page(&page, &fandoms)))
 }
 
-pub(super) async fn dashboard(State(state): State<Arc<AppState>>) -> Handled<Html<String>> {
+#[derive(Deserialize)]
+pub(super) struct RefreshQuery {
+    refresh: Option<String>,
+}
+
+pub(super) async fn medium_fandoms(
+    State(state): State<Arc<AppState>>,
+    Path(medium): Path<String>,
+    Query(query): Query<RefreshQuery>,
+) -> Handled<Html<String>> {
+    let refresh = query.refresh.as_deref() == Some("1");
+    let encoded = crate::ao3::parse::percent_encode(&medium, crate::ao3::parse::SpaceMode::Percent20)
+        .replace("%2A", "*");
+    let path = format!("/media/{encoded}/fandoms");
+    if let Some(fetched) =
+        super::cache::fetch_cached_optional(&state, "", &path, false, refresh).await
+    {
+        let data = crate::ao3::account_lists::parse_medium_fandoms(&fetched.body);
+        let title = if data.title.is_empty() {
+            format!("{medium} — AO3Instance")
+        } else {
+            format!("{} — AO3Instance", data.title)
+        };
+        let page = super::page_context(&state, &title, NavSection::Fandoms).await;
+        return Ok(Html(render::live_medium_fandoms_page(
+            &page,
+            &medium,
+            &data,
+            Some((fetched.from_cache, fetched.fetched_at)),
+        )));
+    }
+    let fandoms = state.store.list_fandoms().await?;
+    let page =
+        super::page_context(&state, &format!("{medium} — AO3Instance"), NavSection::Fandoms).await;
+    Ok(Html(render::fandoms_page(&page, &fandoms)))
+}
+
+pub(super) async fn dashboard(
+    State(state): State<Arc<AppState>>,
+    Query(query): Query<RefreshQuery>,
+) -> Handled<Html<String>> {
+    let refresh = query.refresh.as_deref() == Some("1");
     let (account, _) = super::session_identity(&state).await;
+    let cache_acct = super::cache::cache_account(&state).await;
     let stats = state.store.cache_stats().await?;
     let subscriptions = state.store.list_subscriptions(&account).await?;
     let bookmarks = state.store.list_bookmarks(&account).await?;
     let reading = state.store.list_reading_history(&account).await?;
+    let cached_works = state.store.cached_work_ids().await?;
+
+    let (live_subs, live_bm, live_read) = if !cache_acct.is_empty() {
+        let user_seg =
+            crate::ao3::parse::percent_encode(&cache_acct, crate::ao3::parse::SpaceMode::Percent20);
+        let subs_path = format!("/users/{user_seg}/subscriptions");
+        let bm_path = format!("/users/{user_seg}/bookmarks");
+        let read_path = format!("/users/{user_seg}/readings");
+        let live_subs = super::cache::fetch_cached_optional(
+            &state,
+            &cache_acct,
+            &subs_path,
+            true,
+            refresh,
+        )
+        .await
+        .and_then(|fetched| crate::ao3::account_lists::parse_subscriptions(&fetched.body));
+        let live_bm = super::cache::fetch_cached_optional(
+            &state,
+            &cache_acct,
+            &bm_path,
+            true,
+            refresh,
+        )
+        .await
+        .and_then(|fetched| crate::ao3::account_lists::parse_bookmarks(&fetched.body));
+        let live_read = super::cache::fetch_cached_optional(
+            &state,
+            &cache_acct,
+            &read_path,
+            true,
+            refresh,
+        )
+        .await
+        .and_then(|fetched| crate::ao3::account_lists::parse_readings(&fetched.body));
+        (live_subs, live_bm, live_read)
+    } else {
+        (None, None, None)
+    };
+
+    let live = render::DashboardLive {
+        subscriptions: live_subs.as_ref(),
+        bookmarks: live_bm.as_ref(),
+        readings: live_read.as_ref(),
+        cached_works: &cached_works,
+    };
     let page = super::page_context(&state, "Dashboard — AO3Instance", NavSection::Dashboard).await;
     Ok(Html(render::dashboard_page(
         &page,
@@ -253,10 +356,69 @@ pub(super) async fn dashboard(State(state): State<Arc<AppState>>) -> Handled<Htm
         &subscriptions,
         &bookmarks,
         &reading,
+        &live,
     )))
 }
 
-pub(super) async fn subscriptions(State(state): State<Arc<AppState>>) -> Handled<Html<String>> {
+#[derive(Deserialize)]
+pub(super) struct SubscriptionsQuery {
+    #[serde(rename = "type")]
+    kind: Option<String>,
+    page: Option<i64>,
+    local: Option<String>,
+    refresh: Option<String>,
+}
+
+pub(super) async fn subscriptions(
+    State(state): State<Arc<AppState>>,
+    Query(query): Query<SubscriptionsQuery>,
+) -> Handled<Html<String>> {
+    let local = query.local.as_deref() == Some("1");
+    let refresh = query.refresh.as_deref() == Some("1");
+    let page_num = query.page.unwrap_or(1).max(1);
+    let filter_type = match query.kind.as_deref() {
+        Some("works") => Some("works"),
+        Some("series") => Some("series"),
+        Some("users") => Some("users"),
+        _ => None,
+    };
+    let cache_acct = super::cache::cache_account(&state).await;
+    if !local && !cache_acct.is_empty() {
+        let user_seg =
+            crate::ao3::parse::percent_encode(&cache_acct, crate::ao3::parse::SpaceMode::Percent20);
+        let mut qs = Vec::new();
+        if let Some(kind) = filter_type {
+            qs.push(format!("type={kind}"));
+        }
+        if page_num > 1 {
+            qs.push(format!("page={page_num}"));
+        }
+        let path = if qs.is_empty() {
+            format!("/users/{user_seg}/subscriptions")
+        } else {
+            format!("/users/{user_seg}/subscriptions?{}", qs.join("&"))
+        };
+        if let Some(fetched) =
+            super::cache::fetch_cached_optional(&state, &cache_acct, &path, true, refresh).await
+            && let Some(parsed) = crate::ao3::account_lists::parse_subscriptions(&fetched.body)
+        {
+            let cached_works = state.store.cached_work_ids().await?;
+            let page = super::page_context(
+                &state,
+                "Subscriptions — AO3Instance",
+                NavSection::Dashboard,
+            )
+            .await;
+            return Ok(Html(render::live_subscriptions_page(
+                &page,
+                &parsed,
+                page_num,
+                filter_type,
+                &cached_works,
+                Some((fetched.from_cache, fetched.fetched_at)),
+            )));
+        }
+    }
     let (account, _) = super::session_identity(&state).await;
     let entries = state.store.list_subscriptions(&account).await?;
     let page =
@@ -264,18 +426,113 @@ pub(super) async fn subscriptions(State(state): State<Arc<AppState>>) -> Handled
     Ok(Html(render::subscriptions_page(&page, &entries)))
 }
 
-pub(super) async fn bookmarks(State(state): State<Arc<AppState>>) -> Handled<Html<String>> {
+#[derive(Deserialize)]
+pub(super) struct BookmarksQuery {
+    page: Option<i64>,
+    local: Option<String>,
+    refresh: Option<String>,
+}
+
+pub(super) async fn bookmarks(
+    State(state): State<Arc<AppState>>,
+    Query(query): Query<BookmarksQuery>,
+) -> Handled<Html<String>> {
+    let local = query.local.as_deref() == Some("1");
+    let refresh = query.refresh.as_deref() == Some("1");
+    let page_num = query.page.unwrap_or(1).max(1);
+    let cache_acct = super::cache::cache_account(&state).await;
+    if !local && !cache_acct.is_empty() {
+        let user_seg =
+            crate::ao3::parse::percent_encode(&cache_acct, crate::ao3::parse::SpaceMode::Percent20);
+        let path = if page_num > 1 {
+            format!("/users/{user_seg}/bookmarks?page={page_num}")
+        } else {
+            format!("/users/{user_seg}/bookmarks")
+        };
+        if let Some(fetched) =
+            super::cache::fetch_cached_optional(&state, &cache_acct, &path, true, refresh).await
+            && let Some(parsed) = crate::ao3::account_lists::parse_bookmarks(&fetched.body)
+        {
+            let page =
+                super::page_context(&state, "Bookmarks — AO3Instance", NavSection::Dashboard).await;
+            return Ok(Html(render::live_bookmarks_page(
+                &page,
+                &parsed,
+                page_num,
+                Some((fetched.from_cache, fetched.fetched_at)),
+            )));
+        }
+    }
     let (account, _) = super::session_identity(&state).await;
     let entries = state.store.list_bookmarks(&account).await?;
     let page = super::page_context(&state, "Bookmarks — AO3Instance", NavSection::Dashboard).await;
     Ok(Html(render::bookmarks_page(&page, &entries)))
 }
 
-pub(super) async fn reading(State(state): State<Arc<AppState>>) -> Handled<Html<String>> {
+#[derive(Deserialize)]
+pub(super) struct ReadingQuery {
+    show: Option<String>,
+    page: Option<i64>,
+    local: Option<String>,
+    refresh: Option<String>,
+}
+
+pub(super) async fn reading(
+    State(state): State<Arc<AppState>>,
+    Query(query): Query<ReadingQuery>,
+) -> Handled<Html<String>> {
+    let local = query.local.as_deref() == Some("1");
+    let refresh = query.refresh.as_deref() == Some("1");
+    let to_read = query.show.as_deref() == Some("to-read");
+    let page_num = query.page.unwrap_or(1).max(1);
     let (account, _) = super::session_identity(&state).await;
-    let entries = state.store.list_reading_history(&account).await?;
+    let local_entries = state.store.list_reading_history(&account).await?;
+    let cache_acct = super::cache::cache_account(&state).await;
+    if !local && !cache_acct.is_empty() {
+        let user_seg =
+            crate::ao3::parse::percent_encode(&cache_acct, crate::ao3::parse::SpaceMode::Percent20);
+        let mut qs = Vec::new();
+        if to_read {
+            qs.push("show=to-read".to_string());
+        }
+        if page_num > 1 {
+            qs.push(format!("page={page_num}"));
+        }
+        let path = if qs.is_empty() {
+            format!("/users/{user_seg}/readings")
+        } else {
+            format!("/users/{user_seg}/readings?{}", qs.join("&"))
+        };
+        if let Some(fetched) =
+            super::cache::fetch_cached_optional(&state, &cache_acct, &path, true, refresh).await
+            && let Some(parsed) = crate::ao3::account_lists::parse_readings(&fetched.body)
+        {
+            let progress_map: std::collections::HashMap<String, (i64, i64)> = local_entries
+                .iter()
+                .filter_map(|entry| {
+                    let chapter = entry.progress_chapter?;
+                    let pct = entry.progress_pct.unwrap_or(0);
+                    Some((entry.work_id.clone(), (chapter, pct)))
+                })
+                .collect();
+            let title = if to_read {
+                "Marked for Later — AO3Instance"
+            } else {
+                "History — AO3Instance"
+            };
+            let page = super::page_context(&state, title, NavSection::Dashboard).await;
+            return Ok(Html(render::live_readings_page(
+                &page,
+                &parsed,
+                page_num,
+                to_read,
+                &progress_map,
+                Some((fetched.from_cache, fetched.fetched_at)),
+            )));
+        }
+    }
     let page = super::page_context(&state, "Reading — AO3Instance", NavSection::Dashboard).await;
-    Ok(Html(render::reading_page(&page, &entries)))
+    Ok(Html(render::reading_page(&page, &local_entries)))
 }
 
 pub(super) async fn about(State(state): State<Arc<AppState>>) -> Handled<Html<String>> {
@@ -286,6 +543,9 @@ pub(super) async fn about(State(state): State<Arc<AppState>>) -> Handled<Html<St
 #[derive(Deserialize)]
 pub(super) struct TagSearchQuery {
     q: Option<String>,
+    page: Option<i64>,
+    local: Option<String>,
+    refresh: Option<String>,
 }
 
 pub(super) async fn tag_search(
@@ -293,6 +553,32 @@ pub(super) async fn tag_search(
     Query(query): Query<TagSearchQuery>,
 ) -> Handled<Html<String>> {
     let raw = query.q.unwrap_or_default();
+    let local = query.local.as_deref() == Some("1");
+    let refresh = query.refresh.as_deref() == Some("1");
+    let page_num = query.page.unwrap_or(1).max(1);
+    if !local && !raw.trim().is_empty() {
+        let encoded =
+            crate::ao3::parse::percent_encode(raw.trim(), crate::ao3::parse::SpaceMode::Percent20);
+        let path = if page_num > 1 {
+            format!("/tags/search?tag_search%5Bname%5D={encoded}&page={page_num}")
+        } else {
+            format!("/tags/search?tag_search%5Bname%5D={encoded}")
+        };
+        if let Some(fetched) =
+            super::cache::fetch_cached_optional(&state, "", &path, false, refresh).await
+        {
+            let results = crate::ao3::account_lists::parse_tag_search(&fetched.body);
+            let page =
+                super::page_context(&state, "Tag Search — AO3Instance", NavSection::Fandoms).await;
+            return Ok(Html(render::live_tag_search_page(
+                &page,
+                &raw,
+                &results,
+                page_num,
+                Some((fetched.from_cache, fetched.fetched_at)),
+            )));
+        }
+    }
     let hits = state.store.search_tags(&raw, 100).await?;
     let page = super::page_context(&state, "Tag Search — AO3Instance", NavSection::Fandoms).await;
     Ok(Html(render::tag_search_page(&page, &raw, &hits)))
