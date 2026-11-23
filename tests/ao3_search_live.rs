@@ -205,7 +205,18 @@ async fn tag_pages_are_live_and_work_entries_link_to_tags() {
         ..LiveSearchQuery::default()
     };
     let tag_path = tag_query.path(1);
-    let upstream = Server::start(vec![(format!("GET {tag_path}"), Response::ok(tag_page))]);
+    let filtered_query = LiveSearchQuery {
+        include_tags: vec!["Explicit".into(), "Test".into()],
+        sort: Some("words".into()),
+        direction: Some("desc".into()),
+        page: 1,
+        ..LiveSearchQuery::default()
+    };
+    let filtered_path = filtered_query.path(1);
+    let upstream = Server::start(vec![
+        (format!("GET {tag_path}"), Response::ok(tag_page.clone())),
+        (format!("GET {filtered_path}"), Response::ok(tag_page)),
+    ]);
     let dir = support::temp_dir("live-tag");
     let (root, _store, handle) = serve(&dir, &upstream).await;
 
@@ -219,13 +230,39 @@ async fn tag_pages_are_live_and_work_entries_link_to_tags() {
         .expect("body");
     assert!(body.contains("2 Works in"), "{body}");
     assert!(body.contains("A Mirror of Small Things"), "{body}");
+    assert!(body.contains("id=\"work-filters\""), "{body}");
+    assert!(body.contains("Sort and Filter"), "{body}");
+    assert!(body.contains("Ratings"), "{body}");
+    assert!(body.contains("Include"), "{body}");
+    assert!(body.contains("Exclude"), "{body}");
     assert!(body.contains("/tags/Test%20Fandom/works"), "{body}");
     assert!(body.contains("/open/111"), "{body}");
-    assert!(upstream.requests().iter().any(|request| {
-        request
-            .path
-            .contains("work_search%5Bother_tag_names%5D=Test")
-    }));
+    let filtered = http()
+        .get(format!(
+            "{root}/tags/Test/works?include_tag=Explicit&sort=words"
+        ))
+        .send()
+        .await
+        .expect("filtered tag page")
+        .text()
+        .await
+        .expect("filtered body");
+    assert!(
+        filtered.contains("value=\"Explicit\" checked"),
+        "{filtered}"
+    );
+    assert!(
+        upstream.requests().iter().any(|request| {
+            request
+                .path
+                .contains("work_search%5Bother_tag_names%5D=Explicit%2C%20Test")
+                && request
+                    .path
+                    .contains("work_search%5Bsort_column%5D=word_count")
+        }),
+        "{:?}",
+        upstream.requests()
+    );
 
     handle.abort();
     drop(std::fs::remove_dir_all(dir));

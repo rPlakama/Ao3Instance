@@ -48,11 +48,11 @@ pub use home::home_page;
 pub use lists::{bookmarks_page, reading_page, subscriptions_page};
 pub use not_cached::not_cached_page;
 pub use pagination::pagination;
+pub use search::{TagFilter, live_tag_page, search_challenge_page};
 pub use search::{
     filter_from as search_filter_from, live_search_form_page, live_search_results_page,
     search_form_page, search_results_page,
 };
-pub use search::{live_tag_page, search_challenge_page};
 pub use session::{logout_confirm_page, session_page};
 pub use tag_search::tag_search_page;
 pub use work::{ReadContext, chapter_document, read_page};

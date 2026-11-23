@@ -136,6 +136,17 @@ OS-dark button styling was scoped to auto/reversi skins, and appearance is now a
 persisted three-way setting (Auto / Classic / Reversi) exposed on the Session
 page and footer via `POST /skin` (`settings` table, migration 0012).
 
+**Live tag filters (2026-11-23):** tag pages now render AO3's Sort and Filter
+sidebar (`otwarchive/app/views/works/_filters.html.erb`): sort by date
+updated/posted/words/kudos/hits/comments/bookmarks/best match, Include and
+Exclude groups for ratings, archive warnings and categories, fandom/character/
+relationship/additional-tag text filters, other tags, completion, crossovers,
+word range, language and search-within. Submissions are parsed from the raw
+query (repeated `include_tag`/`exclude_tag` keys), mapped onto AO3's
+`work_search[...]` parameters, and pagination preserves them. The desktop
+layout uses the wider AO3 content width; mobile puts the filter block before the
+work list.
+
 **Known deviations (documented, not blockers):** required-tag marks are
 styled text badges rather than SVG artwork; the skin is a single-operator
 global preference rather than a per-browser cookie; a release/version bump is

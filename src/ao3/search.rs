@@ -232,8 +232,12 @@ impl LiveSearchQuery {
 fn sort_columns(sort: Option<&str>, direction: Option<&str>) -> (&'static str, &'static str) {
     let column = match sort.unwrap_or("best_match") {
         "date" => "revised_at",
+        "created_at" => "created_at",
         "words" => "word_count",
         "kudos" => "kudos_count",
+        "hits" => "hits",
+        "comments" => "comments_count",
+        "bookmarks" => "bookmarks_count",
         "title" => "title_to_sort_on",
         _ => "_score",
     };

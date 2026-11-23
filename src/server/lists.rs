@@ -3,7 +3,7 @@
 use std::sync::Arc;
 
 use axum::{
-    extract::{Path, Query, State},
+    extract::{Path, Query, RawQuery, State},
     response::Html,
 };
 use serde::Deserialize;
@@ -22,7 +22,6 @@ pub(super) struct BrowseQuery {
     status: Option<String>,
     sort: Option<String>,
     page: Option<i64>,
-    local: Option<String>,
 }
 
 pub(super) async fn browse(
@@ -35,16 +34,81 @@ pub(super) async fn browse(
 pub(super) async fn tag_browse(
     State(state): State<Arc<AppState>>,
     Path(tag): Path<String>,
-    Query(query): Query<BrowseQuery>,
+    RawQuery(raw): RawQuery,
 ) -> Handled<Html<String>> {
-    if query.local.as_deref() == Some("1") {
-        return render_browse(&state, query, Some(tag)).await;
+    let pairs = query_pairs(raw.as_deref().unwrap_or_default());
+    let page = first(&pairs, "page")
+        .and_then(|value| value.parse::<i64>().ok())
+        .unwrap_or(1)
+        .max(1);
+    if first(&pairs, "local").as_deref() == Some("1") {
+        return render_browse(&state, browse_query(page), Some(tag)).await;
     }
-    let page = query.page.unwrap_or(1).max(1);
+
+    let sort = first(&pairs, "sort").unwrap_or_else(|| "date".to_string());
+    let direction = if sort == "title" { "asc" } else { "desc" };
+    let filter = render::TagFilter {
+        sort,
+        direction: direction.to_string(),
+        query: first(&pairs, "q").unwrap_or_default(),
+        include: all(&pairs, "include_tag"),
+        exclude: all(&pairs, "exclude_tag"),
+        include_fandoms: first(&pairs, "include_fandoms").unwrap_or_default(),
+        include_characters: first(&pairs, "include_characters").unwrap_or_default(),
+        include_relationships: first(&pairs, "include_relationships").unwrap_or_default(),
+        include_additional: first(&pairs, "include_additional").unwrap_or_default(),
+        other_include: first(&pairs, "other_tags_include").unwrap_or_default(),
+        exclude_fandoms: first(&pairs, "exclude_fandoms").unwrap_or_default(),
+        exclude_characters: first(&pairs, "exclude_characters").unwrap_or_default(),
+        exclude_relationships: first(&pairs, "exclude_relationships").unwrap_or_default(),
+        exclude_additional: first(&pairs, "exclude_additional").unwrap_or_default(),
+        other_exclude: first(&pairs, "other_tags_exclude").unwrap_or_default(),
+        complete: first(&pairs, "complete").unwrap_or_default(),
+        crossover: first(&pairs, "crossover").unwrap_or_default(),
+        words_from: first(&pairs, "words_from").unwrap_or_default(),
+        words_to: first(&pairs, "words_to").unwrap_or_default(),
+        language: first(&pairs, "language").unwrap_or_default(),
+    };
+    let mut include_tags = filter.include.clone();
+    for value in [
+        &filter.include_fandoms,
+        &filter.include_characters,
+        &filter.include_relationships,
+        &filter.include_additional,
+        &filter.other_include,
+    ] {
+        include_tags.extend(tag_list(value));
+    }
+    include_tags.push(tag.clone());
+    let mut exclude_tags = filter.exclude.clone();
+    for value in [
+        &filter.exclude_fandoms,
+        &filter.exclude_characters,
+        &filter.exclude_relationships,
+        &filter.exclude_additional,
+        &filter.other_exclude,
+    ] {
+        exclude_tags.extend(tag_list(value));
+    }
+    let words = match (
+        filter.words_from.trim().parse::<u64>().ok(),
+        filter.words_to.trim().parse::<u64>().ok(),
+    ) {
+        (Some(from), Some(to)) => Some(format!("{from}-{to}")),
+        (Some(from), None) => Some(format!(">{from}")),
+        (None, Some(to)) => Some(format!("<{to}")),
+        (None, None) => None,
+    };
     let live_query = crate::ao3::search::LiveSearchQuery {
-        include_tags: vec![tag.clone()],
-        sort: Some("date".to_string()),
-        direction: Some("desc".to_string()),
+        query: filter.query.clone(),
+        include_tags,
+        exclude_tags,
+        complete: nonempty(&filter.complete),
+        crossover: nonempty(&filter.crossover),
+        word_count: words,
+        language: nonempty(&filter.language),
+        sort: Some(filter.sort.clone()),
+        direction: Some(filter.direction.clone()),
         page,
         ..crate::ao3::search::LiveSearchQuery::default()
     };
@@ -54,10 +118,66 @@ pub(super) async fn tag_browse(
     {
         let page_ctx =
             super::page_context(&state, &format!("{tag} — AO3Instance"), NavSection::Fandoms).await;
-        return Ok(Html(render::live_tag_page(&page_ctx, &tag, page, &results)));
+        return Ok(Html(render::live_tag_page(
+            &page_ctx, &tag, page, &results, &filter,
+        )));
     }
     // Offline/cached fallback: the tag page still shows local works.
-    render_browse(&state, query, Some(tag)).await
+    render_browse(&state, browse_query(page), Some(tag)).await
+}
+
+fn browse_query(page: i64) -> BrowseQuery {
+    BrowseQuery {
+        rating: None,
+        author: None,
+        fandom: None,
+        tag: None,
+        language: None,
+        status: None,
+        sort: None,
+        page: Some(page),
+    }
+}
+
+fn nonempty(value: &str) -> Option<String> {
+    (!value.trim().is_empty()).then(|| value.trim().to_string())
+}
+
+fn tag_list(value: &str) -> Vec<String> {
+    value
+        .split(',')
+        .map(str::trim)
+        .filter(|tag| !tag.is_empty())
+        .map(str::to_string)
+        .collect()
+}
+
+fn query_pairs(raw: &str) -> Vec<(String, String)> {
+    raw.split('&')
+        .filter(|pair| !pair.is_empty())
+        .filter_map(|pair| {
+            let (key, value) = pair.split_once('=').unwrap_or((pair, ""));
+            let decode = |text: &str| crate::ao3::parse::percent_decode(&text.replace('+', " "));
+            Some((decode(key)?, decode(value)?))
+        })
+        .collect()
+}
+
+fn first(pairs: &[(String, String)], key: &str) -> Option<String> {
+    pairs
+        .iter()
+        .rev()
+        .find(|(name, _)| name == key)
+        .map(|(_, value)| value.clone())
+}
+
+fn all(pairs: &[(String, String)], key: &str) -> Vec<String> {
+    pairs
+        .iter()
+        .filter(|(name, _)| name == key)
+        .map(|(_, value)| value.clone())
+        .filter(|value| !value.is_empty())
+        .collect()
 }
 
 async fn fetch_live_tag_page(state: &AppState, path: &str) -> Option<String> {

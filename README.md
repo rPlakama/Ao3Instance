@@ -36,7 +36,9 @@ Features:
   session on `/session` for account-specific results. See
   [docs/search-parity.md](docs/search-parity.md).
 - Live tag pages: every tag chip opens `/tags/<tag>/works`, fetched from AO3
-  with a cached fallback, including tags on uncached search results.
+  with a cached fallback, including tags on uncached search results. The tag
+  page carries AO3's Sort and Filter sidebar (sort, Include/Exclude tag groups,
+  other tags, completion/word-count/language/search-within).
 - One-click work opening: a title in live results goes through `/open/<id>`,
   caches on first use and lands in the reader.
 - Automatic reading progress: the reader tracks scroll percentage inside the

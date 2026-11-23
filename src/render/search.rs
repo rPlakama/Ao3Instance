@@ -738,12 +738,332 @@ pub fn live_search_results_page(
     layout(ctx, &body)
 }
 
+/// Selected filters for a live tag page. Kept separate from the upstream query
+/// so the sidebar can be re-rendered with the exact submitted values.
+#[derive(Debug, Clone)]
+pub struct TagFilter {
+    pub sort: String,
+    pub direction: String,
+    pub query: String,
+    pub include: Vec<String>,
+    pub exclude: Vec<String>,
+    pub include_fandoms: String,
+    pub include_characters: String,
+    pub include_relationships: String,
+    pub include_additional: String,
+    pub other_include: String,
+    pub exclude_fandoms: String,
+    pub exclude_characters: String,
+    pub exclude_relationships: String,
+    pub exclude_additional: String,
+    pub other_exclude: String,
+    pub complete: String,
+    pub crossover: String,
+    pub words_from: String,
+    pub words_to: String,
+    pub language: String,
+}
+
+impl Default for TagFilter {
+    fn default() -> Self {
+        Self {
+            sort: "date".to_string(),
+            direction: "desc".to_string(),
+            query: String::new(),
+            include: Vec::new(),
+            exclude: Vec::new(),
+            include_fandoms: String::new(),
+            include_characters: String::new(),
+            include_relationships: String::new(),
+            include_additional: String::new(),
+            other_include: String::new(),
+            exclude_fandoms: String::new(),
+            exclude_characters: String::new(),
+            exclude_relationships: String::new(),
+            exclude_additional: String::new(),
+            other_exclude: String::new(),
+            complete: String::new(),
+            crossover: String::new(),
+            words_from: String::new(),
+            words_to: String::new(),
+            language: String::new(),
+        }
+    }
+}
+
+impl TagFilter {
+    fn to_query(&self) -> String {
+        let encode = |value: &str| percent_encode(value, SpaceMode::Percent20);
+        let mut parts: Vec<String> = Vec::new();
+        if !self.sort.is_empty() && self.sort != "date" {
+            parts.push(format!("sort={}", encode(&self.sort)));
+        }
+        if !self.query.is_empty() {
+            parts.push(format!("q={}", encode(&self.query)));
+        }
+        for (name, value) in [
+            ("include_fandoms", &self.include_fandoms),
+            ("include_characters", &self.include_characters),
+            ("include_relationships", &self.include_relationships),
+            ("include_additional", &self.include_additional),
+            ("other_tags_include", &self.other_include),
+            ("exclude_fandoms", &self.exclude_fandoms),
+            ("exclude_characters", &self.exclude_characters),
+            ("exclude_relationships", &self.exclude_relationships),
+            ("exclude_additional", &self.exclude_additional),
+            ("other_tags_exclude", &self.other_exclude),
+            ("words_from", &self.words_from),
+            ("words_to", &self.words_to),
+            ("language", &self.language),
+        ] {
+            if !value.is_empty() {
+                parts.push(format!("{name}={}", encode(value)));
+            }
+        }
+        if !self.complete.is_empty() {
+            parts.push(format!("complete={}", encode(&self.complete)));
+        }
+        if !self.crossover.is_empty() {
+            parts.push(format!("crossover={}", encode(&self.crossover)));
+        }
+        for tag in &self.include {
+            parts.push(format!("include_tag={}", encode(tag)));
+        }
+        for tag in &self.exclude {
+            parts.push(format!("exclude_tag={}", encode(tag)));
+        }
+        parts.join("&")
+    }
+}
+
+fn facet_group(action: &str, label: &str, values: &[&str], selected: &[String]) -> String {
+    let mut out = format!(
+        "<details class=\"filter-group\"><summary>{label}</summary><ul class=\"facet-list\">"
+    );
+    for value in values {
+        let checked = if selected.iter().any(|item| item == value) {
+            " checked"
+        } else {
+            ""
+        };
+        out.push_str(&format!(
+            "<li><label><input type=\"checkbox\" name=\"{action}_tag\" value=\"{value}\"{checked}>              {value}</label></li>",
+            value = escape(value),
+        ));
+    }
+    out.push_str("</ul></details>");
+    out
+}
+
+fn text_group(name: &str, label: &str, value: &str, placeholder: &str) -> String {
+    format!(
+        "<details class=\"filter-group\"><summary>{label}</summary>         <input type=\"text\" name=\"{name}\" value=\"{}\" placeholder=\"{}\"></details>",
+        escape(value),
+        escape(placeholder)
+    )
+}
+
+fn tag_filter_sidebar(tag: &str, filter: &TagFilter) -> String {
+    let path = format!("/tags/{}/works", percent_encode(tag, SpaceMode::Percent20));
+    let mut out = format!(
+        "<form id=\"work-filters\" class=\"filters\" method=\"get\" action=\"{path}\">\
+         <h3 class=\"landmark heading\">Filters</h3><fieldset>\
+         <legend>Filter results:</legend>\
+         <div class=\"filter-submit\"><button type=\"submit\">Sort and Filter</button></div>\
+         <label class=\"filter-sort\">Sort by<select name=\"sort\">"
+    );
+    for (value, label) in [
+        ("date", "Date Updated"),
+        ("created_at", "Date Posted"),
+        ("words", "Word Count"),
+        ("kudos", "Kudos"),
+        ("hits", "Hits"),
+        ("comments", "Comments"),
+        ("bookmarks", "Bookmarks"),
+        ("best_match", "Best Match"),
+    ] {
+        out.push_str(&format!(
+            "<option value=\"{value}\"{}>{label}</option>",
+            if filter.sort == value {
+                " selected"
+            } else {
+                ""
+            }
+        ));
+    }
+    out.push_str("</select></label>");
+
+    for (action, label, include) in [("include", "Include", true), ("exclude", "Exclude", false)] {
+        let selected = if include {
+            &filter.include
+        } else {
+            &filter.exclude
+        };
+        out.push_str(&format!("<h4 class=\"filter-heading\">{label}</h4>"));
+        out.push_str(&facet_group(
+            action,
+            "Ratings",
+            &[
+                "Not Rated",
+                "General Audiences",
+                "Teen And Up Audiences",
+                "Mature",
+                "Explicit",
+            ],
+            selected,
+        ));
+        out.push_str(&facet_group(
+            action,
+            "Archive Warnings",
+            &[
+                "Creator Chose Not To Use Archive Warnings",
+                "No Archive Warnings Apply",
+                "Graphic Depictions Of Violence",
+                "Major Character Death",
+                "Rape/Non-Con",
+                "Underage Sex",
+            ],
+            selected,
+        ));
+        out.push_str(&facet_group(
+            action,
+            "Categories",
+            &["F/F", "F/M", "Gen", "M/M", "Multi", "Other"],
+            selected,
+        ));
+        let prefix = if include { "include" } else { "exclude" };
+        let (fandoms, characters, relationships, additional, other) = if include {
+            (
+                &filter.include_fandoms,
+                &filter.include_characters,
+                &filter.include_relationships,
+                &filter.include_additional,
+                &filter.other_include,
+            )
+        } else {
+            (
+                &filter.exclude_fandoms,
+                &filter.exclude_characters,
+                &filter.exclude_relationships,
+                &filter.exclude_additional,
+                &filter.other_exclude,
+            )
+        };
+        out.push_str(&text_group(
+            &format!("{prefix}_fandoms"),
+            "Fandoms",
+            fandoms,
+            "comma-separated fandom names",
+        ));
+        out.push_str(&text_group(
+            &format!("{prefix}_characters"),
+            "Characters",
+            characters,
+            "comma-separated character names",
+        ));
+        out.push_str(&text_group(
+            &format!("{prefix}_relationships"),
+            "Relationships",
+            relationships,
+            "comma-separated relationship names",
+        ));
+        out.push_str(&text_group(
+            &format!("{prefix}_additional"),
+            "Additional Tags",
+            additional,
+            "comma-separated freeform tags",
+        ));
+        out.push_str(&text_group(
+            &format!("other_tags_{prefix}"),
+            "Other tags",
+            other,
+            "comma-separated tag names",
+        ));
+    }
+
+    out.push_str("<h4 class=\"filter-heading\">More Options</h4>");
+    out.push_str(
+        "<details class=\"filter-group\"><summary>Completion Status</summary><ul class=\"facet-list\">",
+    );
+    for (value, label) in [
+        ("", "All works"),
+        ("T", "Complete works only"),
+        ("F", "Works in progress only"),
+    ] {
+        out.push_str(&format!(
+            "<li><label><input type=\"radio\" name=\"complete\" value=\"{value}\"{}> {label}</label></li>",
+            if filter.complete == value { " checked" } else { "" }
+        ));
+    }
+    out.push_str("</ul></details>");
+    out.push_str(
+        "<details class=\"filter-group\"><summary>Crossovers</summary><ul class=\"facet-list\">",
+    );
+    for (value, label) in [
+        ("", "Include crossovers"),
+        ("F", "Exclude crossovers"),
+        ("T", "Only crossovers"),
+    ] {
+        out.push_str(&format!(
+            "<li><label><input type=\"radio\" name=\"crossover\" value=\"{value}\"{}> {label}</label></li>",
+            if filter.crossover == value { " checked" } else { "" }
+        ));
+    }
+    out.push_str("</ul></details>");
+    out.push_str(&format!(
+        "<details class=\"filter-group\" open><summary>Word Count</summary>\
+         <div class=\"range\"><label>From <input type=\"number\" min=\"0\" name=\"words_from\" value=\"{}\"></label>\
+         <label>To <input type=\"number\" min=\"0\" name=\"words_to\" value=\"{}\"></label></div></details>",
+        escape(&filter.words_from),
+        escape(&filter.words_to)
+    ));
+    out.push_str(&format!(
+        "<label class=\"filter-query\">Search within results\
+         <input type=\"search\" name=\"q\" value=\"{}\"></label>",
+        escape(&filter.query)
+    ));
+    out.push_str(
+        "<label class=\"filter-sort\">Language<select name=\"language\">\
+         <option value=\"\">Any language</option>",
+    );
+    for (code, label) in [
+        ("en", "English"),
+        ("es", "Español"),
+        ("fr", "Français"),
+        ("de", "Deutsch"),
+        ("it", "Italiano"),
+        ("nl", "Nederlands"),
+        ("ptBR", "Português brasileiro"),
+        ("ru", "Русский"),
+        ("zh", "中文"),
+        ("ja", "日本語"),
+    ] {
+        out.push_str(&format!(
+            "<option value=\"{code}\"{}>{label}</option>",
+            if filter.language == code {
+                " selected"
+            } else {
+                ""
+            }
+        ));
+    }
+    out.push_str("</select></label>");
+    out.push_str(
+        "<div class=\"filter-submit\"><button type=\"submit\">Sort and Filter</button></div>\
+         <p class=\"meta\"><a href=\"",
+    );
+    out.push_str(&path);
+    out.push_str("\">Clear filters</a></p></fieldset></form>");
+    out
+}
+
 /// Live tag works page (`/tags/<tag>/works`).
 pub fn live_tag_page(
     ctx: &PageContext,
     tag: &str,
     page: i64,
     results: &LiveSearchResults,
+    filter: &TagFilter,
 ) -> String {
     let total = i64::try_from(results.total).unwrap_or(i64::MAX);
     let per_page = 20;
@@ -772,6 +1092,9 @@ pub fn live_tag_page(
          <li><a href=\"/bookmarks\">Bookmarks</a></li>\
          <li><a href=\"/works\">Clear tag</a></li></ul>",
     );
+    let tag_path = format!("/tags/{}/works", percent_encode(tag, SpaceMode::Percent20));
+    let extra_query = filter.to_query();
+    body.push_str("<div class=\"browse-grid\"><section class=\"browse-results\">");
     body.push_str(&format!(
         "<p class=\"meta\"><a href=\"/works/search?include_tags={}\">Search within this tag on AO3</a></p>",
         percent_encode(tag, SpaceMode::Percent20)
@@ -784,8 +1107,13 @@ pub fn live_tag_page(
             body.push_str(&live_blurb(work));
         }
         body.push_str("</ol>");
-        let path = format!("/tags/{}/works", percent_encode(tag, SpaceMode::Percent20));
-        body.push_str(&crate::render::pagination(page, per_page, total, &path, ""));
+        body.push_str(&crate::render::pagination(
+            page,
+            per_page,
+            total,
+            &tag_path,
+            &extra_query,
+        ));
         if ctx.account.is_empty() {
             body.push_str(
                 "<p class=\"meta\">Signed out: this is AO3's signed-out tag page. \
@@ -794,6 +1122,9 @@ pub fn live_tag_page(
             );
         }
     }
+    body.push_str("</section>");
+    body.push_str(&tag_filter_sidebar(tag, filter));
+    body.push_str("</div>");
     layout(ctx, &body)
 }
 
