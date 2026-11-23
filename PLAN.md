@@ -124,8 +124,9 @@ at live `/tags/<tag>/works` pages (cached fallback, same solver/clearance path a
 search), work titles in live results go through `GET /open/<id>` which caches on
 first click, and the reader has automatic scroll progress. The existing
 `progress.pct` column is now used, `POST /progress/auto` accepts throttled
-beacons from a small sandboxed-iframe script, and `/read/<id>` restores the saved
-chapter plus within-chapter scroll percentage. Home, `/reading` and the
+beacons from the parent reader script observing a script-free same-origin
+chapter iframe, and `/read/<id>` restores the saved chapter plus within-chapter
+scroll percentage. Home, `/reading` and the
 dashboard show overall percentages.
 
 **Known deviations (documented, not blockers):** required-tag marks are
