@@ -157,6 +157,15 @@ inbox items render read-only with an AO3 link. Signed-out visitors get the
 public news module plus local/cached fallbacks and sign-in prompts for the
 account-only modules.
 
+**Themes and public AO3 skins (2026-11-23):** added Snow, Frost, Cloud, Sepia and
+Midnight palettes alongside Auto/Classic/Reversi, all persisted via
+`display.skin`. Mobile dropdowns now expand in normal flow instead of covering
+the search tip. `/themes` fetches AO3's public `/skins` catalog and imports a
+selected public skin's CSS from `/skins/<id>` (stored in `display.skin_css`,
+injected after the base stylesheet as `data-skin="public"`); the catalog parser
+was validated against a real 92-skin AO3 page. `/themes/clear` and selecting a
+built-in theme remove the custom CSS.
+
 **Known deviations (documented, not blockers):** required-tag marks are
 styled text badges rather than SVG artwork; the skin is a single-operator
 global preference rather than a per-browser cookie; a release/version bump is

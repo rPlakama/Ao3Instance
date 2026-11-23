@@ -371,7 +371,8 @@ pub fn read_page(
 /// chapter text would stay dark on a Reversi background.
 pub fn chapter_document(work_title: &str, chapter: &StoredChapter, skin: &str) -> String {
     let skin = match skin {
-        "reversi" => "reversi",
+        "auto" => "auto",
+        "reversi" | "midnight" => "reversi",
         _ => "default",
     };
     let mut body = String::new();

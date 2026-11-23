@@ -91,10 +91,12 @@ Limits and behaviour:
 `/users/login`, `/works/search` and `/works/{id}` mirror AO3 URLs; uncached
 works show an offline miss card instead of fetching on a `GET`.
 
-Appearance: `/session#appearance` and the footer offer Auto (follow the OS
-`prefers-color-scheme`), Classic (always light) and Reversi (always dark) via
-`POST /skin`. The choice is stored in the local `settings` table and survives
-restarts; the default is Classic.
+Appearance: `/session#appearance` and the footer offer Auto, Classic, Reversi,
+Snow, Frost, Cloud, Sepia and Midnight via `POST /skin`; `/themes` can import a
+public AO3 site skin from `archiveofourown.org/skins`. The choice and imported
+CSS are stored in the local `settings` table and survive restarts; the default
+is Classic. Imported skin CSS is trusted local styling: it can override layout,
+so use `/themes/clear` to return to the built-in look.
 
 ## First use
 

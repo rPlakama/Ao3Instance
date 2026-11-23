@@ -72,8 +72,10 @@ pub struct PageContext {
     pub write_enabled: bool,
     pub cached_count: i64,
     pub solver: SolverSummary,
-    /// `default` or `reversi`; rendered as `data-skin` on <html>.
+    /// Theme name; rendered as `data-skin` on <html>.
     pub skin: String,
+    /// Optional CSS imported from a public AO3 site skin.
+    pub skin_css: Option<String>,
 }
 
 impl PageContext {
@@ -90,6 +92,7 @@ impl PageContext {
                 ..SolverSummary::default()
             },
             skin: "default".to_string(),
+            skin_css: None,
         }
     }
 
@@ -116,6 +119,11 @@ impl PageContext {
 
     pub fn with_skin(mut self, skin: impl Into<String>) -> Self {
         self.skin = skin.into();
+        self
+    }
+
+    pub fn with_skin_css(mut self, css: Option<String>) -> Self {
+        self.skin_css = css;
         self
     }
 }
@@ -354,10 +362,17 @@ fn footer(ctx: &PageContext) -> String {
 
 /// The one document skeleton. `body` is already-escaped markup from a segment.
 pub(super) fn layout(ctx: &PageContext, body: &str) -> String {
+    let public_css = ctx.skin_css.as_deref().map_or_else(String::new, |css| {
+        format!(
+            "<style id=\"public-skin\">{}</style>",
+            css.replace("</style", "")
+                .replace("@import", "/* @import removed */")
+        )
+    });
     format!(
         "<!DOCTYPE html>\n<html lang=\"en\" data-skin=\"{skin}\"><head><meta charset=\"utf-8\">\
          <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\
-         <title>{title}</title><link rel=\"stylesheet\" href=\"/assets/ao3.css\"></head>\
+         <title>{title}</title><link rel=\"stylesheet\" href=\"/assets/ao3.css\">{public_css}</head>\
          <body><header id=\"header\"><div class=\"header-inner\">\
          <h1 class=\"heading\"><a href=\"/\">AO3Instance<sup>local</sup></a></h1>\
          <div id=\"greeting\">{greeting}</div></div>{nav}</header>\

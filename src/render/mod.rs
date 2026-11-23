@@ -34,6 +34,7 @@ mod pagination;
 mod search;
 mod session;
 mod tag_search;
+mod themes;
 mod work;
 
 pub use about::about_page;
@@ -55,6 +56,7 @@ pub use search::{
 };
 pub use session::{logout_confirm_page, session_page};
 pub use tag_search::tag_search_page;
+pub use themes::themes_page;
 pub use work::{ReadContext, chapter_document, read_page};
 
 /// Overall percentage from a within-chapter position.

@@ -243,17 +243,19 @@ pub(super) async fn skin(
     Form(form): Form<SkinForm>,
 ) -> Handled<Redirect> {
     let skin = match form.skin.trim() {
-        "reversi" => "reversi",
-        "default" => "default",
-        "auto" => "auto",
+        "auto" | "default" | "reversi" | "snow" | "frost" | "cloud" | "sepia" | "midnight" => {
+            form.skin.trim()
+        }
         other => {
             return Err(AppError::BadRequest(format!(
-                "unknown skin {other:?}; expected auto, default or reversi"
+                "unknown skin {other:?}; expected auto, default, reversi, snow, frost, cloud, sepia or midnight"
             )));
         }
     };
     state.store.set_setting("display.skin", skin).await?;
+    state.store.set_setting("display.skin_css", "").await?;
     *state.skin.write().await = skin.to_string();
+    *state.skin_css.write().await = None;
     let next = form
         .next
         .as_deref()

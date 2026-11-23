@@ -13,6 +13,7 @@ mod lists;
 mod reads;
 mod session;
 mod solver;
+mod themes;
 mod writes;
 
 use std::sync::Arc;
@@ -51,8 +52,10 @@ pub struct AppState {
     pub solver_status: tokio::sync::RwLock<SolverStatus>,
     /// Single-flight guard: one solve (and one Chromium) at a time.
     pub solver_lock: tokio::sync::Mutex<()>,
-    /// Global display preference (`default` or `reversi`).
+    /// Global display preference (built-in theme or `public`).
     pub skin: tokio::sync::RwLock<String>,
+    /// Custom CSS imported from an AO3 public site skin.
+    pub skin_css: tokio::sync::RwLock<Option<String>>,
     /// One solver-fetched search page awaiting its redirect, short-lived.
     pub solved_search: tokio::sync::Mutex<Option<SolvedSearch>>,
     /// Last authenticated AO3 home page, reused across home visits.
@@ -110,8 +113,27 @@ pub async fn router(config: &Config, store: Store) -> Result<Router> {
         .await
         .ok()
         .flatten()
-        .filter(|skin| matches!(skin.as_str(), "auto" | "default" | "reversi"))
+        .filter(|skin| {
+            matches!(
+                skin.as_str(),
+                "auto"
+                    | "default"
+                    | "reversi"
+                    | "snow"
+                    | "frost"
+                    | "cloud"
+                    | "sepia"
+                    | "midnight"
+                    | "public"
+            )
+        })
         .unwrap_or_else(|| "default".to_string());
+    let saved_skin_css = store
+        .get_setting("display.skin_css")
+        .await
+        .ok()
+        .flatten()
+        .filter(|css| !css.trim().is_empty());
 
     if let Some(saved) = store.load_session().await? {
         match Jar::decrypt(&key, &saved.jar_enc) {
@@ -138,6 +160,7 @@ pub async fn router(config: &Config, store: Store) -> Result<Router> {
         solver_status: tokio::sync::RwLock::new(solver_status),
         solver_lock: tokio::sync::Mutex::new(()),
         skin: tokio::sync::RwLock::new(saved_skin),
+        skin_css: tokio::sync::RwLock::new(saved_skin_css),
         solved_search: tokio::sync::Mutex::new(None),
         home_cache: tokio::sync::Mutex::new(None),
     });
@@ -187,6 +210,9 @@ pub async fn router(config: &Config, store: Store) -> Result<Router> {
         .route("/assets/reader.js", get(reader_js))
         .route("/favicon.ico", get(favicon))
         .route("/skin", post(session::skin))
+        .route("/themes", get(themes::themes))
+        .route("/themes/apply", post(themes::apply))
+        .route("/themes/clear", post(themes::clear))
         .route("/solve", post(solver::solve))
         .route("/diagnostics", get(solver::diagnostics))
         .route("/diagnostics/clear", post(solver::clear_logs))
@@ -282,6 +308,7 @@ pub(super) async fn page_context(state: &AppState, title: &str, active: NavSecti
     };
     let cached_count = state.store.count_works().await.unwrap_or(0);
     let skin = state.skin.read().await.clone();
+    let skin_css = state.skin_css.read().await.clone();
     let solver = {
         let status = state.solver_status.read().await;
         SolverSummary {
@@ -296,6 +323,7 @@ pub(super) async fn page_context(state: &AppState, title: &str, active: NavSecti
         .with_cached_count(cached_count)
         .with_solver(solver)
         .with_skin(skin)
+        .with_skin_css(skin_css)
 }
 
 /// The account and whether its session can act, for read/write handlers.

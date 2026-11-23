@@ -79,18 +79,32 @@ pub fn session_page(
     let selected = |value: &str| {
         if ctx.skin == value { " checked" } else { "" }
     };
+    let themes = [
+        ("auto", "Auto (follow the system light/dark preference)"),
+        ("default", "Classic (light)"),
+        ("reversi", "Reversi (dark)"),
+        ("snow", "Snow (blue on white)"),
+        ("frost", "Frost (cool blue)"),
+        ("cloud", "Cloud (soft grey)"),
+        ("sepia", "Sepia (warm paper)"),
+        ("midnight", "Midnight (deep blue)"),
+    ];
+    let mut theme_inputs = String::new();
+    for (value, label) in themes {
+        theme_inputs.push_str(&format!(
+            "<label><input type=\"radio\" name=\"skin\" value=\"{value}\"{}> {label}</label>",
+            selected(value)
+        ));
+    }
     body.push_str(&format!(
         "<h3 id=\"appearance\">Appearance</h3>\
          <p class=\"meta\">Choose how this instance looks. The setting is stored locally.</p>\
          <form class=\"stack\" method=\"post\" action=\"/skin\">\
          <input type=\"hidden\" name=\"next\" value=\"/session#appearance\">\
-         <label><input type=\"radio\" name=\"skin\" value=\"auto\"{auto}> Auto (follow the system light/dark preference)</label>\
-         <label><input type=\"radio\" name=\"skin\" value=\"default\"{light}> Classic (light)</label>\
-         <label><input type=\"radio\" name=\"skin\" value=\"reversi\"{dark}> Reversi (dark)</label>\
-         <button type=\"submit\">Save appearance</button></form>",
-        auto = selected("auto"),
-        light = selected("default"),
-        dark = selected("reversi"),
+         {theme_inputs}\
+         <button type=\"submit\">Save appearance</button></form>\
+         <p class=\"meta\"><a href=\"/themes\">Browse public AO3 site skins</a> \
+         to import more themes.</p>"
     ));
     body.push_str(
         "<h3 id=\"cookie-import\">Import cookies (recommended: no password custody)</h3>\

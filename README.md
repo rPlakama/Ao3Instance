@@ -57,9 +57,12 @@ Features:
 - Local-only **History** (`/history`): latest reads/caches with a range
   dropdown (`Today` / `Last 7 days` / `Everything`).
 - A reader with chapter jump, **Entire Work** mode and automatic progress/resume.
-- Appearance settings: **Auto** (system light/dark), **Classic** (light) and
-  **Reversi** (dark), persisted locally; choose them under
-  `/session#appearance` or from the footer.
+- Appearance settings: **Auto** (system light/dark), **Classic**, **Reversi**,
+  **Snow**, **Frost**, **Cloud**, **Sepia** and **Midnight**, persisted locally;
+  choose them under `/session#appearance` or from the footer.
+- Public AO3 site-skin import: `/themes` fetches AO3's public skin catalog, and
+  importing one stores its CSS locally as a custom theme; built-in themes clear
+  the custom CSS again.
 - Structured HTTP diagnostics at `/diagnostics` (All / Upstream / Inbound).
 - An optional, explicit Cloudflare fallback that calls a **host-provided**
   FlareSolverr; the project never builds, vendors or starts it.
