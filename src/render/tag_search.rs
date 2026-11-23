@@ -2,7 +2,6 @@
 
 use super::chrome::{PageContext, layout};
 use super::escape;
-use crate::ao3::parse::{SpaceMode, percent_encode};
 use crate::store::TagHit;
 
 pub fn tag_search_page(ctx: &PageContext, query: &str, hits: &[TagHit]) -> String {
@@ -26,9 +25,9 @@ pub fn tag_search_page(ctx: &PageContext, query: &str, hits: &[TagHit]) -> Strin
         body.push_str("<ul class=\"tags commas\">");
         for hit in hits {
             body.push_str(&format!(
-                "<li><a href=\"/works/search?include_tags={}\">{}</a> \
+                "<li><a href=\"{}\">{}</a> \
                  <span class=\"meta\">{kind} · {count} work(s)</span></li>",
-                percent_encode(&hit.name, SpaceMode::Percent20),
+                super::tag_href(&hit.name),
                 escape(&hit.name),
                 kind = escape(&hit.kind),
                 count = hit.count,

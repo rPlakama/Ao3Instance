@@ -15,6 +15,7 @@ use crate::ao3::parse::{SpaceMode, percent_encode};
 
 /// Embedded stylesheet: `nix build` stays a self-contained single binary.
 pub const AO3_CSS: &str = include_str!("assets/ao3.css");
+pub const READER_JS: &str = include_str!("assets/reader.js");
 
 mod about;
 mod audit;
@@ -47,14 +48,24 @@ pub use home::home_page;
 pub use lists::{bookmarks_page, reading_page, subscriptions_page};
 pub use not_cached::not_cached_page;
 pub use pagination::pagination;
-pub use search::search_challenge_page;
 pub use search::{
     filter_from as search_filter_from, live_search_form_page, live_search_results_page,
     search_form_page, search_results_page,
 };
+pub use search::{live_tag_page, search_challenge_page};
 pub use session::{logout_confirm_page, session_page};
 pub use tag_search::tag_search_page;
 pub use work::{ReadContext, chapter_document, read_page};
+
+/// Overall percentage from a within-chapter position.
+pub(crate) fn overall_percent(chapter: i64, pct: i64, chapter_count: i64) -> i64 {
+    let total = chapter_count.max(1);
+    let chapter = chapter.clamp(1, total);
+    let pct = pct.clamp(0, 100) as f64 / 100.0;
+    (((chapter - 1) as f64 + pct) / total as f64 * 100.0)
+        .round()
+        .clamp(0.0, 100.0) as i64
+}
 
 /// AO3-shaped local tag URL: `/tags/<encoded>/works`.
 pub(crate) fn tag_href(tag: &str) -> String {

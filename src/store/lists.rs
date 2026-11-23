@@ -143,6 +143,8 @@ pub struct ReadingEntry {
     pub title: Option<String>,
     pub authors: Vec<String>,
     pub progress_chapter: Option<i64>,
+    pub progress_pct: Option<i64>,
+    pub chapter_count: i64,
     pub reading_state: Option<String>,
     pub updated_at: i64,
 }
@@ -368,7 +370,7 @@ impl Store {
         let progress = self.progress_map().await?;
         let mut entries: HashMap<String, ReadingEntry> = HashMap::new();
 
-        for (work_id, (chapter, updated_at)) in progress {
+        for (work_id, (chapter, pct, updated_at, chapter_count)) in progress {
             entries.insert(
                 work_id.clone(),
                 ReadingEntry {
@@ -376,6 +378,8 @@ impl Store {
                     title: None,
                     authors: Vec::new(),
                     progress_chapter: Some(chapter),
+                    progress_pct: Some(pct),
+                    chapter_count,
                     reading_state: None,
                     updated_at,
                 },
@@ -383,7 +387,8 @@ impl Store {
         }
 
         let rows = sqlx::query(
-            "SELECT f.work_id, f.state, f.updated_at, w.title, w.authors_json
+            "SELECT f.work_id, f.state, f.updated_at, w.title, w.authors_json,
+                    COALESCE(w.chapter_count, 0) AS chapter_count
              FROM reading_flags f
              LEFT JOIN works w ON w.ao3_id = f.work_id
              WHERE f.account = ?1",
@@ -401,6 +406,8 @@ impl Store {
                     title: None,
                     authors: Vec::new(),
                     progress_chapter: None,
+                    progress_pct: None,
+                    chapter_count: 0,
                     reading_state: None,
                     updated_at: 0,
                 });
@@ -408,6 +415,7 @@ impl Store {
             entry.updated_at = entry.updated_at.max(row.get("updated_at"));
             entry.title = row.get("title");
             entry.authors = authors_from_row(row);
+            entry.chapter_count = row.get("chapter_count");
         }
 
         let mut entries: Vec<ReadingEntry> = entries.into_values().collect();
@@ -454,9 +462,13 @@ impl Store {
             .map_err(|e| Error::Store(format!("count {table}: {e}")))
     }
 
-    async fn progress_map(&self) -> Result<HashMap<String, (i64, i64)>> {
+    async fn progress_map(&self) -> Result<HashMap<String, (i64, i64, i64, i64)>> {
         let rows = sqlx::query(
-            "SELECT work_id, chapter_idx, updated_at FROM progress WHERE account_id = 'local'",
+            "SELECT p.work_id, p.chapter_idx, p.pct, p.updated_at,
+                    COALESCE(w.chapter_count, 0) AS chapter_count
+             FROM progress p
+             LEFT JOIN works w ON w.ao3_id = p.work_id
+             WHERE p.account_id = 'local'",
         )
         .fetch_all(&self.pool)
         .await
@@ -466,7 +478,12 @@ impl Store {
             .map(|row| {
                 (
                     row.get("work_id"),
-                    (row.get("chapter_idx"), row.get("updated_at")),
+                    (
+                        row.get("chapter_idx"),
+                        row.get::<f64, _>("pct").round().clamp(0.0, 100.0) as i64,
+                        row.get("updated_at"),
+                        row.get("chapter_count"),
+                    ),
                 )
             })
             .collect())

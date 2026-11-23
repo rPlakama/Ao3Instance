@@ -35,6 +35,13 @@ Features:
   cache-only search. Signed-out results match AO3's signed-out set; import your
   session on `/session` for account-specific results. See
   [docs/search-parity.md](docs/search-parity.md).
+- Live tag pages: every tag chip opens `/tags/<tag>/works`, fetched from AO3
+  with a cached fallback, including tags on uncached search results.
+- One-click work opening: a title in live results goes through `/open/<id>`,
+  caches on first use and lands in the reader.
+- Automatic reading progress: the reader tracks scroll percentage inside the
+  current chapter, saves it locally on scroll/page-hide, shows an overall
+  percentage, and restores the chapter plus scroll position on return.
 - Tag Search over cached tags, AO3-shaped tag work pages with Works/Bookmarks,
   range headings and numbered pagination, and tag include/exclude fields in the
   live search form.

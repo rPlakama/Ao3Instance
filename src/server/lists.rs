@@ -22,6 +22,7 @@ pub(super) struct BrowseQuery {
     status: Option<String>,
     sort: Option<String>,
     page: Option<i64>,
+    local: Option<String>,
 }
 
 pub(super) async fn browse(
@@ -36,7 +37,49 @@ pub(super) async fn tag_browse(
     Path(tag): Path<String>,
     Query(query): Query<BrowseQuery>,
 ) -> Handled<Html<String>> {
+    if query.local.as_deref() == Some("1") {
+        return render_browse(&state, query, Some(tag)).await;
+    }
+    let page = query.page.unwrap_or(1).max(1);
+    let encoded = crate::ao3::parse::percent_encode(&tag, crate::ao3::parse::SpaceMode::Percent20);
+    let path = if page > 1 {
+        format!("/tags/{encoded}/works?page={page}")
+    } else {
+        format!("/tags/{encoded}/works")
+    };
+    if let Some(body) = fetch_live_tag_page(&state, &path).await
+        && let Ok(results) = crate::ao3::search::parse_search_results(&body)
+    {
+        let page_ctx =
+            super::page_context(&state, &format!("{tag} — AO3Instance"), NavSection::Fandoms).await;
+        return Ok(Html(render::live_tag_page(&page_ctx, &tag, page, &results)));
+    }
+    // Offline/cached fallback: the tag page still shows local works.
     render_browse(&state, query, Some(tag)).await
+}
+
+async fn fetch_live_tag_page(state: &AppState, path: &str) -> Option<String> {
+    let response = {
+        let mut session = state.session.lock().await;
+        session
+            .client_mut()
+            .get_with_timeout(path, std::time::Duration::from_secs(10))
+            .await
+            .ok()?
+    };
+    if response.status == 200 {
+        return Some(response.body);
+    }
+    let available = {
+        let reachable = state.solver_status.read().await.reachable;
+        let session = state.session.lock().await;
+        reachable && session.solver_mode() != crate::config::SolverMode::Off
+    };
+    if available {
+        super::solver::solve_search(state, path, false).await.ok()
+    } else {
+        None
+    }
 }
 
 async fn render_browse(

@@ -104,6 +104,15 @@ pub struct WorkSummary {
     pub chapter_count: i64,
     /// Chapter to resume at, when a reading position is stored.
     pub progress_chapter: Option<i64>,
+    /// Saved percentage inside `progress_chapter` (0–100).
+    pub progress_pct: Option<i64>,
+}
+
+/// A saved within-chapter reading position.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Progress {
+    pub chapter_idx: i64,
+    pub pct: i64,
 }
 /// The AO3-style work search fields the local cache can actually answer.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]

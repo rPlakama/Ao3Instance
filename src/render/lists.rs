@@ -107,8 +107,11 @@ pub fn reading_page(ctx: &PageContext, entries: &[ReadingEntry]) -> String {
             let progress = entry.progress_chapter.map_or_else(
                 || "—".to_string(),
                 |chapter| {
+                    let pct = entry.progress_pct.map_or(0, |pct| {
+                        super::overall_percent(chapter, pct, entry.chapter_count)
+                    });
                     format!(
-                        "<a href=\"/read/{id}?chapter={chapter}\">chapter {chapter}</a>",
+                        "<a href=\"/read/{id}?chapter={chapter}\">chapter {chapter} · {pct}%</a>",
                         id = escape(&entry.work_id)
                     )
                 },

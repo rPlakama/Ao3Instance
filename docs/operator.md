@@ -86,7 +86,7 @@ Limits and behaviour:
 `/fandoms` A–Z directory · `/dashboard` statistics and shortcuts ·
 `/subscriptions`, `/bookmarks`, `/reading` local ledgers ·
 `/read/<id>` reader (chapter jump, Entire Work) · `/session` AO3 login/import ·
-`/works/search` AO3 Work Search: one live AO3 request per submit, results shown AO3-style (not cached); `?local=1` searches the cache · `/tags/search` cached tag search · `/tags/<tag>/works` AO3-shaped tag page · `/audit` write ledger ·
+`/works/search` AO3 Work Search: one live AO3 request per submit, results shown AO3-style (not cached); `?local=1` searches the cache · `/tags/search` cached tag search · `/tags/<tag>/works` live AO3 tag page with cached fallback · `/open/<id>` one-click cache+read · `/audit` write ledger ·
 `/diagnostics` HTTP failures, solver state and clear · `/about` instance notes.
 `/users/login`, `/works/search` and `/works/{id}` mirror AO3 URLs; uncached
 works show an offline miss card instead of fetching on a `GET`.

@@ -12,7 +12,9 @@ use crate::store::{StoredChapter, StoredWork};
 /// Everything the reader needs that is not the work itself.
 pub struct ReadContext<'a> {
     pub current: i64,
-    pub progress: Option<i64>,
+    pub progress: Option<crate::store::Progress>,
+    /// Scroll percentage to restore inside the current chapter.
+    pub resume_pct: Option<i64>,
     pub notice: Option<&'a str>,
     pub subscribed: bool,
     pub can_write: bool,
@@ -34,6 +36,7 @@ pub fn read_page(
     let ReadContext {
         current,
         progress,
+        resume_pct,
         notice,
         subscribed,
         can_write,
@@ -107,14 +110,26 @@ pub fn read_page(
         .iter()
         .position(|chapter| chapter.idx == current)
         .unwrap_or(0);
+    let chapter_total = i64::try_from(work.chapter_count)
+        .unwrap_or(i64::MAX)
+        .max(i64::try_from(total).unwrap_or(i64::MAX));
+    let inside_pct = progress
+        .filter(|saved| saved.chapter_idx == current)
+        .map_or(0, |saved| saved.pct);
+    let overall = super::overall_percent(
+        i64::try_from(position).unwrap_or(0) + 1,
+        inside_pct,
+        chapter_total,
+    );
 
-    if let Some(continue_at) = progress
-        && continue_at != current
+    if let Some(saved) = progress
+        && saved.chapter_idx != current
     {
         body.push_str(&format!(
-            "<div class=\"continue\">You were at chapter {continue_at}. \
-             <a href=\"/read/{}?chapter={continue_at}\">Resume</a></div>",
-            escape(&work.ao3_id)
+            "<div class=\"continue\">You were at chapter {chapter}. \
+             <a href=\"/read/{}?chapter={chapter}\">Resume</a></div>",
+            escape(&work.ao3_id),
+            chapter = saved.chapter_idx
         ));
     }
 
@@ -123,6 +138,13 @@ pub fn read_page(
         "<span>Chapter {} of {}</span>",
         if chapter.is_some() { position + 1 } else { 0 },
         total
+    ));
+    toolbar.push_str(&format!(
+        "<span class=\"reading-progress\" data-work-id=\"{id}\" data-chapter=\"{current}\" \
+         data-total-chapters=\"{chapter_total}\" data-initial-pct=\"{overall}\">\
+         <progress max=\"100\" value=\"{overall}\"></progress>\
+         <span class=\"reading-pct\">{overall}% read</span></span>",
+        id = escape(&work.ao3_id),
     ));
     if position > 0 {
         let previous = chapters[position - 1].idx;
@@ -243,44 +265,54 @@ pub fn read_page(
         "<form class=\"save\" method=\"post\" action=\"/progress\">\
          <input type=\"hidden\" name=\"work_id\" value=\"{}\">\
          <input type=\"hidden\" name=\"chapter\" value=\"{}\">\
+         <input type=\"hidden\" name=\"pct\" value=\"{}\">\
          <button type=\"submit\">Save this chapter as my place</button></form>",
         escape(&work.ao3_id),
-        current
+        current,
+        inside_pct
     ));
 
     if full_work && !chapters.is_empty() {
         for (index, candidate) in chapters.iter().enumerate() {
             body.push_str(&format!(
-                "<div class=\"chapter preface group\"><h3 class=\"title\">Chapter {}: {}</h3></div>\
-                 <iframe class=\"chapter\" sandbox referrerpolicy=\"no-referrer\" \
-                 title=\"Chapter {} of {}\" src=\"/read/{}/chapter/{}?v={}&skin={}\"></iframe>",
-                index + 1,
-                escape(candidate.title.as_deref().unwrap_or("")),
-                index + 1,
-                total,
-                escape(&work.ao3_id),
-                candidate.idx,
-                work.fetched_at,
-                escape(&page.skin)
+                "<div class=\"chapter preface group\"><h3 class=\"title\">Chapter {number}: {title}</h3></div>\
+                 <iframe class=\"chapter\" sandbox=\"allow-scripts\" \
+                 referrerpolicy=\"no-referrer\" data-work-id=\"{id}\" \
+                 data-chapter=\"{chapter_idx}\" data-total-chapters=\"{chapter_total}\" \
+                 title=\"Chapter {number} of {total}\" \
+                 src=\"/read/{id}/chapter/{chapter_idx}?v={fetched_at}&skin={skin}&resume={resume}\"></iframe>",
+                number = index + 1,
+                title = escape(candidate.title.as_deref().unwrap_or("")),
+                total = total,
+                id = escape(&work.ao3_id),
+                chapter_idx = candidate.idx,
+                fetched_at = work.fetched_at,
+                skin = escape(&page.skin),
+                resume = resume_pct.filter(|_| candidate.idx == current).unwrap_or(0)
             ));
         }
     } else {
         match chapter {
             Some(chapter) => {
                 body.push_str(&format!(
-                    "<div class=\"chapter preface group\"><h3 class=\"title\">Chapter {}: {}</h3></div>",
-                    position + 1,
-                    escape(chapter.title.as_deref().unwrap_or(""))
+                    "<div class=\"chapter preface group\"><h3 class=\"title\">Chapter {number}: {title}</h3></div>",
+                    number = position + 1,
+                    title = escape(chapter.title.as_deref().unwrap_or(""))
                 ));
+                let resume = resume_pct.filter(|_| chapter.idx == current).unwrap_or(0);
                 body.push_str(&format!(
-                    "<iframe class=\"chapter\" sandbox referrerpolicy=\"no-referrer\" \
-                     title=\"Chapter {} of {}\" src=\"/read/{}/chapter/{}?v={}&skin={}\"></iframe>",
-                    position + 1,
-                    total,
-                    escape(&work.ao3_id),
-                    chapter.idx,
-                    work.fetched_at,
-                    escape(&page.skin)
+                    "<iframe class=\"chapter\" sandbox=\"allow-scripts\" \
+                     referrerpolicy=\"no-referrer\" data-work-id=\"{id}\" \
+                     data-chapter=\"{chapter_idx}\" data-total-chapters=\"{chapter_total}\" \
+                     title=\"Chapter {number} of {total}\" \
+                     src=\"/read/{id}/chapter/{chapter_idx}?v={fetched_at}&skin={skin}&resume={resume}\">\
+                     </iframe>",
+                    number = position + 1,
+                    total = total,
+                    id = escape(&work.ao3_id),
+                    chapter_idx = chapter.idx,
+                    fetched_at = work.fetched_at,
+                    skin = escape(&page.skin)
                 ));
             }
             None => body.push_str(
@@ -328,6 +360,7 @@ pub fn read_page(
     }
     body.push_str("</div>");
 
+    body.push_str("<script src=\"/assets/reader.js\" defer></script>");
     layout(page, &format!("<div id=\"workskin\">{}</div>", body))
 }
 
@@ -336,7 +369,12 @@ pub fn read_page(
 /// Iframes are separate documents: they do not inherit the parent page's
 /// palette, so the reader passes the active skin explicitly. Without this the
 /// chapter text would stay dark on a Reversi background.
-pub fn chapter_document(work_title: &str, chapter: &StoredChapter, skin: &str) -> String {
+pub fn chapter_document(
+    work_title: &str,
+    chapter: &StoredChapter,
+    skin: &str,
+    resume_pct: i64,
+) -> String {
     let skin = match skin {
         "reversi" => "reversi",
         _ => "default",
@@ -351,6 +389,47 @@ pub fn chapter_document(work_title: &str, chapter: &StoredChapter, skin: &str) -
             sanitize(notes)
         ));
     }
+    let progress_script = r#"<script>
+(function () {
+  var chapter = __CHAPTER__;
+  var resume = __RESUME__;
+  function maxScroll() {
+    return Math.max(0, document.documentElement.scrollHeight - window.innerHeight);
+  }
+  function percent() {
+    var m = maxScroll();
+    if (m <= 0) return 100;
+    return Math.min(100, Math.max(0, window.scrollY / m * 100));
+  }
+  function post() {
+    try {
+      parent.postMessage({type: "ao3i:progress", chapter: chapter, pct: percent()}, "*");
+    } catch (e) {}
+  }
+  window.addEventListener("load", function () {
+    setTimeout(function () {
+      if (resume > 0) {
+        var m = maxScroll();
+        if (m > 0) window.scrollTo(0, m * resume / 100);
+      }
+      post();
+    }, 80);
+  });
+  // Retry until the parent's listener is definitely attached.
+  [500, 1500, 3000].forEach(function (delay) { setTimeout(post, delay); });
+  window.addEventListener("message", function (event) {
+    if (event.data && event.data.type === "ao3i:request") post();
+  });
+  var raf = 0;
+  window.addEventListener("scroll", function () {
+    if (raf) return;
+    raf = requestAnimationFrame(function () { raf = 0; post(); });
+  }, {passive: true});
+  window.addEventListener("pagehide", post);
+})();
+</script>"#
+        .replace("__CHAPTER__", &chapter.idx.to_string())
+        .replace("__RESUME__", &resume_pct.clamp(0, 100).to_string());
     format!(
         "<!DOCTYPE html><html lang=\"en\" data-skin=\"{skin}\"><head><meta charset=\"utf-8\">\
          <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\
@@ -371,7 +450,7 @@ pub fn chapter_document(work_title: &str, chapter: &StoredChapter, skin: &str) -
          .notes-sep{{border:0;border-top:1px solid #ccc4;margin:1.5rem 0 1rem;}} \
          .notes{{font-size:.92rem;color:#8a857e;}} \
          blockquote{{border-left:3px solid #ccc4;margin:1rem 0;padding-left:1rem;color:#8a857e;}}</style>\
-         </head><body>{body}</body></html>",
+         </head><body>{body}{progress_script}</body></html>",
         escape(work_title)
     )
 }
@@ -407,7 +486,7 @@ mod tests {
             body_html: "<p>body</p><script>bad()</script>".into(),
             notes_html: Some("<p>note</p>".into()),
         };
-        let doc = chapter_document("Work <One>", &chapter, "default");
+        let doc = chapter_document("Work <One>", &chapter, "default", 0);
         assert!(doc.contains("Work &lt;One&gt;"));
         assert!(
             !doc.contains("<h3 class=\"chapter-title\""),
@@ -418,12 +497,12 @@ mod tests {
         assert!(doc.contains("Chapter notes"));
         assert!(doc.contains("data-skin=\"default\""));
 
-        let dark = chapter_document("w", &chapter, "reversi");
+        let dark = chapter_document("w", &chapter, "reversi", 0);
         assert!(dark.contains("data-skin=\"reversi\""));
         assert!(dark.contains(":root[data-skin=\"reversi\"] body{color:#eee;}"));
         assert_eq!(
-            chapter_document("w", &chapter, "neon"),
-            chapter_document("w", &chapter, "default"),
+            chapter_document("w", &chapter, "neon", 0),
+            chapter_document("w", &chapter, "default", 0),
             "unknown skins fall back to the light document"
         );
     }

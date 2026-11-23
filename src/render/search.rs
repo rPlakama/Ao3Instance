@@ -738,11 +738,70 @@ pub fn live_search_results_page(
     layout(ctx, &body)
 }
 
+/// Live tag works page (`/tags/<tag>/works`).
+pub fn live_tag_page(
+    ctx: &PageContext,
+    tag: &str,
+    page: i64,
+    results: &LiveSearchResults,
+) -> String {
+    let total = i64::try_from(results.total).unwrap_or(i64::MAX);
+    let per_page = 20;
+    let start = (page - 1) * per_page + 1;
+    let end = start + results.works.len() as i64 - 1;
+    let noun = if total == 1 { "Work" } else { "Works" };
+    let heading = if total > per_page {
+        format!(
+            "{start} - {end} of {} {noun} in <a href=\"{}\">{}</a>",
+            crate::time::format_count(u64::try_from(total).unwrap_or(0)),
+            super::tag_href(tag),
+            escape(tag)
+        )
+    } else {
+        format!(
+            "{} {noun} in <a href=\"{}\">{}</a>",
+            crate::time::format_count(u64::try_from(total).unwrap_or(0)),
+            super::tag_href(tag),
+            escape(tag)
+        )
+    };
+    let mut body = format!("<h2 class=\"heading\">{heading}</h2>");
+    body.push_str(
+        "<ul class=\"navigation actions\" role=\"navigation\">\
+         <li class=\"active\"><span>Works</span></li>\
+         <li><a href=\"/bookmarks\">Bookmarks</a></li>\
+         <li><a href=\"/works\">Clear tag</a></li></ul>",
+    );
+    body.push_str(&format!(
+        "<p class=\"meta\"><a href=\"/works/search?include_tags={}\">Search within this tag on AO3</a></p>",
+        percent_encode(tag, SpaceMode::Percent20)
+    ));
+    if results.works.is_empty() {
+        body.push_str("<p class=\"muted\">No works on this tag page.</p>");
+    } else {
+        body.push_str("<ol class=\"work index group\">");
+        for work in &results.works {
+            body.push_str(&live_blurb(work));
+        }
+        body.push_str("</ol>");
+        let path = format!("/tags/{}/works", percent_encode(tag, SpaceMode::Percent20));
+        body.push_str(&crate::render::pagination(page, per_page, total, &path, ""));
+        if ctx.account.is_empty() {
+            body.push_str(
+                "<p class=\"meta\">Signed out: this is AO3's signed-out tag page. \
+                 <a href=\"/session#cookie-import\">Import your AO3 session</a> for your \
+                 account's view.</p>",
+            );
+        }
+    }
+    layout(ctx, &body)
+}
+
 fn query_page(query: &LiveSearchQuery) -> i64 {
     query.page.max(1)
 }
 
-fn live_blurb(work: &LiveWork) -> String {
+pub(super) fn live_blurb(work: &LiveWork) -> String {
     let authors = if work.authors.is_empty() {
         "Anonymous".to_string()
     } else {
@@ -763,19 +822,19 @@ fn live_blurb(work: &LiveWork) -> String {
         .iter()
         .map(|fandom| {
             format!(
-                "<a class=\"tag\" href=\"/works/search?fandom={}\">{}</a>",
-                percent_encode(fandom, SpaceMode::Percent20),
+                "<a class=\"tag\" href=\"{}\">{}</a>",
+                super::tag_href(fandom),
                 escape(fandom)
             )
         })
         .collect::<Vec<_>>()
         .join(", ");
-    let tag_links = |tags: &[String], class: &str, parameter: &str| -> String {
+    let tag_links = |tags: &[String], class: &str| -> String {
         tags.iter()
             .map(|tag| {
                 format!(
-                    "<li class=\"{class}\"><a class=\"tag\" href=\"/works/search?{parameter}={}\">{}</a></li>",
-                    percent_encode(tag, SpaceMode::Percent20),
+                    "<li class=\"{class}\"><a class=\"tag\" href=\"{}\">{}</a></li>",
+                    super::tag_href(tag),
                     escape(tag)
                 )
             })
@@ -783,10 +842,10 @@ fn live_blurb(work: &LiveWork) -> String {
     };
     let tags = format!(
         "{}{}{}{}",
-        tag_links(&work.warnings, "warnings", "include_tags"),
-        tag_links(&work.relationships, "relationships", "include_tags"),
-        tag_links(&work.characters, "characters", "include_tags"),
-        tag_links(&work.additional_tags, "freeforms", "include_tags"),
+        tag_links(&work.warnings, "warnings"),
+        tag_links(&work.relationships, "relationships"),
+        tag_links(&work.characters, "characters"),
+        tag_links(&work.additional_tags, "freeforms"),
     );
     let summary = work
         .summary_html
@@ -893,7 +952,7 @@ fn live_blurb(work: &LiveWork) -> String {
     }
     format!(
         "<li class=\"work blurb group\" role=\"article\"><div class=\"header module\">\
-         <h4 class=\"heading\"><a href=\"/works/{id}\">{title}</a> by {authors}{restricted}</h4>\
+         <h4 class=\"heading\"><a href=\"/open/{id}\">{title}</a> by {authors}{restricted}</h4>\
          <h5 class=\"fandoms heading\"><span class=\"landmark\">Fandoms:</span> {fandoms}</h5>\
          <ul class=\"required-tags\">{rating}{warnings}{category}{status}</ul>\
          <p class=\"datetime\">{datetime}</p></div>\

@@ -22,8 +22,9 @@ use crate::store::sha256_hex;
 
 /// CSP for the chapter iframe: no scripts, no forms, inline styles only, images
 /// from https only. Author content never runs in the app's origin.
-const CHAPTER_CSP: &str = "default-src 'none'; style-src 'unsafe-inline'; img-src https: data:; \
-     font-src data:; base-uri 'none'; form-action 'none'; frame-ancestors 'self'";
+const CHAPTER_CSP: &str = "default-src 'none'; style-src 'unsafe-inline'; \
+     script-src 'unsafe-inline'; img-src https: data:; font-src data:; base-uri 'none'; \
+     form-action 'none'; frame-ancestors 'self'";
 
 #[derive(Deserialize)]
 pub(super) struct HomeQuery {
@@ -63,6 +64,25 @@ pub(super) async fn open_work(
     let existing = state.store.get_work(&id).await?;
     // Cache first: re-opening a cached work is an offline read, not a fetch.
     if form.refresh.is_none() && existing.is_some() {
+        return Ok(Redirect::to(&format!("/read/{id}")));
+    }
+    let html = fetch_work_html(&state, &id).await?;
+    if let Err(error) = state.store.record_access(&id, "cached").await {
+        eprintln!("access history: {error}");
+    }
+    cache_work_html(&state, &id, html, existing).await
+}
+
+/// One-click result title: cache if needed, then open the reader.
+pub(super) async fn open_and_read(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<String>,
+) -> Handled<Redirect> {
+    let Some(id) = normalize_work_id(&id) else {
+        return Err(AppError::BadRequest("Expected an AO3 work id.".into()));
+    };
+    let existing = state.store.get_work(&id).await?;
+    if existing.is_some() {
         return Ok(Redirect::to(&format!("/read/{id}")));
     }
     let html = fetch_work_html(&state, &id).await?;
@@ -208,8 +228,15 @@ pub(super) async fn read_work(
     let progress = state.store.get_progress(&id).await?;
     let current = query
         .chapter
-        .or(progress)
+        .or_else(|| progress.map(|saved| saved.chapter_idx))
         .unwrap_or_else(|| chapters.first().map(|chapter| chapter.idx).unwrap_or(1));
+    let resume_pct = if query.chapter.is_none() {
+        progress
+            .filter(|saved| saved.chapter_idx == current)
+            .map(|saved| saved.pct)
+    } else {
+        None
+    };
     let full_work = query
         .view_full_work
         .as_deref()
@@ -258,6 +285,7 @@ pub(super) async fn read_work(
         &render::ReadContext {
             current,
             progress,
+            resume_pct,
             notice,
             subscribed,
             can_write,
@@ -273,6 +301,7 @@ pub(super) async fn read_work(
 #[derive(Deserialize)]
 pub(super) struct ChapterQuery {
     skin: Option<String>,
+    resume: Option<i64>,
 }
 
 pub(super) async fn read_chapter(
@@ -290,7 +319,9 @@ pub(super) async fn read_chapter(
         Some("reversi") => "reversi",
         _ => "default",
     };
-    let mut response = Html(render::chapter_document(&work.title, chapter, skin)).into_response();
+    let resume = query.resume.unwrap_or(0).clamp(0, 100);
+    let mut response =
+        Html(render::chapter_document(&work.title, chapter, skin, resume)).into_response();
     let headers = response.headers_mut();
     headers.insert(
         header::CONTENT_TYPE,
@@ -588,9 +619,35 @@ fn live_query_from(query: &SearchQuery, raw: &str) -> crate::ao3::search::LiveSe
 }
 
 #[derive(Deserialize)]
+pub(super) struct AutoProgressForm {
+    work_id: String,
+    chapter: i64,
+    pct: i64,
+}
+
+/// Fire-and-forget progress beacon from the reader. Returns no body.
+pub(super) async fn auto_progress(
+    State(state): State<Arc<AppState>>,
+    Form(form): Form<AutoProgressForm>,
+) -> Handled<axum::http::StatusCode> {
+    if form.chapter < 1 {
+        return Err(AppError::BadRequest("chapter must be positive".into()));
+    }
+    if state.store.get_work(&form.work_id).await?.is_none() {
+        return Err(AppError::NotFound);
+    }
+    state
+        .store
+        .save_progress(&form.work_id, form.chapter, form.pct)
+        .await?;
+    Ok(axum::http::StatusCode::NO_CONTENT)
+}
+
+#[derive(Deserialize)]
 pub(super) struct ProgressForm {
     work_id: String,
     chapter: i64,
+    pct: Option<i64>,
 }
 
 pub(super) async fn save_progress(
@@ -602,7 +659,7 @@ pub(super) async fn save_progress(
     }
     state
         .store
-        .save_progress(&form.work_id, form.chapter)
+        .save_progress(&form.work_id, form.chapter, form.pct.unwrap_or(0))
         .await?;
     Ok(Redirect::to(&format!(
         "/read/{}?chapter={}",

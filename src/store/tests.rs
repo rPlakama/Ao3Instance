@@ -128,10 +128,17 @@ async fn session_and_progress_round_trip() {
 
     store.upsert_work(&page(), "h").await.unwrap();
     assert!(store.get_progress("123").await.unwrap().is_none());
-    store.save_progress("123", 2).await.unwrap();
-    assert_eq!(store.get_progress("123").await.unwrap(), Some(2));
+    store.save_progress("123", 2, 0).await.unwrap();
+    assert_eq!(
+        store.get_progress("123").await.unwrap(),
+        Some(crate::store::Progress {
+            chapter_idx: 2,
+            pct: 0
+        })
+    );
     let works = store.list_works(10).await.unwrap();
     assert_eq!(works[0].progress_chapter, Some(2));
+    assert_eq!(works[0].progress_pct, Some(0));
 
     store.pool().close().await;
     drop(std::fs::remove_dir_all(dir));
@@ -459,8 +466,8 @@ async fn browse_and_local_lists_read_only_from_the_cache() {
     let mut second = page_titled("456", "Second Work", "Other", "Mature");
     second.authors = vec!["SecondAuthor".into()];
     store.upsert_work(&second, "h2").await.unwrap();
-    store.save_progress("123", 2).await.unwrap();
-    store.save_progress("456", 1).await.unwrap();
+    store.save_progress("123", 2, 0).await.unwrap();
+    store.save_progress("456", 1, 0).await.unwrap();
     store
         .set_reading_state("reader", "123", "for_later")
         .await

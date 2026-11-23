@@ -79,6 +79,22 @@ async fn app_opens_a_work_from_a_mock_upstream() {
         .expect("health");
     assert_eq!(health.text().await.expect("body"), "ok");
 
+    // One-click result opening: GET /open/<id> fetches, caches and redirects.
+    let opened_get = http
+        .get(format!("{root}/open/12345"))
+        .send()
+        .await
+        .expect("open by link");
+    assert_eq!(opened_get.status(), 200);
+    assert!(
+        opened_get
+            .text()
+            .await
+            .expect("reader")
+            .contains("PLACEHOLDER"),
+        "GET /open/<id> lands in the reader"
+    );
+
     // Open the work: POST /open -> redirect -> reader page.
     let opened = http
         .post(format!("{root}/open"))
@@ -103,6 +119,19 @@ async fn app_opens_a_work_from_a_mock_upstream() {
         "chapter is sandboxed in an iframe"
     );
     assert!(reader.contains("/read/12345/chapter/1"));
+    assert!(reader.contains("class=\"reading-progress\""), "{reader}");
+    assert!(reader.contains("/assets/reader.js"), "{reader}");
+    assert!(reader.contains("sandbox=\"allow-scripts\""), "{reader}");
+
+    let reader_js = http
+        .get(format!("{root}/assets/reader.js"))
+        .send()
+        .await
+        .expect("reader js");
+    assert_eq!(reader_js.status(), 200);
+    let js = reader_js.text().await.expect("reader js body");
+    assert!(js.contains("/progress/auto"), "{js}");
+    assert!(js.contains("ao3i:progress"), "{js}");
 
     // Chapter iframe document: sanitized, with its own CSP.
     let chapter = http
@@ -122,7 +151,11 @@ async fn app_opens_a_work_from_a_mock_upstream() {
     let chapter_html = chapter.text().await.expect("chapter body");
     assert!(chapter_html.contains(&ao3instance::render::escape(&parsed.title)));
     assert!(chapter_html.contains("</p>"), "chapter body is rendered");
-    assert!(!chapter_html.contains("<script"), "scripts stripped");
+    assert!(!chapter_html.contains("bad()"), "author scripts stripped");
+    assert!(
+        chapter_html.contains("ao3i:progress"),
+        "our progress script is present"
+    );
 
     // Cache-first: re-opening the cached work must not touch the upstream.
     let before = upstream.requests().len();

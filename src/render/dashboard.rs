@@ -106,10 +106,13 @@ pub fn dashboard_page(
     body.push_str(&recent_items(
         reading.iter().filter_map(|entry| {
             entry.progress_chapter.map(|chapter| {
+                let pct = entry.progress_pct.map_or(0, |pct| {
+                    super::overall_percent(chapter, pct, entry.chapter_count)
+                });
                 (
                     escape(entry.title.as_deref().unwrap_or(&entry.work_id)),
                     format!("/read/{}?chapter={chapter}", escape(&entry.work_id)),
-                    format!("chapter {chapter}"),
+                    format!("chapter {chapter} · {pct}%"),
                 )
             })
         }),

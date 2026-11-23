@@ -54,9 +54,11 @@ pub fn home_page(
         );
         for work in continuing {
             let chapter = work.progress_chapter.unwrap_or(1);
+            let pct =
+                super::overall_percent(chapter, work.progress_pct.unwrap_or(0), work.chapter_count);
             body.push_str(&format!(
                 "<li><a href=\"/read/{id}?chapter={chapter}\">{title}</a> \
-                 <span class=\"meta\">· by {authors} · continue ch. {chapter}</span></li>",
+                 <span class=\"meta\">· by {authors} · continue ch. {chapter} · {pct}%</span></li>",
                 id = escape(&work.ao3_id),
                 title = escape(&work.title),
                 authors = author_links_from(&work.authors),

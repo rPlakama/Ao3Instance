@@ -318,6 +318,13 @@ pub fn parse_search_results(html: &str) -> Result<LiveSearchResults> {
         .select(&css("h3.heading")?)
         .next()
         .and_then(|node| parse_number(&text(&node).replace("Found", "")))
+        .or_else(|| {
+            let selector = css("h2.heading").ok()?;
+            document
+                .select(&selector)
+                .next()
+                .and_then(|node| parse_total_from_heading(&text(&node)))
+        })
         .map(|value| value as usize)
         .unwrap_or(works.len());
 
@@ -513,6 +520,21 @@ fn parse_number(text: &str) -> Option<u64> {
     (!digits.is_empty()).then(|| digits.parse().ok()).flatten()
 }
 
+/// Tag pages say `1 - 20 of 9,432 Works in Tag` or `1 Work in Tag`, rather than
+/// the search page's `9,432 Found`.
+fn parse_total_from_heading(text: &str) -> Option<u64> {
+    if let Some((_, tail)) = text.split_once(" of ") {
+        return tail.split_whitespace().next().and_then(parse_number);
+    }
+    let mut words = text.split_whitespace();
+    let count = words.next().and_then(parse_number)?;
+    if words.any(|word| word.eq_ignore_ascii_case("work") || word.eq_ignore_ascii_case("works")) {
+        Some(count)
+    } else {
+        None
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -614,6 +636,16 @@ mod tests {
     #[test]
     fn empty_query_has_no_criteria() {
         assert!(!LiveSearchQuery::default().has_criteria());
+    }
+
+    #[test]
+    fn tag_page_totals_parse_from_range_headings() {
+        assert_eq!(
+            parse_total_from_heading("1 - 20 of 9,432 Works in Re:Zero"),
+            Some(9_432)
+        );
+        assert_eq!(parse_total_from_heading("1 Work in Fluff"), Some(1));
+        assert_eq!(parse_total_from_heading("Cached works"), None);
     }
 
     #[test]

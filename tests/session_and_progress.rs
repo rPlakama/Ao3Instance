@@ -143,14 +143,17 @@ async fn progress_is_saved_listed_and_offered_as_resume() {
     let saved = client
         .post(format!("{root}/progress"))
         .header("content-type", "application/x-www-form-urlencoded")
-        .body("work_id=12345&chapter=2")
+        .body("work_id=12345&chapter=2&pct=42")
         .send()
         .await
         .expect("save progress");
     assert_eq!(saved.status(), 200);
     assert_eq!(
         store.get_progress("12345").await.expect("progress"),
-        Some(2)
+        Some(ao3instance::store::Progress {
+            chapter_idx: 2,
+            pct: 42
+        })
     );
 
     // Home shows a continue link with the saved chapter.
@@ -162,7 +165,38 @@ async fn progress_is_saved_listed_and_offered_as_resume() {
         .text()
         .await
         .expect("home body");
-    assert!(home.contains("continue ch. 2"), "{home}");
+    assert!(home.contains("continue ch. 2 · 71%"), "{home}");
+
+    // The reader restores the saved chapter and inside-chapter percentage.
+    let reader = client
+        .get(format!("{root}/read/12345"))
+        .send()
+        .await
+        .expect("reader")
+        .text()
+        .await
+        .expect("reader body");
+    assert!(reader.contains("71% read"), "{reader}");
+    assert!(reader.contains("resume=42"), "{reader}");
+
+    // The iframe beacon endpoint accepts a clamped automatic update.
+    let beacon = client
+        .post(format!("{root}/progress/auto"))
+        .header("content-type", "application/x-www-form-urlencoded")
+        .body("work_id=12345&chapter=2&pct=150")
+        .send()
+        .await
+        .expect("beacon");
+    assert_eq!(beacon.status(), 204);
+    assert_eq!(
+        store
+            .get_progress("12345")
+            .await
+            .expect("progress")
+            .unwrap()
+            .pct,
+        100
+    );
 
     // Reading an earlier chapter offers to resume the saved one.
     let reader = client

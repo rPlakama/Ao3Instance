@@ -128,10 +128,12 @@ pub async fn router(config: &Config, store: Store) -> Result<Router> {
     let app = Router::new()
         .route("/", get(reads::home))
         .route("/open", post(reads::open_work))
+        .route("/open/{id}", get(reads::open_and_read))
         .route("/read/{id}", get(reads::read_work))
         .route("/read/{id}/chapter/{idx}", get(reads::read_chapter))
         .route("/search", get(reads::search).post(reads::search_post))
         .route("/progress", post(reads::save_progress))
+        .route("/progress/auto", post(reads::auto_progress))
         .route("/session", get(session::session_page))
         .route("/session/import", post(session::session_import))
         .route("/session/login", post(session::session_login))
@@ -166,6 +168,7 @@ pub async fn router(config: &Config, store: Store) -> Result<Router> {
         .route("/works/{id}", get(reads::work_alias))
         .route("/works/{id}/chapters/{idx}", get(reads::chapter_alias))
         .route("/assets/ao3.css", get(stylesheet))
+        .route("/assets/reader.js", get(reader_js))
         .route("/favicon.ico", get(favicon))
         .route("/skin", post(session::skin))
         .route("/solve", post(solver::solve))
@@ -214,6 +217,24 @@ async fn favicon() -> axum::http::StatusCode {
 }
 
 /// Serves the embedded stylesheet with conservative caching and nosniff.
+async fn reader_js() -> Response {
+    let mut response = render::READER_JS.into_response();
+    let headers = response.headers_mut();
+    headers.insert(
+        header::CONTENT_TYPE,
+        HeaderValue::from_static("text/javascript; charset=utf-8"),
+    );
+    headers.insert(
+        header::CACHE_CONTROL,
+        HeaderValue::from_static("public, max-age=3600"),
+    );
+    headers.insert(
+        axum::http::HeaderName::from_static("x-content-type-options"),
+        HeaderValue::from_static("nosniff"),
+    );
+    response
+}
+
 async fn stylesheet() -> Response {
     let mut response = render::AO3_CSS.into_response();
     let headers = response.headers_mut();

@@ -188,3 +188,41 @@ async fn the_form_posts_locally_and_issues_one_ao3_get() {
     handle.abort();
     drop(std::fs::remove_dir_all(dir));
 }
+
+#[tokio::test]
+async fn tag_pages_are_live_and_work_entries_link_to_tags() {
+    let tag_page = fixture()
+        .replace(
+            "<h2 class=\"heading\">Search Results</h2>",
+            "<h2 class=\"heading\">1 - 2 of 2 Works in Test</h2>",
+        )
+        .replace("<h3 class=\"heading\">2 Found</h3>", "");
+    let upstream = Server::start(vec![(
+        "GET /tags/Test/works".to_string(),
+        Response::ok(tag_page),
+    )]);
+    let dir = support::temp_dir("live-tag");
+    let (root, _store, handle) = serve(&dir, &upstream).await;
+
+    let body = http()
+        .get(format!("{root}/tags/Test/works"))
+        .send()
+        .await
+        .expect("tag page")
+        .text()
+        .await
+        .expect("body");
+    assert!(body.contains("2 Works in"), "{body}");
+    assert!(body.contains("A Mirror of Small Things"), "{body}");
+    assert!(body.contains("/tags/Test%20Fandom/works"), "{body}");
+    assert!(body.contains("/open/111"), "{body}");
+    assert!(
+        upstream
+            .requests()
+            .iter()
+            .any(|request| { request.path.starts_with("/tags/Test/works") })
+    );
+
+    handle.abort();
+    drop(std::fs::remove_dir_all(dir));
+}

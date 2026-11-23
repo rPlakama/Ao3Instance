@@ -119,6 +119,15 @@ search gets one explicit-result solve (ADR-0007 amendment) and renders the exact
 solver page; parser now covers series, restricted markers and collections. See
 `docs/search-parity.md`.
 
+**Tags, one-click open and reading progress (2026-11-23):** tag chips now point
+at live `/tags/<tag>/works` pages (cached fallback, same solver/clearance path as
+search), work titles in live results go through `GET /open/<id>` which caches on
+first click, and the reader has automatic scroll progress. The existing
+`progress.pct` column is now used, `POST /progress/auto` accepts throttled
+beacons from a small sandboxed-iframe script, and `/read/<id>` restores the saved
+chapter plus within-chapter scroll percentage. Home, `/reading` and the
+dashboard show overall percentages.
+
 **Known deviations (documented, not blockers):** required-tag marks are
 styled text badges rather than SVG artwork; the skin is a single-operator
 global preference rather than a per-browser cookie; a release/version bump is

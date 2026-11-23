@@ -385,7 +385,7 @@ async fn seeded_cache_renders_browse_fandoms_and_dashboard() {
         "{tag_search}"
     );
     assert!(
-        tag_search.contains("/works/search?include_tags="),
+        tag_search.contains("/tags/Test%20Fandom%20%28Not%20Real%29/works"),
         "{tag_search}"
     );
 

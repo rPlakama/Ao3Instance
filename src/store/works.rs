@@ -1,7 +1,8 @@
 //! Cached work rows, full-text search and the local reading position.
 
 use super::{
-    SearchFilter, SearchPage, Store, StoredChapter, StoredWork, TagGroups, WorkSummary, now_secs,
+    Progress, SearchFilter, SearchPage, Store, StoredChapter, StoredWork, TagGroups, WorkSummary,
+    now_secs,
 };
 use crate::ao3::work::WorkPage;
 use sqlx::Row;
@@ -172,7 +173,8 @@ impl Store {
 
     pub async fn list_works(&self, limit: i64) -> Result<Vec<WorkSummary>> {
         let rows = sqlx::query(
-            "SELECT w.ao3_id, w.title, w.authors_json, w.chapter_count, p.chapter_idx AS progress_chapter
+            "SELECT w.ao3_id, w.title, w.authors_json, w.chapter_count,
+                    p.chapter_idx AS progress_chapter, p.pct AS progress_pct
              FROM works w
              LEFT JOIN progress p ON p.work_id = w.ao3_id AND p.account_id = 'local'
              ORDER BY w.fetched_at DESC, w.ao3_id DESC LIMIT ?1",
@@ -192,6 +194,9 @@ impl Store {
                 authors,
                 chapter_count: row.get("chapter_count"),
                 progress_chapter: row.get("progress_chapter"),
+                progress_pct: row
+                    .get::<Option<f64>, _>("progress_pct")
+                    .map(|pct| pct.round() as i64),
             });
         }
         Ok(works)
@@ -205,7 +210,7 @@ impl Store {
         };
         let rows = sqlx::query(
             "SELECT w.ao3_id, w.title, w.authors_json, w.chapter_count,
-                    p.chapter_idx AS progress_chapter
+                    p.chapter_idx AS progress_chapter, p.pct AS progress_pct
              FROM work_search
              JOIN works w ON w.ao3_id = work_search.work_id
              LEFT JOIN progress p ON p.work_id = w.ao3_id AND p.account_id = 'local'
@@ -229,6 +234,9 @@ impl Store {
                 authors,
                 chapter_count: row.get("chapter_count"),
                 progress_chapter: row.get("progress_chapter"),
+                progress_pct: row
+                    .get::<Option<f64>, _>("progress_pct")
+                    .map(|pct| pct.round() as i64),
             });
         }
         Ok(works)
@@ -368,16 +376,19 @@ impl Store {
 
     // ---- reading progress (chapter anchor) ----
 
-    pub async fn save_progress(&self, work_id: &str, chapter_idx: i64) -> Result<()> {
+    pub async fn save_progress(&self, work_id: &str, chapter_idx: i64, pct: i64) -> Result<()> {
+        let pct = pct.clamp(0, 100);
         sqlx::query(
-            "INSERT INTO progress (account_id, work_id, chapter_idx, updated_at)
-             VALUES ('local', ?1, ?2, ?3)
+            "INSERT INTO progress (account_id, work_id, chapter_idx, pct, updated_at)
+             VALUES ('local', ?1, ?2, ?3, ?4)
              ON CONFLICT(account_id, work_id) DO UPDATE SET
                chapter_idx = excluded.chapter_idx,
+               pct = excluded.pct,
                updated_at = excluded.updated_at",
         )
         .bind(work_id)
         .bind(chapter_idx)
+        .bind(pct as f64)
         .bind(now_secs())
         .execute(&self.pool)
         .await
@@ -385,15 +396,18 @@ impl Store {
         Ok(())
     }
 
-    pub async fn get_progress(&self, work_id: &str) -> Result<Option<i64>> {
+    pub async fn get_progress(&self, work_id: &str) -> Result<Option<Progress>> {
         let row = sqlx::query(
-            "SELECT chapter_idx FROM progress WHERE account_id = 'local' AND work_id = ?1",
+            "SELECT chapter_idx, pct FROM progress WHERE account_id = 'local' AND work_id = ?1",
         )
         .bind(work_id)
         .fetch_optional(&self.pool)
         .await
         .map_err(|e| Error::Store(format!("get progress: {e}")))?;
-        Ok(row.map(|row| row.get("chapter_idx")))
+        Ok(row.map(|row| Progress {
+            chapter_idx: row.get("chapter_idx"),
+            pct: row.get::<f64, _>("pct").round().clamp(0.0, 100.0) as i64,
+        }))
     }
 }
 
