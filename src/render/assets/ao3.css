@@ -981,7 +981,12 @@ ul.primary.navigation li.search .tip {
     font-size: 0.72rem;
     white-space: nowrap;
 }
-ul.primary.navigation li.search .tip a { color: #a33; }
+ul.primary.navigation li.search .tip a {
+    display: inline;
+    padding: 0;
+    color: #a33;
+    font-size: inherit;
+}
 ul.primary.navigation li.search .submit button {
     padding: 0.3rem 0.8rem;
     border-radius: 0.2rem;
