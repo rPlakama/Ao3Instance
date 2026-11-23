@@ -3,7 +3,8 @@
 
 use super::blurb::author_links_from;
 use super::chrome::{PageContext, layout};
-use super::{escape, tag_href};
+use super::{escape, sanitize, tag_href};
+use crate::ao3::home::HomeModules;
 use crate::store::{StoredWork, WorkSummary};
 use crate::time::format_utc;
 
@@ -13,6 +14,7 @@ pub fn home_page(
     detailed: &[StoredWork],
     fandoms: &[(String, usize)],
     flash: Option<&str>,
+    modules: &HomeModules,
 ) -> String {
     let mut body = String::new();
     if let Some(flash) = flash {
@@ -25,10 +27,20 @@ pub fn home_page(
     body.push_str("<div class=\"home-grid\">");
     body.push_str("<section class=\"home-favorites\">");
     body.push_str("<h2>Find your favorites</h2>");
-    if fandoms.is_empty() {
+    if !modules.favorites.is_empty() {
+        body.push_str("<ul class=\"favorites\">");
+        for favorite in modules.favorites.iter().take(10) {
+            body.push_str(&format!(
+                "<li><a href=\"{}\">{}</a></li>",
+                tag_href(favorite),
+                escape(favorite)
+            ));
+        }
+        body.push_str("</ul>");
+    } else if fandoms.is_empty() {
         body.push_str(
-            "<p class=\"muted\">No cached fandom yet. Open a work below and the cache \
-             starts building itself.</p>",
+            "<p class=\"muted\">Sign in on <a href=\"/session\">Session</a> to load your \
+             AO3 favorite tags, or open a work below to start the cache.</p>",
         );
     } else {
         body.push_str("<ul class=\"favorites\">");
@@ -76,14 +88,44 @@ pub fn home_page(
     );
     body.push_str("</section>");
 
-    body.push_str(
+    let (news_href, news_label) = if modules.news.is_empty() {
+        ("/works".to_string(), "All Cached Works")
+    } else {
+        (
+            "https://archiveofourown.org/admin_posts".to_string(),
+            "All News",
+        )
+    };
+    body.push_str(&format!(
         "<section class=\"home-news\"><h2>News <span class=\"heading-link\">\
-                   <a href=\"/works\">All Cached Works</a></span></h2>",
-    );
-    if detailed.is_empty() {
+         <a href=\"{news_href}\">{news_label}</a></span></h2>"
+    ));
+    if !modules.news.is_empty() {
+        for post in modules.news.iter().take(4) {
+            let href = post.href.as_deref().map_or_else(
+                || "https://archiveofourown.org/admin_posts".to_string(),
+                |href| format!("https://archiveofourown.org{href}"),
+            );
+            body.push_str(&format!(
+                "<article class=\"news-entry\"><h3><a href=\"{href}\">{title}</a></h3>\
+                 <p class=\"meta\">{meta}</p>",
+                title = escape(&post.title),
+                meta = escape(&post.meta),
+            ));
+            if !post.summary_html.trim().is_empty() {
+                body.push_str(&format!(
+                    "<blockquote class=\"userstuff\">{}</blockquote>",
+                    sanitize(&post.summary_html)
+                ));
+            }
+            body.push_str(&format!(
+                "<p class=\"read-more\"><a href=\"{href}\">Read more...</a></p></article>"
+            ));
+        }
+    } else if detailed.is_empty() {
         body.push_str(
-            "<p class=\"muted\">Nothing cached yet. This instance's news column fills \
-             with the works you add.</p>",
+            "<p class=\"muted\">Sign in on <a href=\"/session\">Session</a> to load AO3 \
+             news, or cache works below.</p>",
         );
     } else {
         for work in detailed.iter().take(3) {
@@ -115,16 +157,112 @@ pub fn home_page(
 
     body.push_str("<div class=\"home-bottom\">");
     body.push_str(
-        "<section class=\"home-module\"><h3>Is it later already?</h3>\
-         <p class=\"meta\"><a href=\"/reading\">My History</a></p></section>",
+        "<section class=\"home-module home-readings\"><h3>Is it later already? \
+         <span class=\"heading-link\"><a href=\"/reading\">My History</a></span></h3>\
+         <p class=\"note\">Some works you've marked for later.</p>",
     );
+    if modules.readings.is_empty() {
+        body.push_str("<p class=\"muted\">No AO3 read-later works loaded.</p>");
+    } else {
+        body.push_str("<ol class=\"reading work index group\">");
+        for reading in modules.readings.iter().take(4) {
+            body.push_str(&reading_blurb(reading));
+        }
+        body.push_str("</ol>");
+    }
+    body.push_str("</section>");
+    let inbox_href = if ctx.account.is_empty() {
+        "/session".to_string()
+    } else {
+        format!(
+            "https://archiveofourown.org/users/{}/inbox",
+            super::super::ao3::parse::percent_encode(
+                &ctx.account,
+                super::super::ao3::parse::SpaceMode::Percent20
+            )
+        )
+    };
+    body.push_str(&format!(
+        "<section class=\"home-module home-inbox\"><h3>Unread messages \
+         <span class=\"heading-link\"><a href=\"{inbox_href}\">My Inbox</a></span></h3>\
+         <p class=\"note\">The latest unread items from your inbox.</p>"
+    ));
+    if modules.inbox.is_empty() {
+        body.push_str(
+            "<p class=\"muted\">No unread messages loaded. Sign in to AO3 to see them.</p>",
+        );
+    } else {
+        body.push_str("<ul class=\"abbreviated comment group\">");
+        for message in modules.inbox.iter().take(4) {
+            let href = message.href.as_deref().map_or_else(
+                || "https://archiveofourown.org".to_string(),
+                |href| format!("https://archiveofourown.org{href}"),
+            );
+            body.push_str(&format!(
+                "<li class=\"unread\"><h4 class=\"heading byline\">{byline}</h4>\
+                 <blockquote class=\"userstuff\">{content}</blockquote>\
+                 <p class=\"actions\"><a href=\"{href}\">Open on AO3</a></p></li>",
+                byline = escape(&message.byline),
+                content = sanitize(&message.content_html),
+            ));
+        }
+        body.push_str("</ul>");
+    }
+    body.push_str("</section></div>");
     body.push_str(
-        "<section class=\"home-module\"><h3>Unread messages</h3>\
-         <p class=\"meta\"><a href=\"/subscriptions\">My Subscriptions</a></p></section>",
+        "<p class=\"meta home-refresh\"><a href=\"/?refresh=1\">Refresh AO3 home</a></p>",
     );
-    body.push_str("</div>");
 
     layout(ctx, &body)
+}
+
+fn reading_blurb(reading: &crate::ao3::home::HomeReading) -> String {
+    let work = &reading.work;
+    let authors = author_links_from(&work.authors);
+    let fandoms = work
+        .fandoms
+        .iter()
+        .map(|fandom| {
+            format!(
+                "<a class=\"tag\" href=\"{}\">{}</a>",
+                tag_href(fandom),
+                escape(fandom)
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(", ");
+    let summary = work
+        .summary_html
+        .as_deref()
+        .map_or_else(String::new, |html| {
+            format!(
+                "<blockquote class=\"userstuff summary\">{}</blockquote>",
+                sanitize(html)
+            )
+        });
+    let mut stats = String::new();
+    if let Some(words) = work.words {
+        stats.push_str(&format!("Words: {} · ", crate::time::format_count(words)));
+    }
+    if let Some(chapters) = &work.chapters {
+        stats.push_str(&format!("Chapters: {} · ", escape(chapters)));
+    }
+    if let Some(kudos) = work.kudos {
+        stats.push_str(&format!("Kudos: {} · ", crate::time::format_count(kudos)));
+    }
+    if let Some(hits) = work.hits {
+        stats.push_str(&format!("Hits: {}", crate::time::format_count(hits)));
+    }
+    format!(
+        "<li class=\"reading work\"><h4 class=\"heading\">\
+         <a href=\"/open/{id}\">{title}</a> by {authors}</h4>\
+         <p class=\"meta\">{fandoms}</p>{summary}\
+         <p class=\"stats\">{stats}</p>\
+         <p class=\"meta viewed\">{viewed}</p></li>",
+        id = escape(&work.ao3_id),
+        title = escape(&work.title),
+        viewed = escape(&reading.meta),
+    )
 }
 
 /// First `max` characters of an HTML summary's text, without markup.

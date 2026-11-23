@@ -28,6 +28,7 @@ const CHAPTER_CSP: &str = "default-src 'none'; style-src 'unsafe-inline'; img-sr
 #[derive(Deserialize)]
 pub(super) struct HomeQuery {
     notice: Option<String>,
+    refresh: Option<String>,
 }
 
 pub(super) async fn home(
@@ -38,9 +39,16 @@ pub(super) async fn home(
     let detailed = state.store.list_works_detailed(50).await?;
     let fandoms = state.store.list_fandoms().await?;
     let flash = query.notice.as_deref().and_then(notice_text);
+    let (account, usable) = session_identity(&state).await;
+    let cache_account = if usable { account.as_str() } else { "" };
+    let refresh = query.refresh.as_deref() == Some("1");
+    let modules = match live_home_html(&state, cache_account, refresh).await {
+        Some(html) => crate::ao3::home::parse_home(&html),
+        None => crate::ao3::home::HomeModules::default(),
+    };
     let page = super::page_context(&state, "AO3Instance", NavSection::Home).await;
     Ok(Html(render::home_page(
-        &page, &works, &detailed, &fandoms, flash,
+        &page, &works, &detailed, &fandoms, flash, &modules,
     )))
 }
 
@@ -637,6 +645,78 @@ pub(super) async fn auto_progress(
         .save_progress(&form.work_id, form.chapter, form.pct)
         .await?;
     Ok(axum::http::StatusCode::NO_CONTENT)
+}
+
+/// One authenticated AO3 home fetch, cached briefly for the single local user.
+async fn live_home_html(state: &AppState, account: &str, refresh: bool) -> Option<String> {
+    {
+        let cache = state.home_cache.lock().await;
+        if let Some(cached) = cache.as_ref()
+            && cached.account == account
+        {
+            let fresh = crate::time::now_secs().saturating_sub(cached.at) < 300;
+            if !refresh && fresh {
+                return Some(cached.html.clone());
+            }
+        }
+    }
+
+    let response = {
+        let mut session = state.session.lock().await;
+        session
+            .client_mut()
+            .get_with_timeout("/", std::time::Duration::from_secs(10))
+            .await
+            .ok()
+    };
+    if let Some(response) = response
+        && response.status == 200
+    {
+        *state.home_cache.lock().await = Some(super::HomeCache {
+            account: account.to_string(),
+            html: response.body.clone(),
+            at: crate::time::now_secs(),
+        });
+        return Some(response.body);
+    }
+
+    let (solver_available, send_cookies) = {
+        let reachable = state.solver_status.read().await.reachable;
+        let session = state.session.lock().await;
+        (
+            reachable && session.solver_mode() != crate::config::SolverMode::Off,
+            !account.is_empty() && session.solver_may_receive_cookies(),
+        )
+    };
+    if solver_available
+        && let Ok(body) = super::solver::solve_search(state, "/", send_cookies).await
+    {
+        *state.home_cache.lock().await = Some(super::HomeCache {
+            account: account.to_string(),
+            html: body.clone(),
+            at: crate::time::now_secs(),
+        });
+        return Some(body);
+    }
+
+    let stale = state
+        .home_cache
+        .lock()
+        .await
+        .as_ref()
+        .filter(|cached| cached.account == account)
+        .map(|cached| cached.html.clone());
+    if stale.is_some() {
+        return stale;
+    }
+    // Negative-cache the failure so a blocked home does not stall every visit;
+    // the explicit "Refresh AO3 home" link forces a retry.
+    *state.home_cache.lock().await = Some(super::HomeCache {
+        account: account.to_string(),
+        html: String::new(),
+        at: crate::time::now_secs(),
+    });
+    Some(String::new())
 }
 
 #[derive(Deserialize)]

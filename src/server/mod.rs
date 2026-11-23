@@ -55,6 +55,14 @@ pub struct AppState {
     pub skin: tokio::sync::RwLock<String>,
     /// One solver-fetched search page awaiting its redirect, short-lived.
     pub solved_search: tokio::sync::Mutex<Option<SolvedSearch>>,
+    /// Last authenticated AO3 home page, reused across home visits.
+    pub home_cache: tokio::sync::Mutex<Option<HomeCache>>,
+}
+
+pub struct HomeCache {
+    pub account: String,
+    pub html: String,
+    pub at: i64,
 }
 
 pub struct SolvedSearch {
@@ -131,6 +139,7 @@ pub async fn router(config: &Config, store: Store) -> Result<Router> {
         solver_lock: tokio::sync::Mutex::new(()),
         skin: tokio::sync::RwLock::new(saved_skin),
         solved_search: tokio::sync::Mutex::new(None),
+        home_cache: tokio::sync::Mutex::new(None),
     });
     let app = Router::new()
         .route("/", get(reads::home))

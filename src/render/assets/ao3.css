@@ -1158,3 +1158,43 @@ ul.primary.navigation li.search .submit button {
 @media (max-width: 62em) {
     #work-filters { margin-top: 1rem; }
 }
+
+/* ---------- live AO3 home modules ---------- */
+
+.home-readings, .home-inbox { min-width: 0; }
+.home-readings .note, .home-inbox .note { margin: 0 0 0.6rem; color: var(--ao3-muted); font-size: 0.82rem; }
+ol.reading.work.index.group {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+}
+li.reading.work {
+    margin: 0 0 0.8rem;
+    padding: 0.7rem;
+    border: 1px solid var(--ao3-border);
+    border-radius: 0.2rem;
+    background: var(--ao3-surface-soft);
+}
+li.reading.work h4 { margin: 0 0 0.25rem; font-size: 1rem; }
+li.reading.work h4 a { text-decoration: none; }
+li.reading.work .summary { margin: 0.4rem 0; }
+li.reading.work .stats { margin: 0.3rem 0; color: var(--ao3-muted); font-size: 0.82rem; }
+li.reading.work .viewed { margin: 0.3rem 0 0; color: var(--ao3-muted); font-size: 0.8rem; }
+.home-inbox ul.abbreviated.comment.group {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+}
+.home-inbox li.unread {
+    margin: 0 0 0.7rem;
+    padding: 0.6rem 0.7rem;
+    border: 1px solid var(--ao3-border);
+    border-radius: 0.2rem;
+}
+.home-inbox li.unread h4 { margin: 0 0 0.25rem; font-size: 0.9rem; }
+.home-inbox li.unread blockquote { margin: 0.3rem 0; }
+.home-inbox li.unread .actions { margin: 0.3rem 0 0; text-align: right; }
+.home-refresh { text-align: right; margin-top: 0.8rem; }
+@media (max-width: 62em) {
+    .home-bottom { grid-template-columns: 1fr; }
+}

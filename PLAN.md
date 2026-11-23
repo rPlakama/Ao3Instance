@@ -147,6 +147,16 @@ query (repeated `include_tag`/`exclude_tag` keys), mapped onto AO3's
 layout uses the wider AO3 content width; mobile puts the filter block before the
 work list.
 
+**Live AO3 home modules (2026-11-23):** the home page now parses AO3's own `/`
+for favorite tags, news, marked-for-later readings and unread inbox messages
+(`ao3/home.rs`; verified against a real saved AO3 home page). The authenticated
+page is fetched once and cached for five minutes in app state, with `?refresh=1`
+and a visible "Refresh AO3 home" link. Read-later work titles go through
+`/open/<id>`; favorites link to live tag pages; news links to AO3 admin posts;
+inbox items render read-only with an AO3 link. Signed-out visitors get the
+public news module plus local/cached fallbacks and sign-in prompts for the
+account-only modules.
+
 **Known deviations (documented, not blockers):** required-tag marks are
 styled text badges rather than SVG artwork; the skin is a single-operator
 global preference rather than a per-browser cookie; a release/version bump is

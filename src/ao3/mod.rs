@@ -3,6 +3,7 @@
 pub mod actions;
 pub mod client;
 pub mod governor;
+pub mod home;
 pub mod jar;
 pub mod parse;
 pub mod pseuds;

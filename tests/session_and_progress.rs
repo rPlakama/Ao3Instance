@@ -238,3 +238,53 @@ async fn adult_gate_is_explained_not_reported_as_drift() {
     handle.abort();
     drop(std::fs::remove_dir_all(dir));
 }
+
+#[tokio::test]
+async fn authenticated_home_renders_ao3_modules() {
+    let mut routes = session_routes("555");
+    routes.push((
+        "GET /".to_string(),
+        Response::ok(
+            std::fs::read_to_string("tests/fixtures/ao3_home.html").expect("home fixture"),
+        )
+        .with_header("content-type", "text/html; charset=utf-8"),
+    ));
+    let dir = support::temp_dir("home-modules");
+    let upstream = Server::start(routes);
+    let (root, _store, handle) = start(&dir, &upstream).await;
+    let client = http();
+
+    let imported = client
+        .post(format!("{root}/session/import"))
+        .header("content-type", "application/x-www-form-urlencoded")
+        .body("account=someone&session_cookie=s1&credentials_cookie=1")
+        .send()
+        .await
+        .expect("import");
+    assert_eq!(imported.status(), 200);
+
+    let home = client
+        .get(&root)
+        .send()
+        .await
+        .expect("home")
+        .text()
+        .await
+        .expect("home body");
+    assert!(home.contains("Assertive Emilia (Re:Zero)"), "{home}");
+    assert!(home.contains("Five Things Hobgirl Said"), "{home}");
+    assert!(home.contains("Re: Zero Gate"), "{home}");
+    assert!(home.contains("Internet123 on Chapter 4"), "{home}");
+    assert!(home.contains("Hungry man thinks of bread"), "{home}");
+    assert!(home.contains("Refresh AO3 home"), "{home}");
+    assert!(
+        upstream
+            .requests()
+            .iter()
+            .any(|request| request.path == "/"),
+        "the AO3 home page was fetched once"
+    );
+
+    handle.abort();
+    drop(std::fs::remove_dir_all(dir));
+}

@@ -50,6 +50,10 @@ Features:
 - AO3 header dropdowns (Fandoms, Browse, Search, About) and a header search box
   with AO3's tip line; category links open AO3 media pages because the local
   cache does not store media classifications.
+- Live AO3 home modules loaded from the signed-in AO3 home page: favorite tags,
+  news, read-later works and unread inbox messages, with a short local cache and
+  an explicit refresh link. Read-later titles cache/open works through the app;
+  inbox items are read-only.
 - Local-only **History** (`/history`): latest reads/caches with a range
   dropdown (`Today` / `Last 7 days` / `Everything`).
 - A reader with chapter jump, **Entire Work** mode and automatic progress/resume.

@@ -315,7 +315,7 @@ pub fn parse_search_results(html: &str) -> Result<LiveSearchResults> {
     let work_selector = css("ol.work.index.group > li.work.blurb.group")?;
     let works: Vec<LiveWork> = document
         .select(&work_selector)
-        .filter_map(|element| parse_work(&element).ok())
+        .filter_map(|element| parse_work_element(&element).ok())
         .collect();
 
     let total = document
@@ -352,7 +352,7 @@ pub fn parse_search_results(html: &str) -> Result<LiveSearchResults> {
     })
 }
 
-fn parse_work(element: &ElementRef<'_>) -> Result<LiveWork> {
+pub(crate) fn parse_work_element(element: &ElementRef<'_>) -> Result<LiveWork> {
     let id_attr = element.value().attr("id").unwrap_or_default();
     let ao3_id = id_attr
         .strip_prefix("work_")
