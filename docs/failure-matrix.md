@@ -7,10 +7,11 @@ typed outcome and, where marked, an integration test.
 | --- | --- | --- | --- | --- |
 | AO3 unreachable (cached work) | no request needed | work reads from SQLite | — | `failure_matrix::cached_work_survives_an_unreachable_upstream` |
 | AO3 unreachable (new work) | connect error | 502 "request failed", nothing cached | — | same |
-| Search offline | local FTS only | cached hits; explicit empty state | — | `search_and_refresh` |
+| Live search blocked | 403/503/429 or timeout | one solver solve of the same result page; if unavailable, search-block page | `solver_event` | `ao3_search_live`, `search-parity.md` |
+| Search offline | local FTS only (`?local=1`) | cached hits; explicit empty state | — | `search_and_refresh` |
 | 429 rate limit | HTTP 429 / `Retry-After` | "rate limiting … retry after Ns" | write: failed | `writes_comments::spam_and_rate_limits…` |
 | 403 / 503 edge block | status | "refused the request; may be a bot challenge"; solve card if the solver is reachable | write: failed | `failure_matrix::blocked_upstream_is_explained` |
-| Challenge solved | explicit `POST /solve` | page cached, reader opens; one page per click | `solver_event`: solved | `flaresolverr::solve_caches_the_page…` |
+| Challenge solved | explicit `POST /solve` (works) or blocked search | page cached/reads, or search results rendered; one page per user action | `solver_event`: solved | `flaresolverr::solve_caches_the_page…` |
 | Solver absent | connect error on `/v1` | page still explains the block; `/solve` → 503 | `solver_event`: unavailable | `flaresolverr::absent_solver_degrades…` |
 | Solver captcha | `status:"error"` message | "hit a captcha it cannot solve" | `solver_event`: captcha | `flaresolverr::captcha_is_typed…` |
 | Solve budget / cooldown | local counters | 429 with the exact wait | — | `flaresolverr::solve_caches…` (cooldown) |

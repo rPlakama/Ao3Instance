@@ -1,6 +1,6 @@
 # ADR-0007 — Host-provided FlareSolverr fallback
 
-- **Status:** Accepted (2026-11-22)
+- **Status:** Accepted (2026-11-22), amended for search (2026-11-23)
 - **Date:** 2026-11-22
 - **Amends:** ADR-0002 §5 (identity), and the "challenge is terminal" consequence
 - **Related:** `docs/operator.md`, `docs/failure-matrix.md`, PLAN.md §2.5
@@ -25,9 +25,14 @@ systemd module (`services.flaresolverr`, port 8191, firewall closed by default).
    and supervises the service; the app only calls its loopback `/v1` API. A
    machine without FlareSolverr must build and run every feature (with the
    fallback absent).
-2. **Explicit, per-page, opt-in.** A solve only happens on `POST /solve`, from a
-   button on the edge-block error page. Never on a `GET`, never automatically,
-   never in the background, never for a batch or a crawl.
+2. **Explicit, per-page, opt-in.** A work solve only happens on `POST /solve`,
+   from a button on the edge-block error page. Never in the background, never for
+   a batch or a crawl.
+   **Search exception (2026-11-23):** a live Work Search is itself one explicit
+   user action. If that exact search GET is blocked or times out, the handler may
+   perform one solve for that one result page, under the same single-flight lock,
+   cooldown and hourly budget, and render it. It never follows pagination or
+   searches on its own.
 3. **Reads only.** The solver fetches `request.get` pages. Writes keep the
    direct client because a browser replay can double-post, bypasses the write
    governor and confuses the CSRF flow.
@@ -54,8 +59,9 @@ systemd module (`services.flaresolverr`, port 8191, firewall closed by default).
 
 - The app gains an optional dependency on a *system* service, documented in
   `docs/operator.md`; the build closure does not change.
-- `403`/`503` still returns a `502` error page, now with a solve card when the
-  service is reachable. Nothing retries on its own.
+- `403`/`503` on a work still returns a `502` error page, with a solve card when
+  the service is reachable. A blocked search may be solved once automatically
+  because the user already submitted that search; work solves remain one click.
 - A stale clearance is dropped on the next `403`, so the client degrades to the
   honest identity instead of replaying a browser UA forever.
 - The clearance window is a heuristic: Cloudflare also binds to TLS

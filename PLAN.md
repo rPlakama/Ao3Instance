@@ -111,6 +111,14 @@ days / Everything dropdown; it is linked from the greeting menu, dashboard
 sidebar and footer. Fandoms media categories link to AO3 because media
 classification is not stored locally.
 
+**Search parity check (2026-11-23, `re zero`):** AO3 signed-out and this app now
+both report 1,364 Found; the first five best-match ids and all entry fields match,
+and a date-sorted page matches exactly in order. AO3's signed-in result set is
+1,475; the app says it is signed out and links to session import. A blocked
+search gets one explicit-result solve (ADR-0007 amendment) and renders the exact
+solver page; parser now covers series, restricted markers and collections. See
+`docs/search-parity.md`.
+
 **Known deviations (documented, not blockers):** required-tag marks are
 styled text badges rather than SVG artwork; the skin is a single-operator
 global preference rather than a per-browser cookie; a release/version bump is

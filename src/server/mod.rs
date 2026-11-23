@@ -53,6 +53,13 @@ pub struct AppState {
     pub solver_lock: tokio::sync::Mutex<()>,
     /// Global display preference (`default` or `reversi`).
     pub skin: tokio::sync::RwLock<String>,
+    /// One solver-fetched search page awaiting its redirect, short-lived.
+    pub solved_search: tokio::sync::Mutex<Option<SolvedSearch>>,
+}
+
+pub struct SolvedSearch {
+    pub html: String,
+    pub at: i64,
 }
 
 /// Builds the router. Split from [`run`] so tests can serve it on an ephemeral
@@ -116,6 +123,7 @@ pub async fn router(config: &Config, store: Store) -> Result<Router> {
         solver_status: tokio::sync::RwLock::new(solver_status),
         solver_lock: tokio::sync::Mutex::new(()),
         skin: tokio::sync::RwLock::new("default".to_string()),
+        solved_search: tokio::sync::Mutex::new(None),
     });
     let app = Router::new()
         .route("/", get(reads::home))

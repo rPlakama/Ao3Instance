@@ -29,6 +29,14 @@ pub(super) enum AppError {
         solver_reachable: bool,
         send_cookies_allowed: bool,
     },
+    /// AO3's edge refused a search; offer an explicit solve-and-retry.
+    BlockedSearch {
+        status: u16,
+        target: String,
+        retry: String,
+        solver_available: bool,
+        send_cookies_allowed: bool,
+    },
     Internal(String),
 }
 
@@ -46,6 +54,23 @@ impl IntoResponse for AppError {
                     status,
                     &work_id,
                     solver_reachable,
+                    send_cookies_allowed,
+                )),
+            )
+                .into_response(),
+            Self::BlockedSearch {
+                status,
+                target,
+                retry,
+                solver_available,
+                send_cookies_allowed,
+            } => (
+                StatusCode::BAD_GATEWAY,
+                Html(render::search_challenge_page(
+                    status,
+                    &target,
+                    &retry,
+                    solver_available,
                     send_cookies_allowed,
                 )),
             )

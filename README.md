@@ -30,8 +30,11 @@ Features:
 - Work Search modelled on AO3's form: submitting it performs **one literal AO3
   search** via the user's session and renders AO3's result entries (summary,
   Found count, required tags, stats, date, Edit Your Search, numbered pages).
-  Results are not cached until you open a work. `?local=1` keeps an offline
-  cache-only search.
+  Results are not cached until you open a work. A blocked direct search may use
+  one local-browser solve of that exact result page; `?local=1` keeps an offline
+  cache-only search. Signed-out results match AO3's signed-out set; import your
+  session on `/session` for account-specific results. See
+  [docs/search-parity.md](docs/search-parity.md).
 - Tag Search over cached tags, AO3-shaped tag work pages with Works/Bookmarks,
   range headings and numbered pagination, and tag include/exclude fields in the
   live search form.

@@ -40,6 +40,7 @@ async fn serve(
             dir.to_str().expect("utf8 dir").to_string(),
         ),
         ("AO3I_MIN_SPACING_MS", "0".to_string()),
+        ("AO3I_FLARESOLVERR", "off".to_string()),
     ])
     .expect("config");
     let pool = db::open(&config.db_file).await.expect("db");
@@ -77,6 +78,10 @@ async fn search_is_a_literal_ao3_request_and_renders_its_entries() {
     assert!(body.contains("Second Mirror"), "{body}");
     assert!(body.contains("Edit Your Search"), "{body}");
     assert!(body.contains("Cache this work"), "{body}");
+    assert!(body.contains("(Restricted)"), "{body}");
+    assert!(body.contains("class=\"series\""), "{body}");
+    assert!(body.contains("Collections:"), "{body}");
+    assert!(body.contains("Signed out:"), "{body}");
 
     // The literal upstream request carried AO3's own parameter names.
     let requests = upstream.requests();
@@ -87,10 +92,8 @@ async fn search_is_a_literal_ao3_request_and_renders_its_entries() {
         requests[0].path
     );
     assert!(
-        requests[0]
-            .path
-            .contains("work_search%5Bsort_column%5D=_score"),
-        "{}",
+        !requests[0].path.contains("sort_column"),
+        "default best match must match AO3's omitted sort: {}",
         requests[0].path
     );
 
@@ -144,7 +147,8 @@ async fn upstream_search_failures_are_typed() {
         .expect("search");
     assert_eq!(response.status(), 502);
     let body = response.text().await.expect("body");
-    assert!(body.contains("rate limiting"), "{body}");
+    assert!(body.contains("Search blocked"), "{body}");
+    assert!(body.contains("HTTP 429"), "{body}");
 
     handle.abort();
     drop(std::fs::remove_dir_all(dir));

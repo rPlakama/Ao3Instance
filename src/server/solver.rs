@@ -27,9 +27,45 @@ use crate::time::now_secs;
 
 #[derive(Deserialize)]
 pub(super) struct SolveForm {
-    /// Work id or AO3 `/works/<id>` URL; never an arbitrary URL.
+    /// Work id / `/works/<id>` URL, or an exact `/works/search?...` path.
     target: String,
+    /// Local search URL to return to after a successful search solve.
+    next: Option<String>,
     send_cookies: Option<String>,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+enum SolveTarget {
+    Work(String),
+    Search(String),
+}
+
+fn solve_target(input: &str) -> Option<SolveTarget> {
+    let trimmed = input.trim();
+    if let Some(search) = trimmed.strip_prefix("/works/search") {
+        let path = if search.is_empty() {
+            "/works/search".to_string()
+        } else {
+            let query = search.strip_prefix('?')?;
+            format!("/works/search?{query}")
+        };
+        if path.contains("://") || path.contains(['\n', '\r']) {
+            return None;
+        }
+        return Some(SolveTarget::Search(path));
+    }
+    normalize_work_id(trimmed).map(SolveTarget::Work)
+}
+
+fn local_search_return(input: Option<&str>) -> Handled<String> {
+    let next = input
+        .map(str::trim)
+        .filter(|value| value.starts_with("/works/search"))
+        .filter(|value| !value.contains("://") && !value.contains(['\n', '\r']))
+        .ok_or_else(|| {
+            AppError::BadRequest("A search solve needs a local /works/search return path.".into())
+        })?;
+    Ok(next.to_string())
 }
 
 pub(super) async fn solve(
@@ -45,23 +81,76 @@ pub(super) async fn solve(
             "The local FlareSolverr fallback is disabled (AO3I_FLARESOLVERR=off).".into(),
         ));
     }
-    let Some(id) = normalize_work_id(&form.target) else {
-        return Err(AppError::BadRequest(
-            "Expected an AO3 work id (e.g. 12345678) or a /works/<id> URL.".into(),
-        ));
-    };
+    let target = solve_target(&form.target).ok_or_else(|| {
+        AppError::BadRequest(
+            "Expected an AO3 work id, /works/<id> URL, or /works/search?... path.".into(),
+        )
+    })?;
 
     let _guard = state.solver_lock.try_lock().map_err(|_| {
         AppError::Conflict("A solve is already running; wait for it to finish.".into())
     })?;
     enforce_budget(&state).await?;
 
+    if let SolveTarget::Search(path) = target {
+        let next = local_search_return(form.next.as_deref())?;
+        let send_cookies = form.send_cookies.is_some();
+        let started = Instant::now();
+        let result = {
+            let mut session = state.session.lock().await;
+            session.solve_get(&path, send_cookies).await
+        };
+        let latency_ms = elapsed_ms(started);
+        return match result {
+            Ok(response) if response.status == 200 => {
+                state
+                    .store
+                    .record_solver_event(
+                        "solved",
+                        &path,
+                        Some(200),
+                        Some(latency_ms),
+                        consts::SOLVER_EVENT_RETENTION,
+                    )
+                    .await?;
+                persist_clearance(&state).await?;
+                let separator = if next.contains('?') { '&' } else { '?' };
+                let redirect = format!("{next}{separator}solved=1");
+                *state.solved_search.lock().await = Some(super::SolvedSearch {
+                    html: response.body,
+                    at: now_secs(),
+                });
+                Ok(Redirect::to(&redirect))
+            }
+            Ok(response) => {
+                state
+                    .store
+                    .record_solver_event(
+                        "failed",
+                        &path,
+                        Some(response.status),
+                        Some(latency_ms),
+                        consts::SOLVER_EVENT_RETENTION,
+                    )
+                    .await?;
+                Err(status_error(response.status))
+            }
+            Err(error) => {
+                record_failure(&state, &path, &error, latency_ms).await?;
+                Err(AppError::from(error))
+            }
+        };
+    }
+
+    let SolveTarget::Work(id) = target else {
+        unreachable!("search target returned above")
+    };
     let path = format!("/works/{id}?view_full_work=true");
     let send_cookies = form.send_cookies.is_some();
     let started = Instant::now();
     let result = {
         let mut session = state.session.lock().await;
-        session.solve_read(&path, send_cookies).await
+        session.solve_get(&path, send_cookies).await
     };
     let latency_ms = elapsed_ms(started);
 
@@ -101,8 +190,60 @@ pub(super) async fn solve(
     }
 }
 
+/// One solver GET for a search, used only because the user submitted a search.
+/// The caller renders the returned page immediately; nothing is cached.
+pub(super) async fn solve_search(
+    state: &AppState,
+    path: &str,
+    send_cookies: bool,
+) -> Handled<String> {
+    let _guard = state.solver_lock.try_lock().map_err(|_| {
+        AppError::Conflict("A solve is already running; wait for it to finish.".into())
+    })?;
+    enforce_budget(state).await?;
+    let started = Instant::now();
+    let result = {
+        let mut session = state.session.lock().await;
+        session.solve_get(path, send_cookies).await
+    };
+    let latency_ms = elapsed_ms(started);
+    match result {
+        Ok(response) if response.status == 200 => {
+            state
+                .store
+                .record_solver_event(
+                    "solved",
+                    path,
+                    Some(200),
+                    Some(latency_ms),
+                    consts::SOLVER_EVENT_RETENTION,
+                )
+                .await?;
+            persist_clearance(state).await?;
+            Ok(response.body)
+        }
+        Ok(response) => {
+            state
+                .store
+                .record_solver_event(
+                    "failed",
+                    path,
+                    Some(response.status),
+                    Some(latency_ms),
+                    consts::SOLVER_EVENT_RETENTION,
+                )
+                .await?;
+            Err(status_error(response.status))
+        }
+        Err(error) => {
+            record_failure(state, path, &error, latency_ms).await?;
+            Err(AppError::from(error))
+        }
+    }
+}
+
 /// Cooldown and rolling-hour budget, checked before any solver traffic.
-async fn enforce_budget(state: &AppState) -> Handled<()> {
+pub(super) async fn enforce_budget(state: &AppState) -> Handled<()> {
     let now = now_secs();
     let cooldown = i64::try_from(consts::FLARESOLVERR_COOLDOWN.as_secs()).unwrap_or(0);
     if let Some(last) = state.store.last_solved_at().await? {
@@ -344,4 +485,39 @@ fn diag_kind(error: &CoreError) -> &'static str {
 
 fn elapsed_ms(started: Instant) -> u64 {
     u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn solve_targets_stay_on_ao3_paths() {
+        assert_eq!(
+            solve_target("12345"),
+            Some(SolveTarget::Work("12345".into()))
+        );
+        assert_eq!(
+            solve_target("https://archiveofourown.org/works/12345"),
+            Some(SolveTarget::Work("12345".into()))
+        );
+        assert_eq!(
+            solve_target("/works/search?work_search%5Bquery%5D=re%20zero"),
+            Some(SolveTarget::Search(
+                "/works/search?work_search%5Bquery%5D=re%20zero".into()
+            ))
+        );
+        assert_eq!(
+            solve_target("https://archiveofourown.org/works/search?q=x"),
+            None
+        );
+        assert_eq!(solve_target("/works/search/evil"), None);
+    }
+
+    #[test]
+    fn search_return_paths_stay_local() {
+        assert!(local_search_return(Some("/works/search?q=re%20zero")).is_ok());
+        assert!(local_search_return(Some("https://example.org/works/search")).is_err());
+        assert!(local_search_return(None).is_err());
+    }
 }

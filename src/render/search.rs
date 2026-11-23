@@ -1,7 +1,7 @@
 //! Offline search results over the local cache, with AO3-shaped filters.
 
 use super::blurb::work_blurb;
-use super::chrome::{PageContext, layout};
+use super::chrome::{NavSection, PageContext, layout};
 use super::{escape, sanitize};
 use crate::ao3::parse::{SpaceMode, percent_encode};
 use crate::store::{BrowseResult, SearchFilter, SearchPage};
@@ -723,6 +723,13 @@ pub fn live_search_results_page(
             "/works/search",
             &query.form_query(),
         ));
+        if ctx.account.is_empty() {
+            body.push_str(
+                "<p class=\"meta\">Signed out: this is AO3's signed-out result set. \
+                 <a href=\"/session#cookie-import\">Import your AO3 session</a> to see the \
+                 results your account sees (and to use cookies with the solver).</p>",
+            );
+        }
         body.push_str(
             "<p class=\"meta\">Live results from archiveofourown.org. Opening a work here \
              caches it for offline reading.</p>",
@@ -791,6 +798,33 @@ fn live_blurb(work: &LiveWork) -> String {
                 sanitize(html)
             )
         });
+    let series = if work.series.is_empty() {
+        String::new()
+    } else {
+        let mut items = String::new();
+        for series in &work.series {
+            let part = series.part.as_deref().map_or_else(String::new, |part| {
+                format!("Part <strong>{}</strong> of ", escape(part))
+            });
+            let title = series.href.as_deref().map_or_else(
+                || escape(&series.title),
+                |href| {
+                    format!(
+                        "<a href=\"https://archiveofourown.org{}\" rel=\"noopener noreferrer\">{}</a>",
+                        escape(href),
+                        escape(&series.title)
+                    )
+                },
+            );
+            items.push_str(&format!("<li>{part}{title}</li>"));
+        }
+        format!("<h6 class=\"landmark heading\">Series</h6><ul class=\"series\">{items}</ul>")
+    };
+    let restricted = if work.restricted {
+        " <span class=\"restricted\" title=\"Restricted\">(Restricted)</span>"
+    } else {
+        ""
+    };
     let rating = required_badge(
         rating_class(work.rating.as_deref()),
         rating_short(work.rating.as_deref()),
@@ -844,6 +878,7 @@ fn live_blurb(work: &LiveWork) -> String {
         ));
     }
     for (label, value) in [
+        ("Collections", work.collections),
         ("Comments", work.comments),
         ("Kudos", work.kudos),
         ("Bookmarks", work.bookmarks),
@@ -858,11 +893,11 @@ fn live_blurb(work: &LiveWork) -> String {
     }
     format!(
         "<li class=\"work blurb group\" role=\"article\"><div class=\"header module\">\
-         <h4 class=\"heading\"><a href=\"/works/{id}\">{title}</a> by {authors}</h4>\
+         <h4 class=\"heading\"><a href=\"/works/{id}\">{title}</a> by {authors}{restricted}</h4>\
          <h5 class=\"fandoms heading\"><span class=\"landmark\">Fandoms:</span> {fandoms}</h5>\
          <ul class=\"required-tags\">{rating}{warnings}{category}{status}</ul>\
          <p class=\"datetime\">{datetime}</p></div>\
-         <h6 class=\"landmark heading\">Tags</h6><ul class=\"tags commas\">{tags}</ul>{summary}\
+         <h6 class=\"landmark heading\">Tags</h6><ul class=\"tags commas\">{tags}</ul>{summary}{series}\
          <dl class=\"stats\">{stats}</dl>\
          <p class=\"actions\"><a href=\"https://archiveofourown.org/works/{id}\" \
          rel=\"noopener noreferrer\">Open on AO3</a> \
@@ -872,6 +907,8 @@ fn live_blurb(work: &LiveWork) -> String {
         id = escape(&work.ao3_id),
         title = escape(&work.title),
         datetime = escape(&work.datetime),
+        restricted = restricted,
+        series = series,
     )
 }
 
@@ -940,4 +977,44 @@ fn live_select(name: &str, options: &[(&str, &str)], current: &str) -> String {
     }
     out.push_str("</select>");
     out
+}
+
+/// Edge block on a live search: one explicit solve-and-retry, never automatic.
+pub fn search_challenge_page(
+    status: u16,
+    target: &str,
+    retry: &str,
+    solver_available: bool,
+    send_cookies_allowed: bool,
+) -> String {
+    let mut body = format!(
+        "<h2>Search blocked</h2><div class=\"error\">AO3 answered HTTP {status}.          Search is one literal AO3 request; it has not been retried automatically.</div>"
+    );
+    if solver_available {
+        body.push_str(
+            "<div class=\"continue\"><strong>A local FlareSolverr is available.</strong>              It loads this exact result page once in a real browser. Only press this if you              want to spend that solve.</div>",
+        );
+        body.push_str(&format!(
+            "<form class=\"stack\" method=\"post\" action=\"/solve\">             <input type=\"hidden\" name=\"target\" value=\"{}\">             <input type=\"hidden\" name=\"next\" value=\"{}\">",
+            escape(target),
+            escape(retry)
+        ));
+        if send_cookies_allowed {
+            body.push_str(
+                "<label><input type=\"checkbox\" name=\"send_cookies\" value=\"1\">                  Send my AO3 session cookies to the local solver (needed for restricted or                  adult results)</label>",
+            );
+        }
+        body.push_str("<button type=\"submit\">Solve &amp; show this search</button></form>");
+    } else {
+        body.push_str(
+            "<p class=\"meta\">The solver is off or unreachable. A host-provided              FlareSolverr can help; check <a href=\"/diagnostics\">Diagnostics</a>.</p>",
+        );
+    }
+    body.push_str(
+        "<p><a href=\"/session#cookie-import\">Import fresh session cookies</a> ·          <a href=\"/diagnostics\">Diagnostics</a> · <a href=\"/works\">Browse the cache</a></p>",
+    );
+    layout(
+        &PageContext::new("AO3Instance — search blocked", NavSection::Search),
+        &body,
+    )
 }

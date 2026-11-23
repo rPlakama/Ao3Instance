@@ -55,7 +55,7 @@ impl AccountSession {
     /// Read-only by construction: the method only ever asks FlareSolverr for a
     /// `GET`, never touches a write path, and returns a [`Response`] shaped like
     /// a direct one so the existing parser/cache code is reused.
-    pub async fn solve_read(&mut self, path: &str, send_cookies: bool) -> Result<Response> {
+    pub async fn solve_get(&mut self, path: &str, send_cookies: bool) -> Result<Response> {
         if self.state == SessionState::Killed {
             return Err(Error::Killed);
         }

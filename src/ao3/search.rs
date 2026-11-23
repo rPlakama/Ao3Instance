@@ -144,9 +144,12 @@ impl LiveSearchQuery {
         }
 
         let (sort, direction) = sort_columns(self.sort.as_deref(), self.direction.as_deref());
-        push(&mut pairs, "sort_column", sort);
-        push(&mut pairs, "sort_direction", direction);
-        pairs.push(("commit".to_string(), "Search".to_string()));
+        // AO3's own default is best match descending; sending it explicitly
+        // changes Elasticsearch's tie order, so omit it just like AO3 does.
+        if !(sort == "_score" && direction == "desc") {
+            push(&mut pairs, "sort_column", sort);
+            push(&mut pairs, "sort_direction", direction);
+        }
         let page = if page > 1 { page } else { self.page.max(1) };
         if page > 1 {
             pairs.push(("page".to_string(), page.to_string()));
@@ -255,9 +258,17 @@ pub struct LiveSearchResults {
 
 /// One AO3 result entry.
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LiveSeries {
+    pub part: Option<String>,
+    pub title: String,
+    pub href: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LiveWork {
     pub ao3_id: String,
     pub title: String,
+    pub restricted: bool,
     pub authors: Vec<String>,
     pub fandoms: Vec<String>,
     pub rating: Option<String>,
@@ -276,6 +287,8 @@ pub struct LiveWork {
     pub kudos: Option<u64>,
     pub bookmarks: Option<u64>,
     pub hits: Option<u64>,
+    pub collections: Option<u64>,
+    pub series: Vec<LiveSeries>,
 }
 
 /// Parses an AO3 `/works/search` result page.
@@ -355,6 +368,11 @@ fn parse_work(element: &ElementRef<'_>) -> Result<LiveWork> {
         .next()
         .map(|node| text(&node))
         .unwrap_or_default();
+    let restricted = element.select(&css("h4.heading img")?).any(|node| {
+        node.value()
+            .attr("alt")
+            .is_some_and(|alt| alt.contains("Restricted"))
+    });
     let authors: Vec<String> = element
         .select(&css("h4.heading a[rel=author]")?)
         .map(|node| text(&node))
@@ -369,11 +387,20 @@ fn parse_work(element: &ElementRef<'_>) -> Result<LiveWork> {
         .next()
         .map(|node| node.value().attr("title").unwrap_or_default().to_string())
         .filter(|value| !value.is_empty());
-    let warnings = element
-        .select(&css("ul.required-tags span.warnings")?)
-        .next()
-        .map(|node| vec![node.value().attr("title").unwrap_or_default().to_string()])
-        .unwrap_or_default();
+    let warning_tags: Vec<String> = element
+        .select(&css("ul.tags.commas li.warnings a.tag")?)
+        .map(|node| text(&node))
+        .filter(|value| !value.is_empty())
+        .collect();
+    let warnings = if warning_tags.is_empty() {
+        element
+            .select(&css("ul.required-tags span.warnings")?)
+            .next()
+            .map(|node| vec![node.value().attr("title").unwrap_or_default().to_string()])
+            .unwrap_or_default()
+    } else {
+        warning_tags
+    };
     let categories = element
         .select(&css("ul.required-tags span.category")?)
         .next()
@@ -406,6 +433,27 @@ fn parse_work(element: &ElementRef<'_>) -> Result<LiveWork> {
         .map(|node| node.inner_html())
         .filter(|html| !html.trim().is_empty());
 
+    let series_strong = css("strong")?;
+    let series_link = css("a")?;
+    let series = element
+        .select(&css("ul.series li")?)
+        .map(|node| {
+            let part = node
+                .select(&series_strong)
+                .next()
+                .map(|strong| text(&strong))
+                .filter(|value| !value.is_empty());
+            let link = node.select(&series_link).next();
+            let title = link
+                .as_ref()
+                .map(|link| text(link))
+                .filter(|value| !value.is_empty())
+                .unwrap_or_else(|| text(&node));
+            let href = link.and_then(|link| link.value().attr("href").map(str::to_string));
+            LiveSeries { part, title, href }
+        })
+        .collect();
+
     let stat_text = |selector: &str| -> Option<String> {
         css(selector)
             .ok()
@@ -420,6 +468,7 @@ fn parse_work(element: &ElementRef<'_>) -> Result<LiveWork> {
     Ok(LiveWork {
         ao3_id,
         title,
+        restricted,
         authors,
         fandoms,
         rating,
@@ -439,6 +488,8 @@ fn parse_work(element: &ElementRef<'_>) -> Result<LiveWork> {
         kudos: stat_number("dl.stats dd.kudos"),
         bookmarks: stat_number("dl.stats dd.bookmarks"),
         hits: stat_number("dl.stats dd.hits"),
+        collections: stat_number("dl.stats dd.collections"),
+        series,
     })
 }
 
@@ -478,6 +529,12 @@ mod tests {
         let first = &results.works[0];
         assert_eq!(first.ao3_id, "111");
         assert_eq!(first.title, "A Mirror of Small Things");
+        assert!(first.restricted);
+        assert_eq!(first.collections, Some(2));
+        assert_eq!(first.series.len(), 1);
+        assert_eq!(first.series[0].part.as_deref(), Some("2"));
+        assert_eq!(first.series[0].title, "purge_king basement");
+        assert_eq!(first.series[0].href.as_deref(), Some("/series/5383226"));
         assert_eq!(first.authors, ["tester"]);
         assert_eq!(first.fandoms, ["Test Fandom"]);
         assert_eq!(first.rating.as_deref(), Some("Explicit"));
@@ -505,6 +562,8 @@ mod tests {
         assert_eq!(second.complete, Some(false));
         assert_eq!(second.chapters.as_deref(), Some("1/?"));
         assert_eq!(second.comments, None);
+        assert!(!second.restricted);
+        assert!(second.series.is_empty());
     }
 
     #[test]
@@ -555,5 +614,17 @@ mod tests {
     #[test]
     fn empty_query_has_no_criteria() {
         assert!(!LiveSearchQuery::default().has_criteria());
+    }
+
+    #[test]
+    fn default_best_match_omits_sort_and_commit() {
+        let query = LiveSearchQuery {
+            query: "re zero".into(),
+            ..LiveSearchQuery::default()
+        };
+        let path = query.path(1);
+        assert!(!path.contains("sort_column"), "{path}");
+        assert!(!path.contains("commit"), "{path}");
+        assert!(path.contains("work_search%5Bquery%5D=re%20zero"), "{path}");
     }
 }

@@ -337,6 +337,7 @@ pub(super) struct SearchQuery {
     include_tags: Option<String>,
     exclude_tags: Option<String>,
     local: Option<String>,
+    solved: Option<String>,
 }
 
 pub(super) async fn search(
@@ -405,31 +406,102 @@ async fn perform_search(app: &AppState, query: SearchQuery) -> Handled<Html<Stri
 
     let live = live_query_from(&query, &raw);
     let edit = query.edit_search.as_deref() == Some("true");
+
+    // A search solved by the local browser is rendered from the captured page
+    // rather than immediately retried through the direct client.
+    if query.solved.as_deref() == Some("1") {
+        let preview = {
+            let mut slot = app.solved_search.lock().await;
+            slot.take()
+        };
+        if let Some(preview) =
+            preview.filter(|preview| crate::time::now_secs().saturating_sub(preview.at) < 120)
+        {
+            let results =
+                crate::ao3::search::parse_search_results(&preview.html).map_err(AppError::from)?;
+            let page =
+                super::page_context(app, "Search Results — AO3Instance", NavSection::Search).await;
+            return Ok(Html(render::live_search_results_page(
+                &page, &live, &results,
+            )));
+        }
+    }
     if live.has_criteria() && !edit {
         let path = live.path(live.page);
-        let response = {
+        let solver_available = {
+            let status = app.solver_status.read().await.reachable;
+            let session = app.session.lock().await;
+            status && session.solver_mode() != crate::config::SolverMode::Off
+        };
+        let send_cookies_allowed = {
+            let session = app.session.lock().await;
+            session.solver_may_receive_cookies()
+        };
+        let direct = {
             let mut session = app.session.lock().await;
             session
                 .client_mut()
-                .get(&path)
+                .get_with_timeout(&path, std::time::Duration::from_secs(10))
                 .await
-                .map_err(AppError::from)?
+        };
+        let response = match direct {
+            Ok(response) => response,
+            Err(error) => {
+                if solver_available
+                    && let Ok(html) =
+                        super::solver::solve_search(app, &live.path(live.page), false).await
+                {
+                    let results =
+                        crate::ao3::search::parse_search_results(&html).map_err(AppError::from)?;
+                    let page = super::page_context(
+                        app,
+                        "Search Results — AO3Instance",
+                        NavSection::Search,
+                    )
+                    .await;
+                    return Ok(Html(render::live_search_results_page(
+                        &page, &live, &results,
+                    )));
+                }
+                return Err(AppError::from(error));
+            }
         };
         if response.location_contains("/users/login") {
             return Err(AppError::from(crate::error::Error::LoggedOut));
         }
         match response.status {
             200 => {}
-            403 | 503 => {
-                return Err(AppError::Upstream(format!(
-                    "AO3 refused the search (HTTP {}); it may be a bot challenge.",
-                    response.status
-                )));
-            }
-            429 => {
-                return Err(AppError::Upstream(
-                    "AO3 is rate limiting this instance; wait a minute and retry.".into(),
-                ));
+            403 | 503 | 429 => {
+                let target = live.path(live.page);
+                // A search is itself one explicit user request. If AO3 blocks
+                // the direct client, try the same page once through the local
+                // browser and render that exact result set.
+                if solver_available
+                    && let Ok(html) = super::solver::solve_search(app, &target, false).await
+                {
+                    let results =
+                        crate::ao3::search::parse_search_results(&html).map_err(AppError::from)?;
+                    let page = super::page_context(
+                        app,
+                        "Search Results — AO3Instance",
+                        NavSection::Search,
+                    )
+                    .await;
+                    return Ok(Html(render::live_search_results_page(
+                        &page, &live, &results,
+                    )));
+                }
+                let mut retry = format!("/works/search?{}", live.form_query());
+                if live.page > 1 {
+                    retry.push_str(&format!("&page={}", live.page));
+                }
+                return Err(AppError::BlockedSearch {
+                    status: response.status,
+                    target,
+                    retry,
+                    solver_available,
+                    send_cookies_allowed,
+                });
             }
             302 | 303 => {
                 return Err(AppError::Upstream(

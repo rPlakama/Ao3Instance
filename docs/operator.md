@@ -50,7 +50,9 @@ reasons; the app reads environment variables only.
 ## Optional: Cloudflare fallback (host-provided FlareSolverr)
 
 AO3's edge sometimes answers a read with `403`/`503`. With this service running,
-the error page offers an explicit **Solve & cache this page** button. The app
+the work error page offers an explicit **Solve & cache this page** button. Live
+search is the one exception: if its single AO3 GET is blocked, the search handler
+may solve that exact result page once (same budget) and render it. The app
 never starts, installs or requires FlareSolverr; it only calls the local `/v1`
 API.
 
@@ -156,7 +158,9 @@ shows exactly what was done.
 
 ## Limitations (documented, not bugs)
 
-- The FlareSolverr fallback is for reads only, one page per explicit click; it is
+- The FlareSolverr fallback is for reads only, one page per user action; for
+  search that action is the search submit. A blocked search is solved once; it
+  never crawls pages. It is
   not a crawler and cannot be enabled for writes.
 
 - Chapter-level reading progress only; no scroll/block anchor yet (I7 refinement).
