@@ -998,7 +998,12 @@ ul.primary.navigation li.search .submit button {
         margin-left: 0;
     }
     ul.primary.navigation li.search input.text { width: 100%; max-width: none; }
-    ul.primary.navigation li.search .tip { position: static; margin: 0.2rem 0 0.4rem; width: 100%; }
+    ul.primary.navigation li.search .tip {
+        position: static;
+        display: inline-block;
+        width: auto;
+        margin: 0.2rem 0 0.4rem;
+    }
     ul.primary.navigation li.search p { flex-wrap: wrap; }
     ul.primary.navigation li.search form.search { width: 100%; }
 }
