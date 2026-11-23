@@ -25,9 +25,10 @@ pub struct DiagnosticsView<'a> {
 }
 
 pub fn diagnostics_page(ctx: &PageContext, view: &DiagnosticsView<'_>) -> String {
-    let mut body = String::from("<h2>HTTP diagnostics</h2>");
+    let mut body = String::from("<h2 class=\"heading\">HTTP diagnostics</h2>");
 
-    body.push_str("<h3>Local FlareSolverr</h3><p class=\"meta\">");
+    body.push_str("<div class=\"listbox group\"><h3 class=\"heading\">Local FlareSolverr</h3>");
+    body.push_str("<div class=\"index group\"><p class=\"meta\">");
     body.push_str(&format!(
         "mode <code>{}</code> · endpoint <code>127.0.0.1</code> · status {}",
         view.solver_mode,
@@ -62,13 +63,17 @@ pub fn diagnostics_page(ctx: &PageContext, view: &DiagnosticsView<'_>) -> String
         }
     ));
     body.push_str(
-        "<form class=\"inline\" method=\"post\" action=\"/diagnostics/solver/probe\">\
-         <button type=\"submit\">Probe now</button></form>\
-         <form class=\"inline\" method=\"post\" action=\"/diagnostics/solver/clearance\">\
-         <button type=\"submit\">Forget clearance</button></form>",
+        "</div><ul class=\"actions\">\
+         <li><form class=\"inline\" method=\"post\" action=\"/diagnostics/solver/probe\">\
+         <button type=\"submit\">Probe now</button></form></li>\
+         <li><form class=\"inline\" method=\"post\" action=\"/diagnostics/solver/clearance\">\
+         <button type=\"submit\">Forget clearance</button></form></li></ul></div>",
     );
 
-    body.push_str("<h3>Recent HTTP failures</h3><p class=\"actions\">");
+    body.push_str(
+        "<h3 class=\"heading\">Recent HTTP failures</h3>\
+         <ul class=\"navigation actions\" role=\"navigation\">",
+    );
     for (label, value) in [
         ("All", None),
         ("Upstream", Some("upstream")),
@@ -78,28 +83,27 @@ pub fn diagnostics_page(ctx: &PageContext, view: &DiagnosticsView<'_>) -> String
             || "/diagnostics".to_string(),
             |value| format!("/diagnostics?direction={value}"),
         );
-        let class = if view.direction == value {
-            "state active"
+        if view.direction == value {
+            body.push_str(&format!(
+                "<li class=\"active\"><span class=\"current\">{label}</span></li>"
+            ));
         } else {
-            "state"
-        };
-        body.push_str(&format!(
-            "<a class=\"{class}\" href=\"{href}\">{label}</a> "
-        ));
+            body.push_str(&format!("<li><a href=\"{href}\">{label}</a></li>"));
+        }
     }
-    body.push_str("</p>");
+    body.push_str("</ul>");
     if view.errors.is_empty() {
         body.push_str("<p class=\"muted\">Nothing recorded yet.</p>");
     } else {
         body.push_str(
-            "<table class=\"audit\"><thead><tr><th>when</th><th>dir</th><th>via</th>\
-             <th>method</th><th>path</th><th>status</th><th>kind</th><th>ms</th>\
-             <th>server</th><th>message</th></tr></thead><tbody>",
+            "<div class=\"wrapper\"><table class=\"audit\"><thead><tr><th>When</th><th>Dir</th>\
+             <th>Via</th><th>Method</th><th>Path</th><th>Status</th><th>Kind</th><th>Ms</th>\
+             <th>Server</th><th>Message</th></tr></thead><tbody>",
         );
         for row in view.errors {
             body.push_str(&format!(
-                "<tr><td>{}</td><td>{}</td><td>{}</td><td>{}</td><td>{}</td><td>{}</td>\
-                 <td>{}</td><td>{}</td><td>{}</td><td>{}</td></tr>",
+                "<tr><td class=\"datetime\">{}</td><td>{}</td><td>{}</td><td>{}</td><td>{}</td>\
+                 <td>{}</td><td>{}</td><td>{}</td><td>{}</td><td>{}</td></tr>",
                 escape(&format_utc(row.created_at)),
                 escape(&row.direction),
                 escape(&row.transport),
@@ -114,24 +118,26 @@ pub fn diagnostics_page(ctx: &PageContext, view: &DiagnosticsView<'_>) -> String
                 escape(&row.message),
             ));
         }
-        body.push_str("</tbody></table>");
+        body.push_str("</tbody></table></div>");
         body.push_str(
-            "<form class=\"inline\" method=\"post\" action=\"/diagnostics/clear\">\
-             <button type=\"submit\">Clear logs</button></form>",
+            "<ul class=\"actions\"><li><form class=\"inline\" method=\"post\" \
+             action=\"/diagnostics/clear\">\
+             <button type=\"submit\">Clear logs</button></form></li></ul>",
         );
     }
 
-    body.push_str("<h3>Recent solver outcomes</h3>");
+    body.push_str("<h3 class=\"heading\">Recent solver outcomes</h3>");
     if view.events.is_empty() {
         body.push_str("<p class=\"muted\">No solve attempts yet.</p>");
     } else {
         body.push_str(
-            "<table class=\"audit\"><thead><tr><th>when</th><th>outcome</th>\
-             <th>target</th><th>status</th><th>ms</th></tr></thead><tbody>",
+            "<div class=\"wrapper\"><table class=\"audit\"><thead><tr><th>When</th>\
+             <th>Outcome</th><th>Target</th><th>Status</th><th>Ms</th></tr></thead><tbody>",
         );
         for event in view.events {
             body.push_str(&format!(
-                "<tr><td>{}</td><td>{}</td><td>{}</td><td>{}</td><td>{}</td></tr>",
+                "<tr><td class=\"datetime\">{}</td><td>{}</td><td>{}</td><td>{}</td>\
+                 <td>{}</td></tr>",
                 escape(&format_utc(event.created_at)),
                 escape(&event.outcome),
                 target_cell(&event.target_path, view.cached_works),
@@ -143,7 +149,7 @@ pub fn diagnostics_page(ctx: &PageContext, view: &DiagnosticsView<'_>) -> String
                     .map_or_else(|| "-".to_string(), |ms| ms.to_string()),
             ));
         }
-        body.push_str("</tbody></table>");
+        body.push_str("</tbody></table></div>");
     }
     body.push_str("<p><a href=\"/\">Back to the start</a></p>");
     layout(ctx, &body)

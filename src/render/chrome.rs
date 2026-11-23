@@ -130,30 +130,45 @@ impl PageContext {
 
 fn greeting(ctx: &PageContext) -> String {
     if ctx.account.is_empty() {
-        return "<span class=\"muted\">Not signed in</span> · \
-                <details id=\"login\" class=\"dropdown\"><summary>Log In</summary>\
-                <div class=\"dropdown-panel\"><form class=\"stack\" method=\"post\" \
-                action=\"/session/login\">\
-                <label>AO3 login or email <input type=\"text\" name=\"account\" required \
-                autocomplete=\"username\"></label>\
-                <label>Password <input type=\"password\" name=\"password\" required \
-                autocomplete=\"current-password\"></label>\
-                <label><input type=\"checkbox\" name=\"adult\" value=\"1\"> Allow adult                 content</label>\
-                <button type=\"submit\">Log In</button></form>\
-                <p class=\"meta\"><a href=\"/session#cookie-import\">Import cookies instead                 (recommended)</a></p></div></details>"
+        return "<div id=\"login\" class=\"dropdown\">\
+                <span class=\"muted\">Not signed in</span> \
+                <details class=\"login-toggle\"><summary class=\"action\">Log In</summary>\
+                <div id=\"small_login\" class=\"simple login dropdown-panel\">\
+                <form method=\"post\" action=\"/session/login\"><dl>\
+                <dt><label for=\"user_session_login_small\">AO3 login or email</label></dt>\
+                <dd><input id=\"user_session_login_small\" type=\"text\" name=\"account\" required \
+                autocomplete=\"username\"></dd>\
+                <dt><label for=\"user_session_password_small\">Password</label></dt>\
+                <dd><input id=\"user_session_password_small\" type=\"password\" name=\"password\" \
+                required autocomplete=\"current-password\"></dd></dl>\
+                <p class=\"remember\"><label><input type=\"checkbox\" name=\"adult\" value=\"1\"> \
+                Allow adult content</label></p>\
+                <p class=\"submit actions\"><button type=\"submit\" class=\"action\">Log In</button></p>\
+                </form>\
+                <ul class=\"footnote actions\"><li><a href=\"/session#cookie-import\">\
+                Import cookies instead (recommended)</a></li></ul>\
+                </div></details></div>"
             .to_string();
     }
     format!(
-        "<details class=\"dropdown\"><summary>Hi, {account}!</summary>\
-         <div class=\"dropdown-panel\"><strong>{account}</strong> \
-         <span class=\"state {state_class}\">{state}</span><ul>\
-         <li><a href=\"/dashboard\">Dashboard</a></li>\
-         <li><a href=\"/history\">History</a></li>\
-         <li><a href=\"/audit\">Write audit</a></li>\
-         <li><a href=\"/diagnostics\">Diagnostics</a></li>\
-         <li><a href=\"/session\">Session &amp; preferences</a></li>\
-         <li><a href=\"/users/logout/confirm\">Log out of AO3</a></li>\
-         </ul></div></details>",
+        "<nav id=\"greeting\" aria-label=\"User\"><ul class=\"user navigation actions\">\
+         <li class=\"dropdown\"><a href=\"/dashboard\">Hi, {account}!</a>\
+         <ul class=\"menu\">\
+         <li class=\"account-status\"><strong>{account}</strong> \
+         <span class=\"state {state_class}\">{state}</span></li>\
+         <li><a href=\"/dashboard\">My Dashboard</a></li>\
+         <li><a href=\"/subscriptions\">My Subscriptions</a></li>\
+         <li><a href=\"/bookmarks\">My Bookmarks</a></li>\
+         <li><a href=\"/reading\">Marked for Later</a></li>\
+         <li><a href=\"/history\">Local History</a></li>\
+         <li><a href=\"/session\">My Preferences</a></li>\
+         <li><a href=\"/themes\">Site Skins</a></li>\
+         <li><a href=\"/audit\">Write Audit</a></li>\
+         <li><a href=\"/diagnostics\">HTTP Diagnostics</a></li>\
+         </ul></li>\
+         <li><a href=\"/session\">Preferences</a></li>\
+         <li><a href=\"/users/logout/confirm\">Log Out</a></li>\
+         </ul></nav>",
         account = escape(&ctx.account),
         state = escape(&ctx.session_state),
         state_class = if ctx.session_state == "active" {
@@ -275,44 +290,81 @@ fn navigation(ctx: &PageContext) -> String {
         ],
     ));
     format!(
-        "<ul class=\"primary navigation\">{items}\
-         <li class=\"search\"><form class=\"search\" method=\"get\" action=\"/works/search\" \
-         role=\"search\"><fieldset><p>\
+        "<nav aria-label=\"Site\"><ul class=\"primary navigation\">{items}\
+         <li class=\"search\"><form class=\"search\" id=\"search\" method=\"get\" \
+         action=\"/works/search\" role=\"search\" aria-label=\"Work Search\"><fieldset><p>\
          <label class=\"landmark\" for=\"site_search\">Search</label>\
          <input class=\"text\" id=\"site_search\" type=\"search\" name=\"q\" \
          aria-describedby=\"site_search_tooltip\">\
-         <span class=\"submit actions\"><button type=\"submit\">Search</button></span>\
          <span class=\"tip\" role=\"tooltip\" id=\"site_search_tooltip\">tip: \
          <a href=\"/works/search?q=fluff%20sort%3Akudos\">fluff sort:kudos</a></span>\
-         </p></fieldset></form></li></ul>"
+         <span class=\"submit actions\"><button type=\"submit\" class=\"button\">Search</button></span>\
+         </p></fieldset></form></li></ul></nav>"
+    )
+}
+
+fn show_dashboard_sidebar(active: NavSection) -> bool {
+    matches!(
+        active,
+        NavSection::Dashboard | NavSection::Session | NavSection::Audit | NavSection::Diagnostics
     )
 }
 
 fn dashboard_nav(active: NavSection) -> String {
-    let links = [
-        (NavSection::Dashboard, "Dashboard", "/dashboard"),
-        (NavSection::Browse, "Cached library", "/works"),
-        (NavSection::Fandoms, "Fandoms", "/fandoms"),
-        (NavSection::Session, "Session & preferences", "/session"),
-        (NavSection::Audit, "Write audit", "/audit"),
-        (NavSection::Diagnostics, "HTTP diagnostics", "/diagnostics"),
-    ];
-    let mut items = String::new();
-    items.push_str(
-        "<li><a href=\"/subscriptions\">Subscriptions</a></li>\
-                    <li><a href=\"/bookmarks\">Bookmarks</a></li>\
-                    <li><a href=\"/reading\">Marked for later</a></li>\
-                    <li><a href=\"/history\">Local history</a></li>",
-    );
-    for (section, label, href) in links {
-        let class = if section == active {
-            " class=\"active\""
+    let nav_item = |section: Option<NavSection>, label: &str, href: &str| {
+        if section == Some(active) {
+            format!("<li><span class=\"current\">{label}</span></li>")
         } else {
-            ""
-        };
-        items.push_str(&format!("<li{class}><a href=\"{href}\">{label}</a></li>"));
-    }
-    format!("<aside id=\"dashboard\"><h3>Dashboard</h3><ul>{items}</ul></aside>")
+            format!("<li><a href=\"{href}\">{label}</a></li>")
+        }
+    };
+    let choices = [
+        nav_item(Some(NavSection::Dashboard), "Dashboard", "/dashboard"),
+        nav_item(Some(NavSection::Session), "Session &amp; preferences", "/session"),
+        nav_item(None, "Public AO3 skins", "/themes"),
+    ]
+    .concat();
+    let library = [
+        nav_item(Some(NavSection::Browse), "Cached library", "/works"),
+        nav_item(Some(NavSection::Fandoms), "Fandoms", "/fandoms"),
+        nav_item(None, "Bookmarks", "/bookmarks"),
+    ]
+    .concat();
+    let reading = [
+        nav_item(None, "Subscriptions", "/subscriptions"),
+        nav_item(None, "Marked for later", "/reading"),
+        nav_item(None, "Local history", "/history"),
+    ]
+    .concat();
+    let operator = [
+        nav_item(Some(NavSection::Audit), "Write audit", "/audit"),
+        nav_item(
+            Some(NavSection::Diagnostics),
+            "HTTP diagnostics",
+            "/diagnostics",
+        ),
+    ]
+    .concat();
+    format!(
+        "<div id=\"dashboard\" class=\"region own\" role=\"navigation\" aria-label=\"Dashboard\">\
+         <h4 class=\"landmark heading\">Choices</h4>\
+         <ul class=\"navigation actions\">{choices}</ul>\
+         <h4 class=\"landmark heading\">Library</h4>\
+         <ul class=\"navigation actions\">{library}</ul>\
+         <h4 class=\"landmark heading\">Reading</h4>\
+         <ul class=\"navigation actions\">{reading}</ul>\
+         <h4 class=\"landmark heading\">Operator</h4>\
+         <ul class=\"navigation actions\">{operator}</ul>\
+         </div>"
+    )
+}
+
+fn footer_skin_button(skin: &str, label: &str) -> String {
+    format!(
+        "<li><form method=\"post\" action=\"/skin\">\
+         <input type=\"hidden\" name=\"skin\" value=\"{skin}\">\
+         <button type=\"submit\">{label}</button></form></li>"
+    )
 }
 
 fn footer(ctx: &PageContext) -> String {
@@ -326,35 +378,41 @@ fn footer(ctx: &PageContext) -> String {
     } else {
         "solver not reachable"
     };
+    let skins = [
+        footer_skin_button("default", "Default (Classic)"),
+        footer_skin_button("auto", "Auto"),
+        footer_skin_button("reversi", "Reversi"),
+        footer_skin_button("snow", "Snow"),
+        footer_skin_button("sepia", "Sepia"),
+        footer_skin_button("midnight", "Midnight"),
+    ]
+    .concat();
     format!(
-        "<footer id=\"footer\"><div class=\"footer-inner\">\
-         <div><h4>About</h4><ul>\
+        "<footer id=\"footer\" role=\"contentinfo\" class=\"region\">\
+         <h3 class=\"landmark heading\">Footer</h3>\
+         <ul class=\"navigation actions\">\
+         <li class=\"module group\"><h4 class=\"heading\">Customize</h4><ul class=\"menu\">\
+         {skins}\
+         <li><a href=\"/session#appearance\">Theme settings</a></li>\
+         <li><a href=\"/themes\">Public AO3 skins</a></li></ul></li>\
+         <li class=\"module group\"><h4 class=\"heading\">About</h4><ul class=\"menu\">\
          <li><a href=\"/\">AO3Instance</a></li>\
+         <li><a href=\"/about\">About Us</a></li>\
+         <li><a href=\"/about#faq\">FAQ</a></li>\
          <li><a href=\"/session#cookie-import\">Cookie import</a></li>\
          <li><a href=\"/history\">Local history</a></li>\
-         <li>Personal offline archive</li></ul></div>\
-         <div><h4>Operator &amp; cache</h4><ul>\
+         <li>Personal offline archive</li></ul></li>\
+         <li class=\"module group\"><h4 class=\"heading\">Operator &amp; cache</h4><ul class=\"menu\">\
          <li>{count} cached work(s)</li>\
          <li>{write_state}</li>\
-         <li>mode <code>{mode}</code></li></ul></div>\
-         <div><h4>Diagnostics</h4><ul>\
+         <li>mode <code>{mode}</code></li>\
+         <li><a href=\"/\">Back to the start</a></li></ul></li>\
+         <li class=\"module group\"><h4 class=\"heading\">Diagnostics</h4><ul class=\"menu\">\
          <li><a href=\"/diagnostics\">HTTP diagnostics</a></li>\
          <li><a href=\"/audit\">Write audit</a></li>\
-         <li><a href=\"/diagnostics\">{solver_state}</a></li></ul></div>\
-         <div><h4>Display</h4><ul>\
-         <li><form class=\"inline\" method=\"post\" action=\"/skin\">\
-         <input type=\"hidden\" name=\"skin\" value=\"auto\">\
-         <button type=\"submit\">Auto</button></form>\
-         <form class=\"inline\" method=\"post\" action=\"/skin\">\
-         <input type=\"hidden\" name=\"skin\" value=\"default\">\
-         <button type=\"submit\">Classic</button></form>\
-         <form class=\"inline\" method=\"post\" action=\"/skin\">\
-         <input type=\"hidden\" name=\"skin\" value=\"reversi\">\
-         <button type=\"submit\">Reversi</button></form></li>\
-         <li><a href=\"/session#appearance\">Theme settings</a></li>\
-         <li><a href=\"/\">Back to the start</a></li>\
-         <li>Content belongs to its authors</li></ul></div>\
-         </div></footer>",
+         <li><a href=\"/diagnostics\">{solver_state}</a></li>\
+         <li>Content belongs to its authors</li></ul></li>\
+         </ul></footer>",
         count = ctx.cached_count,
         mode = escape(&ctx.solver.mode),
     )
@@ -362,6 +420,23 @@ fn footer(ctx: &PageContext) -> String {
 
 /// The one document skeleton. `body` is already-escaped markup from a segment.
 pub(super) fn layout(ctx: &PageContext, body: &str) -> String {
+    let main_class = match ctx.active {
+        NavSection::Home => "home",
+        NavSection::Fandoms => "fandoms-index",
+        NavSection::Browse => "works-index",
+        NavSection::Search => "works-search",
+        NavSection::About => "system docs",
+        NavSection::Dashboard
+        | NavSection::Session
+        | NavSection::Audit
+        | NavSection::Diagnostics => "dashboard",
+    };
+    layout_with_class(ctx, main_class, body)
+}
+
+/// Document skeleton with an explicit `#main` zone class list (matching AO3's
+/// `classes_for_main`, e.g. `"home"`, `"works-show"`, `"works-index filtered"`).
+pub(super) fn layout_with_class(ctx: &PageContext, main_class: &str, body: &str) -> String {
     let public_css = ctx.skin_css.as_deref().map_or_else(String::new, |css| {
         format!(
             "<style id=\"public-skin\">{}</style>",
@@ -369,22 +444,45 @@ pub(super) fn layout(ctx: &PageContext, body: &str) -> String {
                 .replace("@import", "/* @import removed */")
         )
     });
+    let body_class = if ctx.account.is_empty() {
+        "logged-out"
+    } else {
+        "logged-in"
+    };
+    let has_sidebar = show_dashboard_sidebar(ctx.active);
+    let main_classes = if has_sidebar && !main_class.split_whitespace().any(|c| c == "dashboard") {
+        format!("dashboard {main_class}")
+    } else {
+        main_class.to_string()
+    };
     format!(
         "<!DOCTYPE html>\n<html lang=\"en\" data-skin=\"{skin}\"><head><meta charset=\"utf-8\">\
          <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\
-         <title>{title}</title><link rel=\"stylesheet\" href=\"/assets/ao3.css\">{public_css}</head>\
-         <body><header id=\"header\"><div class=\"header-inner\">\
-         <h1 class=\"heading\"><a href=\"/\">AO3Instance<sup>local</sup></a></h1>\
-         <div id=\"greeting\">{greeting}</div></div>{nav}</header>\
-         <div id=\"inner\">{sidebar}<main id=\"main\">{body}</main></div>{footer}</body></html>",
+         <title>{title}</title>\
+         <link rel=\"stylesheet\" href=\"/assets/ao3.css?v={css_v:016x}\">{public_css}</head>\
+         <body class=\"{body_class}\"><div id=\"outer\" class=\"wrapper\">\
+         <ul id=\"skiplinks\"><li><a href=\"#main\">Main Content</a></li></ul>\
+         <header id=\"header\" class=\"region\">\
+         <div class=\"header-top\">\
+         <h1 class=\"heading\"><a href=\"/\">\
+         <svg class=\"logo\" viewBox=\"0 0 36 36\" width=\"30\" height=\"30\" aria-hidden=\"true\">\
+         <path d=\"M6 8c4.5 0 8.5 1.8 12 4.8C21.5 9.8 25.5 8 30 8v19c-4.5 0-8.5 1.5-12 4.2-3.5-2.7-7.5-4.2-12-4.2V8z\" \
+         fill=\"none\" stroke=\"currentColor\" stroke-width=\"2.4\" stroke-linejoin=\"round\"/>\
+         <path d=\"M18 12.8V31.2\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2.2\"/></svg>\
+         <span>AO3Instance</span><sup>local</sup></a></h1>\
+         {greeting}</div>{nav}<div class=\"clear\"></div></header>\
+         <div id=\"inner\" class=\"wrapper\">{sidebar}\
+         <main id=\"main\" class=\"{main_classes} region\" role=\"main\">{body}\
+         <div class=\"clear\"></div></main></div>{footer}</div></body></html>",
         title = escape(&ctx.title),
         skin = escape(&ctx.skin),
+        css_v = super::AO3_CSS_HASH,
         greeting = greeting(ctx),
         nav = navigation(ctx),
-        sidebar = if ctx.account.is_empty() {
-            String::new()
-        } else {
+        sidebar = if has_sidebar {
             dashboard_nav(ctx.active)
+        } else {
+            String::new()
         },
         footer = footer(ctx),
     )

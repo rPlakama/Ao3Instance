@@ -30,10 +30,9 @@ pub fn work_blurb(work: &StoredWork, progress: Option<i64>) -> String {
             )
         });
 
-    let resume = progress.map_or_else(String::new, |chapter| {
+    let resume_action = progress.map_or_else(String::new, |chapter| {
         format!(
-            "<p class=\"meta\"><a href=\"/read/{id}?chapter={chapter}\">Resume at chapter \
-             {chapter}</a></p>",
+            "<li><a href=\"/read/{id}?chapter={chapter}\">Resume at chapter {chapter}</a></li>",
             id = escape(&work.ao3_id)
         )
     });
@@ -44,16 +43,19 @@ pub fn work_blurb(work: &StoredWork, progress: Option<i64>) -> String {
     );
 
     format!(
-        "<li class=\"work blurb group\" role=\"article\">\
+        "<li id=\"work_{id}\" class=\"work blurb group\" role=\"article\">\
          <div class=\"header module\">\
          <h4 class=\"heading\"><a href=\"/read/{id}\">{title}</a> by {authors}</h4>\
          <h5 class=\"fandoms heading\"><span class=\"landmark\">Fandoms:</span> {fandoms}</h5>\
          {required}<p class=\"datetime\">{datetime}</p></div>\
          <h6 class=\"landmark heading\">Tags</h6><ul class=\"tags commas\">{tags}</ul>\
-         {summary}{resume}{stats}\
-         <p class=\"actions\"><a href=\"/read/{id}\">Read offline</a> · \
-         <a href=\"https://archiveofourown.org/works/{id}\" rel=\"noopener noreferrer\">\
-         Open on AO3</a></p></li>",
+         {summary}{stats}\
+         <h6 class=\"landmark heading\">Actions</h6>\
+         <ul class=\"actions\">\
+         <li><a href=\"/read/{id}\">Read offline</a></li>\
+         {resume_action}\
+         <li><a href=\"https://archiveofourown.org/works/{id}\" rel=\"noopener noreferrer\">\
+         Open on AO3</a></li></ul></li>",
         id = escape(&work.ao3_id),
         title = escape(&work.title),
         required = required_tags(work),

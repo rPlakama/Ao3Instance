@@ -1,9 +1,11 @@
-//! About this instance.
+//! About this instance — styled like `otwarchive/app/views/home/about.html.erb`
+//! inside `.userstuff`.
 
-use super::chrome::{PageContext, layout};
+use super::chrome::{PageContext, layout_with_class};
 
 pub fn about_page(ctx: &PageContext) -> String {
-    let body = "<h2>About AO3Instance</h2>\
+    let body = "<h2 class=\"heading\">About AO3Instance</h2>\
+        <div class=\"userstuff\">\
         <p>A local, single-operator reader and write client for archiveofourown.org. \
         Works are fetched only when you ask for them, cached in SQLite and then \
         served from this instance, including when the archive is unreachable.</p>\
@@ -25,6 +27,7 @@ pub fn about_page(ctx: &PageContext) -> String {
         <h3>Privacy</h3>\
         <p>No analytics, no third-party embeds. Diagnostics redact cookies, CSRF \
         tokens and response bodies. The optional FlareSolverr fallback is a \
-        host-provided service and never a build dependency.</p>";
-    layout(ctx, body)
+        host-provided service and never a build dependency.</p>\
+        </div>";
+    layout_with_class(ctx, "system docs", body)
 }

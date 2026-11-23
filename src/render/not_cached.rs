@@ -6,10 +6,10 @@ use super::escape;
 
 pub fn not_cached_page(ctx: &PageContext, work_id: &str) -> String {
     let body = format!(
-        "<h2>Not cached yet</h2>\
-         <p class=\"meta\">No copy of work <code>{id}</code> is in the local cache. \
+        "<h2 class=\"heading\">Not cached yet</h2>\
+         <div class=\"flash notice\">No copy of work <code>{id}</code> is in the local cache. \
          Offline reads never call archiveofourown.org, so this page cannot fetch it \
-         by itself.</p>\
+         by itself.</div>\
          <form class=\"open\" method=\"post\" action=\"/open\">\
          <input type=\"hidden\" name=\"id\" value=\"{id}\">\
          <button type=\"submit\">Open work</button></form>\

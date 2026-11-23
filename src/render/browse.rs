@@ -1,7 +1,7 @@
 //! Offline browse with a server-rendered filter sidebar and pagination.
 
 use super::blurb::work_blurb;
-use super::chrome::{PageContext, layout};
+use super::chrome::{PageContext, layout_with_class};
 use super::escape;
 use crate::ao3::parse::{SpaceMode, percent_encode};
 use crate::store::{BrowseResult, BrowseSort, ReadingStatus, WorkFilter};
@@ -28,10 +28,12 @@ pub fn browse_page(ctx: &PageContext, result: &BrowseResult, filter: &WorkFilter
     let mut body = format!("<h2 class=\"heading\">{heading}</h2>");
     if filter.tag.is_some() || filter.fandom.is_some() {
         body.push_str(
-            "<ul class=\"navigation actions\" role=\"navigation\">\
-                       <li class=\"active\"><span>Works</span></li>\
-                       <li><a href=\"/bookmarks\">Bookmarks</a></li>\
-                       <li><a href=\"/works\">Clear tag</a></li>",
+            "<div class=\"navigation actions module\">\
+             <h3 class=\"landmark heading\">Navigation and Actions</h3>\
+             <ul class=\"user navigation actions\" role=\"navigation\">\
+             <li class=\"active\"><span class=\"current\">Works</span></li>\
+             <li><a href=\"/bookmarks\">Bookmarks</a></li>\
+             <li><a href=\"/works\">Clear tag</a></li>",
         );
         if let Some(tag) = filter.tag.as_deref().or(filter.fandom.as_deref()) {
             body.push_str(&format!(
@@ -39,13 +41,20 @@ pub fn browse_page(ctx: &PageContext, result: &BrowseResult, filter: &WorkFilter
                 percent_encode(tag, SpaceMode::Percent20)
             ));
         }
-        body.push_str("</ul>");
+        body.push_str("</ul></div>");
     } else {
         body.push_str(
-            "<p class=\"meta\">Browse is offline: filters never call archiveofourown.org.</p>",
+            "<p class=\"note\">Browse is offline: filters never call archiveofourown.org.</p>",
         );
     }
 
+    let pager = crate::render::pagination(
+        result.page,
+        result.per_page,
+        i64::try_from(result.total).unwrap_or(i64::MAX),
+        "/works",
+        &query(filter),
+    );
     body.push_str("<div class=\"browse-grid\"><section class=\"browse-results\">");
     if result.works.is_empty() {
         body.push_str(
@@ -59,31 +68,31 @@ pub fn browse_page(ctx: &PageContext, result: &BrowseResult, filter: &WorkFilter
             (result.page - 1) * result.per_page + result.works.len() as i64,
             result.total
         ));
+        body.push_str(&pager);
+        body.push_str("<h3 class=\"landmark heading\">Listing Works</h3>");
         body.push_str("<ol class=\"work index group\">");
         for work in &result.works {
             body.push_str(&work_blurb(work, None));
         }
         body.push_str("</ol>");
-        body.push_str(&crate::render::pagination(
-            result.page,
-            result.per_page,
-            i64::try_from(result.total).unwrap_or(i64::MAX),
-            "/works",
-            &query(filter),
-        ));
+        body.push_str(&pager);
     }
     body.push_str("</section>");
     body.push_str(&sidebar(result, filter));
     body.push_str("</div>");
-    layout(ctx, &body)
+    layout_with_class(ctx, "works-index filtered", &body)
 }
 
 fn sidebar(result: &BrowseResult, filter: &WorkFilter) -> String {
     let mut form = String::from(
         "<form id=\"work-filters\" class=\"filters\" method=\"get\" action=\"/works\">\
-         <h3>Sort and filter</h3>",
+         <h3 class=\"landmark heading\">Filters</h3><fieldset>\
+         <legend>Filter results:</legend><dl>\
+         <dt class=\"landmark\">Submit</dt>\
+         <dd class=\"submit actions\"><button type=\"submit\">Sort and Filter</button></dd>\
+         <dt class=\"sort\"><label for=\"browse_sort\">Sort by</label></dt>\
+         <dd class=\"sort\"><select id=\"browse_sort\" name=\"sort\">",
     );
-    form.push_str("<label>Sort by<select name=\"sort\">");
     for sort in [
         BrowseSort::FetchedDesc,
         BrowseSort::WordsDesc,
@@ -98,9 +107,12 @@ fn sidebar(result: &BrowseResult, filter: &WorkFilter) -> String {
         };
         form.push_str(&option(sort.as_str(), label, filter.sort == sort));
     }
-    form.push_str("</select></label>");
+    form.push_str("</select></dd>");
 
-    form.push_str("<label>Rating<select name=\"rating\">");
+    form.push_str(
+        "<dt><label for=\"browse_rating\">Rating</label></dt>\
+         <dd><select id=\"browse_rating\" name=\"rating\">",
+    );
     form.push_str(&option("", "Any rating", filter.rating.is_none()));
     for (rating, count) in &result.ratings {
         form.push_str(&option(
@@ -109,15 +121,19 @@ fn sidebar(result: &BrowseResult, filter: &WorkFilter) -> String {
             filter.rating.as_deref() == Some(rating.as_str()),
         ));
     }
-    form.push_str("</select></label>");
+    form.push_str("</select></dd>");
 
     form.push_str(&format!(
-        "<label>Author<input type=\"text\" name=\"author\" value=\"{}\" \
-         placeholder=\"exact author\"></label>",
+        "<dt><label for=\"browse_author\">Author</label></dt>\
+         <dd><input id=\"browse_author\" type=\"text\" name=\"author\" value=\"{}\" \
+         placeholder=\"exact author\"></dd>",
         escape(filter.author.as_deref().unwrap_or(""))
     ));
 
-    form.push_str("<label>Fandom<select name=\"fandom\">");
+    form.push_str(
+        "<dt><label for=\"browse_fandom\">Fandom</label></dt>\
+         <dd><select id=\"browse_fandom\" name=\"fandom\">",
+    );
     form.push_str(&option("", "Any fandom", filter.fandom.is_none()));
     for (fandom, count) in &result.fandoms {
         form.push_str(&option(
@@ -126,9 +142,12 @@ fn sidebar(result: &BrowseResult, filter: &WorkFilter) -> String {
             filter.fandom.as_deref() == Some(fandom.as_str()),
         ));
     }
-    form.push_str("</select></label>");
+    form.push_str("</select></dd>");
 
-    form.push_str("<label>Language<select name=\"language\">");
+    form.push_str(
+        "<dt><label for=\"browse_language\">Language</label></dt>\
+         <dd><select id=\"browse_language\" name=\"language\">",
+    );
     form.push_str(&option("", "Any language", filter.language.is_none()));
     for (language, count) in &result.languages {
         form.push_str(&option(
@@ -137,9 +156,12 @@ fn sidebar(result: &BrowseResult, filter: &WorkFilter) -> String {
             filter.language.as_deref() == Some(language.as_str()),
         ));
     }
-    form.push_str("</select></label>");
+    form.push_str("</select></dd>");
 
-    form.push_str("<label>Reading status<select name=\"status\">");
+    form.push_str(
+        "<dt><label for=\"browse_status\">Reading status</label></dt>\
+         <dd><select id=\"browse_status\" name=\"status\">",
+    );
     for status in [
         ReadingStatus::All,
         ReadingStatus::InProgress,
@@ -160,16 +182,20 @@ fn sidebar(result: &BrowseResult, filter: &WorkFilter) -> String {
             filter.reading_status == status,
         ));
     }
-    form.push_str("</select></label>");
+    form.push_str("</select></dd>");
 
     form.push_str(&format!(
-        "<label>Tag<input type=\"text\" name=\"tag\" value=\"{}\" \
-         placeholder=\"exact tag\"></label>",
+        "<dt><label for=\"browse_tag\">Tag</label></dt>\
+         <dd><input id=\"browse_tag\" type=\"text\" name=\"tag\" value=\"{}\" \
+         placeholder=\"exact tag\"></dd>",
         escape(filter.tag.as_deref().unwrap_or(""))
     ));
 
-    form.push_str("<button type=\"submit\">Sort and filter</button>");
-    form.push_str("<p class=\"meta\"><a href=\"/works\">Clear all filters</a></p></form>");
+    form.push_str(
+        "<dt class=\"landmark\">Submit</dt>\
+         <dd class=\"submit actions\"><button type=\"submit\">Sort and Filter</button></dd></dl>\
+         <p class=\"footnote\"><a href=\"/works\">Clear Filters</a></p></fieldset></form>",
+    );
     form
 }
 

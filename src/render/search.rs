@@ -1,7 +1,8 @@
 //! Offline search results over the local cache, with AO3-shaped filters.
 
 use super::blurb::work_blurb;
-use super::chrome::{NavSection, PageContext, layout};
+use super::chrome::{NavSection, PageContext, layout, layout_with_class};
+use super::icons::required_tags_from;
 use super::{escape, sanitize};
 use crate::ao3::parse::{SpaceMode, percent_encode};
 use crate::store::{BrowseResult, SearchFilter, SearchPage};
@@ -16,16 +17,18 @@ pub fn search_form_page(
 ) -> String {
     let mut body = String::from("<h2 class=\"heading\">Work Search</h2>");
     body.push_str(
-        "<ul class=\"search-tabs actions\">\
-         <li class=\"active\"><a href=\"/search\">Work Search</a></li>\
+        "<ul class=\"navigation actions\" role=\"navigation\">\
+         <li class=\"active\"><span class=\"current\">Work Search</span></li>\
          <li><a href=\"/works?author=\">People Search</a></li>\
          <li><a href=\"/bookmarks\">Bookmark Search</a></li>\
          <li><a href=\"/fandoms\">Tag Search</a></li></ul>",
     );
 
-    body.push_str("<form class=\"filters work-search\" method=\"get\" action=\"/search\">");
-    body.push_str("<fieldset><legend>Work Info</legend>");
-    body.push_str("<div class=\"search-actions\"><button type=\"submit\">Search</button></div>");
+    body.push_str("<form class=\"verbose search work-search\" method=\"get\" action=\"/search\">");
+    body.push_str(
+        "<fieldset><legend>Work Info</legend><h3 class=\"landmark heading\">Work Info</h3>\
+         <p class=\"submit actions\"><button type=\"submit\">Search</button></p><dl>",
+    );
     body.push_str(&row(
         "Any Field",
         &format!(
@@ -116,9 +119,11 @@ pub fn search_form_page(
             if filter.single_chapter { " checked" } else { "" }
         ),
     ));
-    body.push_str("</fieldset>");
+    body.push_str("</dl></fieldset>");
 
-    body.push_str("<fieldset><legend>Work Stats</legend>");
+    body.push_str(
+        "<fieldset><legend>Work Stats</legend><h3 class=\"landmark heading\">Work Stats</h3><dl>",
+    );
     body.push_str(&row(
         "Kudos",
         &format!(
@@ -142,15 +147,17 @@ pub fn search_form_page(
             )
         ),
     ));
-    body.push_str("</fieldset>");
+    body.push_str("</dl></fieldset>");
 
-    body.push_str("<fieldset><legend>Search</legend>");
+    body.push_str(
+        "<fieldset><legend>Search</legend><h3 class=\"landmark heading\">Search</h3><dl>",
+    );
     body.push_str(&row("Sort by", &sort_select(filter.sort.as_deref())));
     body.push_str(&row(
         "Sort direction",
         &direction_select(filter.direction.as_deref()),
     ));
-    body.push_str("<div class=\"search-actions\"><button type=\"submit\">Search</button></div>");
+    body.push_str("</dl><p class=\"submit actions\"><button type=\"submit\">Search</button></p>");
     body.push_str("</fieldset></form>");
 
     body.push_str(
@@ -158,7 +165,7 @@ pub fn search_form_page(
          this instance and never calls archiveofourown.org.</p>",
     );
 
-    layout(ctx, &body)
+    layout_with_class(ctx, "works-search", &body)
 }
 
 pub fn search_results_page(
@@ -184,24 +191,27 @@ pub fn search_results_page(
              specific.</p>",
         );
     } else {
-        body.push_str(&format!(
-            "<h3 class=\"heading\">{} Found</h3>",
-            crate::time::format_count(u64::try_from(result.total).unwrap_or(0))
-        ));
-        body.push_str("<ol class=\"work index group\">");
-        for work in &result.works {
-            body.push_str(&work_blurb(work, None));
-        }
-        body.push_str("</ol>");
-        body.push_str(&crate::render::pagination(
+        let pager = crate::render::pagination(
             result.page,
             result.per_page,
             result.total,
             "/works/search",
             &filter_query(query, filter),
+        );
+        body.push_str(&format!(
+            "<h3 class=\"heading\">{} Found</h3>",
+            crate::time::format_count(u64::try_from(result.total).unwrap_or(0))
         ));
+        body.push_str(&pager);
+        body.push_str("<h3 class=\"landmark heading\">Works List</h3>");
+        body.push_str("<ol class=\"work index group\">");
+        for work in &result.works {
+            body.push_str(&work_blurb(work, None));
+        }
+        body.push_str("</ol>");
+        body.push_str(&pager);
     }
-    layout(ctx, &body)
+    layout_with_class(ctx, "works-search", &body)
 }
 
 /// AO3-shaped "You searched for:" summary.
@@ -282,7 +292,7 @@ fn summary(query: &str, filter: &SearchFilter) -> String {
 }
 
 pub fn row(label: &str, control: &str) -> String {
-    format!("<div class=\"row\"><label>{label}</label><div>{control}</div></div>")
+    format!("<dt><label>{label}</label></dt><dd>{control}</dd>")
 }
 
 fn text_input(name: &str, value: Option<&str>, placeholder: &str) -> String {
@@ -458,16 +468,16 @@ use crate::ao3::search::{LiveSearchQuery, LiveSearchResults, LiveWork};
 pub fn live_search_form_page(ctx: &PageContext, query: &LiveSearchQuery) -> String {
     let mut body = String::from("<h2 class=\"heading\">Work Search</h2>");
     body.push_str(
-        "<ul class=\"search-tabs actions\">\
-         <li class=\"active\"><a href=\"/works/search\">Work Search</a></li>\
+        "<ul class=\"navigation actions\" role=\"navigation\">\
+         <li class=\"active\"><span class=\"current\">Work Search</span></li>\
          <li><a href=\"/works?author=\">People Search</a></li>\
          <li><a href=\"/bookmarks\">Bookmark Search</a></li>\
          <li><a href=\"/tags/search\">Tag Search</a></li></ul>",
     );
     body.push_str(
-        "<form class=\"work-search\" method=\"get\" action=\"/works/search\">\
-         <fieldset><legend>Work Info</legend>\
-         <div class=\"search-actions\"><button type=\"submit\">Search</button></div>",
+        "<form class=\"verbose search work-search\" method=\"get\" action=\"/works/search\">\
+         <fieldset><legend>Work Info</legend><h3 class=\"landmark heading\">Work Info</h3>\
+         <p class=\"submit actions\"><button type=\"submit\">Search</button></p><dl>",
     );
     body.push_str(&row(
         "Any Field",
@@ -559,9 +569,11 @@ pub fn live_search_form_page(ctx: &PageContext, query: &LiveSearchQuery) -> Stri
             query.language.as_deref().unwrap_or(""),
         ),
     ));
-    body.push_str("</fieldset>");
+    body.push_str("</dl></fieldset>");
 
-    body.push_str("<fieldset><legend>Work Tags</legend>");
+    body.push_str(
+        "<fieldset><legend>Work Tags</legend><h3 class=\"landmark heading\">Work Tags</h3><dl>",
+    );
     body.push_str(&row(
         "Fandoms",
         &text_input("fandom", query.fandom.as_deref(), "fandom name"),
@@ -629,9 +641,11 @@ pub fn live_search_form_page(ctx: &PageContext, query: &LiveSearchQuery) -> Stri
             "comma-separated tag names",
         ),
     ));
-    body.push_str("</fieldset>");
+    body.push_str("</dl></fieldset>");
 
-    body.push_str("<fieldset><legend>Work Stats</legend>");
+    body.push_str(
+        "<fieldset><legend>Work Stats</legend><h3 class=\"landmark heading\">Work Stats</h3><dl>",
+    );
     for (label, name, value) in [
         ("Hits", "hits_min", query.hits_min),
         ("Kudos", "kudos_min", query.kudos_min),
@@ -646,9 +660,11 @@ pub fn live_search_form_page(ctx: &PageContext, query: &LiveSearchQuery) -> Stri
             ),
         ));
     }
-    body.push_str("</fieldset>");
+    body.push_str("</dl></fieldset>");
 
-    body.push_str("<fieldset><legend>Search</legend>");
+    body.push_str(
+        "<fieldset><legend>Search</legend><h3 class=\"landmark heading\">Search</h3><dl>",
+    );
     body.push_str(&row(
         "Sort by",
         &live_select(
@@ -671,13 +687,13 @@ pub fn live_search_form_page(ctx: &PageContext, query: &LiveSearchQuery) -> Stri
             query.direction.as_deref().unwrap_or("desc"),
         ),
     ));
-    body.push_str("<div class=\"search-actions\"><button type=\"submit\">Search</button></div>");
+    body.push_str("</dl><p class=\"submit actions\"><button type=\"submit\">Search</button></p>");
     body.push_str("</fieldset></form>");
     body.push_str(
         "<p class=\"meta\">This submits one search to archiveofourown.org; results are not \
          cached until you open them. <a href=\"/works\">Browse the local cache instead</a>.</p>",
     );
-    layout(ctx, &body)
+    layout_with_class(ctx, "works-search", &body)
 }
 
 /// AO3-style live search result page.
@@ -707,22 +723,25 @@ pub fn live_search_results_page(
              specific.</p>",
         );
     } else {
-        body.push_str(&format!(
-            "<h3 class=\"heading\">{} Found</h3>",
-            crate::time::format_count(u64::try_from(results.total).unwrap_or(0))
-        ));
-        body.push_str("<ol class=\"work index group\">");
-        for work in &results.works {
-            body.push_str(&live_blurb(work));
-        }
-        body.push_str("</ol>");
-        body.push_str(&crate::render::pagination(
+        let pager = crate::render::pagination(
             query_page(query),
             20,
             i64::try_from(results.total).unwrap_or(i64::MAX),
             "/works/search",
             &query.form_query(),
+        );
+        body.push_str(&format!(
+            "<h3 class=\"heading\">{} Found</h3>",
+            crate::time::format_count(u64::try_from(results.total).unwrap_or(0))
         ));
+        body.push_str(&pager);
+        body.push_str("<h3 class=\"landmark heading\">Works List</h3>");
+        body.push_str("<ol class=\"work index group\">");
+        for work in &results.works {
+            body.push_str(&live_blurb(work));
+        }
+        body.push_str("</ol>");
+        body.push_str(&pager);
         if ctx.account.is_empty() {
             body.push_str(
                 "<p class=\"meta\">Signed out: this is AO3's signed-out result set. \
@@ -735,7 +754,7 @@ pub fn live_search_results_page(
              caches it for offline reading.</p>",
         );
     }
-    layout(ctx, &body)
+    layout_with_class(ctx, "works-search", &body)
 }
 
 /// Selected filters for a live tag page. Kept separate from the upstream query
@@ -838,7 +857,7 @@ impl TagFilter {
 
 fn facet_group(action: &str, label: &str, values: &[&str], selected: &[String]) -> String {
     let mut out = format!(
-        "<details class=\"filter-group\"><summary>{label}</summary><ul class=\"facet-list\">"
+        "<details class=\"filter-group {action}\"><summary>{label}</summary><ul class=\"facet-list\">"
     );
     for value in values {
         let checked = if selected.iter().any(|item| item == value) {
@@ -847,7 +866,8 @@ fn facet_group(action: &str, label: &str, values: &[&str], selected: &[String]) 
             ""
         };
         out.push_str(&format!(
-            "<li><label><input type=\"checkbox\" name=\"{action}_tag\" value=\"{value}\"{checked}>              {value}</label></li>",
+            "<li><label><input type=\"checkbox\" name=\"{action}_tag\" value=\"{value}\"{checked}>\
+             <span class=\"indicator\" aria-hidden=\"true\"></span><span>{value}</span></label></li>",
             value = escape(value),
         ));
     }
@@ -857,7 +877,8 @@ fn facet_group(action: &str, label: &str, values: &[&str], selected: &[String]) 
 
 fn text_group(name: &str, label: &str, value: &str, placeholder: &str) -> String {
     format!(
-        "<details class=\"filter-group\"><summary>{label}</summary>         <input type=\"text\" name=\"{name}\" value=\"{}\" placeholder=\"{}\"></details>",
+        "<details class=\"filter-group\"><summary>{label}</summary>\
+         <input type=\"text\" name=\"{name}\" value=\"{}\" placeholder=\"{}\"></details>",
         escape(value),
         escape(placeholder)
     )
@@ -991,7 +1012,8 @@ fn tag_filter_sidebar(tag: &str, filter: &TagFilter) -> String {
         ("F", "Works in progress only"),
     ] {
         out.push_str(&format!(
-            "<li><label><input type=\"radio\" name=\"complete\" value=\"{value}\"{}> {label}</label></li>",
+            "<li><label><input type=\"radio\" name=\"complete\" value=\"{value}\"{}>\
+             <span class=\"indicator\" aria-hidden=\"true\"></span><span>{label}</span></label></li>",
             if filter.complete == value { " checked" } else { "" }
         ));
     }
@@ -1005,7 +1027,8 @@ fn tag_filter_sidebar(tag: &str, filter: &TagFilter) -> String {
         ("T", "Only crossovers"),
     ] {
         out.push_str(&format!(
-            "<li><label><input type=\"radio\" name=\"crossover\" value=\"{value}\"{}> {label}</label></li>",
+            "<li><label><input type=\"radio\" name=\"crossover\" value=\"{value}\"{}>\
+             <span class=\"indicator\" aria-hidden=\"true\"></span><span>{label}</span></label></li>",
             if filter.crossover == value { " checked" } else { "" }
         ));
     }
@@ -1050,10 +1073,10 @@ fn tag_filter_sidebar(tag: &str, filter: &TagFilter) -> String {
     out.push_str("</select></label>");
     out.push_str(
         "<div class=\"filter-submit\"><button type=\"submit\">Sort and Filter</button></div>\
-         <p class=\"meta\"><a href=\"",
+         <p class=\"footnote\"><a href=\"",
     );
     out.push_str(&path);
-    out.push_str("\">Clear filters</a></p></fieldset></form>");
+    out.push_str("\">Clear Filters</a></p></fieldset></form>");
     out
 }
 
@@ -1086,34 +1109,32 @@ pub fn live_tag_page(
         )
     };
     let mut body = format!("<h2 class=\"heading\">{heading}</h2>");
-    body.push_str(
-        "<ul class=\"navigation actions\" role=\"navigation\">\
-         <li class=\"active\"><span>Works</span></li>\
-         <li><a href=\"/bookmarks\">Bookmarks</a></li>\
-         <li><a href=\"/works\">Clear tag</a></li></ul>",
-    );
-    let tag_path = format!("/tags/{}/works", percent_encode(tag, SpaceMode::Percent20));
-    let extra_query = filter.to_query();
-    body.push_str("<div class=\"browse-grid\"><section class=\"browse-results\">");
     body.push_str(&format!(
-        "<p class=\"meta\"><a href=\"/works/search?include_tags={}\">Search within this tag on AO3</a></p>",
+        "<div class=\"navigation actions module\">\
+         <h3 class=\"landmark heading\">Navigation and Actions</h3>\
+         <ul class=\"user navigation actions\" role=\"navigation\">\
+         <li class=\"active\"><span class=\"current\">Works</span></li>\
+         <li><a href=\"/bookmarks\">Bookmarks</a></li>\
+         <li><a href=\"/works\">Clear tag</a></li>\
+         <li><a href=\"/works/search?include_tags={}\">Search within this tag on AO3</a></li>\
+         </ul></div>",
         percent_encode(tag, SpaceMode::Percent20)
     ));
+    let tag_path = format!("/tags/{}/works", percent_encode(tag, SpaceMode::Percent20));
+    let extra_query = filter.to_query();
+    let pager = crate::render::pagination(page, per_page, total, &tag_path, &extra_query);
+    body.push_str("<div class=\"browse-grid\"><section class=\"browse-results\">");
     if results.works.is_empty() {
         body.push_str("<p class=\"muted\">No works on this tag page.</p>");
     } else {
+        body.push_str(&pager);
+        body.push_str("<h3 class=\"landmark heading\">Listing Works</h3>");
         body.push_str("<ol class=\"work index group\">");
         for work in &results.works {
             body.push_str(&live_blurb(work));
         }
         body.push_str("</ol>");
-        body.push_str(&crate::render::pagination(
-            page,
-            per_page,
-            total,
-            &tag_path,
-            &extra_query,
-        ));
+        body.push_str(&pager);
         if ctx.account.is_empty() {
             body.push_str(
                 "<p class=\"meta\">Signed out: this is AO3's signed-out tag page. \
@@ -1125,7 +1146,7 @@ pub fn live_tag_page(
     body.push_str("</section>");
     body.push_str(&tag_filter_sidebar(tag, filter));
     body.push_str("</div>");
-    layout(ctx, &body)
+    layout_with_class(ctx, "works-index filtered", &body)
 }
 
 fn query_page(query: &LiveSearchQuery) -> i64 {
@@ -1148,18 +1169,21 @@ pub(super) fn live_blurb(work: &LiveWork) -> String {
             .collect::<Vec<_>>()
             .join(", ")
     };
-    let fandoms = work
-        .fandoms
-        .iter()
-        .map(|fandom| {
-            format!(
-                "<a class=\"tag\" href=\"{}\">{}</a>",
-                super::tag_href(fandom),
-                escape(fandom)
-            )
-        })
-        .collect::<Vec<_>>()
-        .join(", ");
+    let fandoms = if work.fandoms.is_empty() {
+        "—".to_string()
+    } else {
+        work.fandoms
+            .iter()
+            .map(|fandom| {
+                format!(
+                    "<a class=\"tag\" href=\"{}\">{}</a>",
+                    super::tag_href(fandom),
+                    escape(fandom)
+                )
+            })
+            .collect::<Vec<_>>()
+            .join(", ")
+    };
     let tag_links = |tags: &[String], class: &str| -> String {
         tags.iter()
             .map(|tag| {
@@ -1215,39 +1239,13 @@ pub(super) fn live_blurb(work: &LiveWork) -> String {
     } else {
         ""
     };
-    let rating = required_badge(
-        rating_class(work.rating.as_deref()),
-        rating_short(work.rating.as_deref()),
-        work.rating.as_deref().unwrap_or("Not rated"),
+    let required = required_tags_from(
+        work.rating.as_deref(),
+        &work.warnings,
+        &work.categories,
+        work.complete,
+        false,
     );
-    let warnings = required_badge(
-        if work
-            .warnings
-            .iter()
-            .any(|warning| warning.contains("No Archive Warnings"))
-        {
-            "warning-no"
-        } else {
-            "warning-yes"
-        },
-        if work.warnings.is_empty() { "–" } else { "!" },
-        work.warnings
-            .first()
-            .map_or("Archive warnings", String::as_str),
-    );
-    let category_label = category_short(work.categories.first().map_or("?", String::as_str));
-    let category = required_badge(
-        "category",
-        &category_label,
-        work.categories
-            .first()
-            .map_or("No category", String::as_str),
-    );
-    let status = match work.complete {
-        Some(true) => required_badge("status-complete", "✓", "Complete"),
-        Some(false) => required_badge("status-wip", "WIP", "Work in progress"),
-        None => required_badge("status-unknown", "?", "Status unknown"),
-    };
     let mut stats = String::new();
     if let Some(language) = &work.language {
         stats.push_str(&format!(
@@ -1267,33 +1265,36 @@ pub(super) fn live_blurb(work: &LiveWork) -> String {
             escape(chapters)
         ));
     }
-    for (label, value) in [
-        ("Collections", work.collections),
-        ("Comments", work.comments),
-        ("Kudos", work.kudos),
-        ("Bookmarks", work.bookmarks),
-        ("Hits", work.hits),
+    for (class, label, value) in [
+        ("collections", "Collections", work.collections),
+        ("comments", "Comments", work.comments),
+        ("kudos", "Kudos", work.kudos),
+        ("bookmarks", "Bookmarks", work.bookmarks),
+        ("hits", "Hits", work.hits),
     ] {
         if let Some(value) = value.filter(|value| *value > 0) {
             stats.push_str(&format!(
-                "<dt>{label}:</dt><dd>{}</dd>",
+                "<dt class=\"{class}\">{label}:</dt><dd class=\"{class}\">{}</dd>",
                 crate::time::format_count(value)
             ));
         }
     }
     format!(
-        "<li class=\"work blurb group\" role=\"article\"><div class=\"header module\">\
+        "<li id=\"work_{id}\" class=\"work blurb group\" role=\"article\">\
+         <div class=\"header module\">\
          <h4 class=\"heading\"><a href=\"/open/{id}\">{title}</a> by {authors}{restricted}</h4>\
          <h5 class=\"fandoms heading\"><span class=\"landmark\">Fandoms:</span> {fandoms}</h5>\
-         <ul class=\"required-tags\">{rating}{warnings}{category}{status}</ul>\
+         {required}\
          <p class=\"datetime\">{datetime}</p></div>\
          <h6 class=\"landmark heading\">Tags</h6><ul class=\"tags commas\">{tags}</ul>{summary}{series}\
          <dl class=\"stats\">{stats}</dl>\
-         <p class=\"actions\"><a href=\"https://archiveofourown.org/works/{id}\" \
-         rel=\"noopener noreferrer\">Open on AO3</a> \
-         <form class=\"inline\" method=\"post\" action=\"/open\">\
+         <h6 class=\"landmark heading\">Actions</h6>\
+         <ul class=\"actions\">\
+         <li><a href=\"https://archiveofourown.org/works/{id}\" \
+         rel=\"noopener noreferrer\">Open on AO3</a></li>\
+         <li><form class=\"inline\" method=\"post\" action=\"/open\">\
          <input type=\"hidden\" name=\"id\" value=\"{id}\">\
-         <button type=\"submit\">Cache this work</button></form></p></li>",
+         <button type=\"submit\">Cache this work</button></form></li></ul></li>",
         id = escape(&work.ao3_id),
         title = escape(&work.title),
         datetime = escape(&work.datetime),
@@ -1302,58 +1303,19 @@ pub(super) fn live_blurb(work: &LiveWork) -> String {
     )
 }
 
-fn required_badge(class: &str, label: &str, title: &str) -> String {
-    format!(
-        "<li class=\"{class}\" title=\"{}\">{}</li>",
-        escape(title),
-        escape(label)
-    )
-}
-
-fn rating_class(rating: Option<&str>) -> &'static str {
-    match rating.unwrap_or_default().to_ascii_lowercase().as_str() {
-        value if value.contains("general") => "rating-g",
-        value if value.contains("teen") => "rating-t",
-        value if value.contains("mature") => "rating-m",
-        value if value.contains("explicit") => "rating-e",
-        _ => "rating-nr",
-    }
-}
-
-fn category_short(category: &str) -> String {
-    match category.to_ascii_lowercase().as_str() {
-        "f/m" => "F/M".to_string(),
-        "m/m" => "M/M".to_string(),
-        "f/f" => "F/F".to_string(),
-        "gen" => "Gen".to_string(),
-        "multi" => "Multi".to_string(),
-        "other" => "Other".to_string(),
-        "no category" | "?" => "—".to_string(),
-        other => other.chars().take(4).collect(),
-    }
-}
-
-fn rating_short(rating: Option<&str>) -> &'static str {
-    match rating_class(rating) {
-        "rating-g" => "G",
-        "rating-t" => "T",
-        "rating-m" => "M",
-        "rating-e" => "E",
-        _ => "NR",
-    }
-}
-
 fn radio_group(name: &str, options: &[(&str, &str)], current: &str) -> String {
-    options
+    let items: String = options
         .iter()
         .map(|(value, label)| {
             format!(
-                "<label class=\"check\"><input type=\"radio\" name=\"{name}\" value=\"{}\"{}> {label}</label>",
+                "<li><label class=\"check\"><input type=\"radio\" name=\"{name}\" value=\"{}\"{}> \
+                 {label}</label></li>",
                 escape(value),
                 if current == *value { " checked" } else { "" }
             )
         })
-        .collect()
+        .collect();
+    format!("<ul class=\"choice-list\">{items}</ul>")
 }
 
 fn live_select(name: &str, options: &[(&str, &str)], current: &str) -> String {

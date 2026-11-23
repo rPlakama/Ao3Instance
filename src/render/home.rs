@@ -1,8 +1,10 @@
-//! AO3-shaped start page: favorites on the left, local news on the right and
-//! the personal shortcuts at the bottom.
+//! AO3-shaped start page modelled on `otwarchive/app/views/home/index.html.erb`:
+//! favorites/fandoms, news, read-later readings, and unread inbox modules inside
+//! `.splash`, plus the local Continue Reading and Open a work panels.
 
 use super::blurb::author_links_from;
-use super::chrome::{PageContext, layout};
+use super::chrome::{PageContext, layout_with_class};
+use super::icons::required_tags_from;
 use super::{escape, sanitize, tag_href};
 use crate::ao3::home::HomeModules;
 use crate::store::{StoredWork, WorkSummary};
@@ -24,11 +26,12 @@ pub fn home_page(
         ));
     }
 
-    body.push_str("<div class=\"home-grid\">");
-    body.push_str("<section class=\"home-favorites\">");
-    body.push_str("<h2>Find your favorites</h2>");
+    body.push_str("<div class=\"splash\">");
+
+    // Module 1: Find your favorites (or cached fandoms browse) + Continue Reading + Open a work
     if !modules.favorites.is_empty() {
-        body.push_str("<ul class=\"favorites\">");
+        body.push_str("<div class=\"favorite module\">");
+        body.push_str("<h3 class=\"heading\">Find your favorites</h3><ul class=\"favorites\">");
         for favorite in modules.favorites.iter().take(10) {
             body.push_str(&format!(
                 "<li><a href=\"{}\">{}</a></li>",
@@ -37,22 +40,28 @@ pub fn home_page(
             ));
         }
         body.push_str("</ul>");
-    } else if fandoms.is_empty() {
-        body.push_str(
-            "<p class=\"muted\">Sign in on <a href=\"/session\">Session</a> to load your \
-             AO3 favorite tags, or open a work below to start the cache.</p>",
-        );
     } else {
-        body.push_str("<ul class=\"favorites\">");
-        for (fandom, count) in fandoms.iter().take(8) {
-            body.push_str(&format!(
-                "<li><a href=\"{}\">{}</a> <span class=\"meta\">({count})</span></li>",
-                tag_href(fandom),
-                escape(fandom)
-            ));
+        body.push_str("<div class=\"browse module\" role=\"navigation\" aria-label=\"Fandoms\">");
+        body.push_str(
+            "<h3 class=\"heading\"><span class=\"title\">Find your favorites</span> \
+             <span class=\"link\"><a href=\"/fandoms\">All Fandoms</a></span></h3>",
+        );
+        if fandoms.is_empty() {
+            body.push_str(
+                "<p class=\"note\">Sign in on <a href=\"/session\">Session</a> to load your \
+                 AO3 favorite tags, or open a work below to start the local cache.</p>",
+            );
+        } else {
+            body.push_str("<ul class=\"favorites\">");
+            for (fandom, count) in fandoms.iter().take(10) {
+                body.push_str(&format!(
+                    "<li><a href=\"{}\">{} ({count})</a></li>",
+                    tag_href(fandom),
+                    escape(fandom)
+                ));
+            }
+            body.push_str("</ul>");
         }
-        body.push_str("</ul>");
-        body.push_str("<p class=\"meta\"><a href=\"/fandoms\">All fandoms →</a></p>");
     }
 
     let continuing: Vec<&WorkSummary> = works
@@ -62,7 +71,8 @@ pub fn home_page(
         .collect();
     if !continuing.is_empty() {
         body.push_str(
-            "<h3 class=\"home-subheading\">Continue Reading</h3><ul class=\"favorites\">",
+            "<div class=\"continue-module\"><h4 class=\"heading\">Continue Reading</h4>\
+             <ul class=\"continue-list\">",
         );
         for work in continuing {
             let chapter = work.progress_chapter.unwrap_or(1);
@@ -76,18 +86,20 @@ pub fn home_page(
                 authors = author_links_from(&work.authors),
             ));
         }
-        body.push_str("</ul>");
+        body.push_str("</ul></div>");
     }
 
-    body.push_str("<div id=\"open-work\" class=\"module open-work\"><h3>Open a work</h3>");
     body.push_str(
-        "<form class=\"open\" method=\"post\" action=\"/open\">\
+        "<div id=\"open-work\" class=\"account module open-work\">\
+         <h4 class=\"heading\">Open a work</h4>\
+         <form class=\"open\" method=\"post\" action=\"/open\">\
          <input name=\"id\" placeholder=\"AO3 work id or URL (e.g. 12345678)\" autofocus required>\
          <button type=\"submit\">Open work</button></form>\
-         <p class=\"meta\">One user-initiated fetch, cached for offline reading.</p></div>",
+         <p class=\"note\">One user-initiated fetch, cached for offline reading.</p></div>",
     );
-    body.push_str("</section>");
+    body.push_str("</div>");
 
+    // Module 2: News
     let (news_href, news_label) = if modules.news.is_empty() {
         ("/works".to_string(), "All Cached Works")
     } else {
@@ -97,18 +109,21 @@ pub fn home_page(
         )
     };
     body.push_str(&format!(
-        "<section class=\"home-news\"><h2>News <span class=\"heading-link\">\
-         <a href=\"{news_href}\">{news_label}</a></span></h2>"
+        "<div id=\"news\" class=\"latest news module\"><h3 class=\"heading\">\
+         <span class=\"title\">News</span> \
+         <span class=\"link\"><a href=\"{news_href}\">{news_label}</a></span></h3>"
     ));
     if !modules.news.is_empty() {
+        body.push_str("<ul class=\"news index group\">");
         for post in modules.news.iter().take(4) {
             let href = post.href.as_deref().map_or_else(
                 || "https://archiveofourown.org/admin_posts".to_string(),
                 |href| format!("https://archiveofourown.org{href}"),
             );
             body.push_str(&format!(
-                "<article class=\"news-entry\"><h3><a href=\"{href}\">{title}</a></h3>\
-                 <p class=\"meta\">{meta}</p>",
+                "<li class=\"post group\"><div class=\"header module\">\
+                 <h4 class=\"heading\"><a href=\"{href}\">{title}</a></h4>\
+                 <p class=\"meta\">{meta}</p></div>",
                 title = escape(&post.title),
                 meta = escape(&post.meta),
             ));
@@ -119,21 +134,23 @@ pub fn home_page(
                 ));
             }
             body.push_str(&format!(
-                "<p class=\"read-more\"><a href=\"{href}\">Read more...</a></p></article>"
+                "<p class=\"jump\"><a href=\"{href}\">Read more...</a></p></li>"
             ));
         }
+        body.push_str("</ul>");
     } else if detailed.is_empty() {
         body.push_str(
-            "<p class=\"muted\">Sign in on <a href=\"/session\">Session</a> to load AO3 \
-             news, or cache works below.</p>",
+            "<p class=\"note\">Sign in on <a href=\"/session\">Session</a> to load AO3 \
+             news, or cache works to see recent updates here.</p>",
         );
     } else {
+        body.push_str("<ul class=\"news index group\">");
         for work in detailed.iter().take(3) {
-            body.push_str("<article class=\"news-entry\">");
             body.push_str(&format!(
-                "<h3><a href=\"/read/{id}\">{title}</a></h3>\
+                "<li class=\"post group\"><div class=\"header module\">\
+                 <h4 class=\"heading\"><a href=\"/read/{id}\">{title}</a></h4>\
                  <p class=\"meta\">Cached: {date} · Chapters: {chapters} \
-                 · Comments: {comments} · Kudos: {kudos}</p>",
+                 · Comments: {comments} · Kudos: {kudos}</p></div>",
                 id = escape(&work.ao3_id),
                 title = escape(&work.title),
                 date = escape(&format_utc(work.fetched_at)),
@@ -144,21 +161,26 @@ pub fn home_page(
             if let Some(summary) = &work.summary {
                 let excerpt = plain_text(summary, 260);
                 if !excerpt.is_empty() {
-                    body.push_str(&format!("<p>{}</p>", escape(&excerpt)));
+                    body.push_str(&format!(
+                        "<blockquote class=\"userstuff\"><p>{}</p></blockquote>",
+                        escape(&excerpt)
+                    ));
                 }
             }
             body.push_str(&format!(
-                "<p class=\"read-more\"><a href=\"/read/{}\">Read more...</a></p></article>",
+                "<p class=\"jump\"><a href=\"/read/{}\">Read more...</a></p></li>",
                 escape(&work.ao3_id)
             ));
         }
+        body.push_str("</ul>");
     }
-    body.push_str("</section></div>");
+    body.push_str("</div>");
 
-    body.push_str("<div class=\"home-bottom\">");
+    // Module 3: Is it later already? (Marked for later readings)
     body.push_str(
-        "<section class=\"home-module home-readings\"><h3>Is it later already? \
-         <span class=\"heading-link\"><a href=\"/reading\">My History</a></span></h3>\
+        "<div class=\"random readings module\"><h3 class=\"heading\">\
+         <span class=\"title\">Is it later already?</span> \
+         <span class=\"link\"><a href=\"/reading\">My History</a></span></h3>\
          <p class=\"note\">Some works you've marked for later.</p>",
     );
     if modules.readings.is_empty() {
@@ -170,7 +192,9 @@ pub fn home_page(
         }
         body.push_str("</ol>");
     }
-    body.push_str("</section>");
+    body.push_str("</div>");
+
+    // Module 4: Unread messages (Inbox)
     let inbox_href = if ctx.account.is_empty() {
         "/session".to_string()
     } else {
@@ -183,8 +207,9 @@ pub fn home_page(
         )
     };
     body.push_str(&format!(
-        "<section class=\"home-module home-inbox\"><h3>Unread messages \
-         <span class=\"heading-link\"><a href=\"{inbox_href}\">My Inbox</a></span></h3>\
+        "<div class=\"latest messages module\"><h3 class=\"heading\">\
+         <span class=\"title\">Unread messages</span> \
+         <span class=\"link\"><a href=\"{inbox_href}\">My Inbox</a></span></h3>\
          <p class=\"note\">The latest unread items from your inbox.</p>"
     ));
     if modules.inbox.is_empty() {
@@ -199,68 +224,125 @@ pub fn home_page(
                 |href| format!("https://archiveofourown.org{href}"),
             );
             body.push_str(&format!(
-                "<li class=\"unread\"><h4 class=\"heading byline\">{byline}</h4>\
+                "<li class=\"unread comment group\"><h4 class=\"heading byline\">{byline}</h4>\
                  <blockquote class=\"userstuff\">{content}</blockquote>\
-                 <p class=\"actions\"><a href=\"{href}\">Open on AO3</a></p></li>",
+                 <ul class=\"actions\"><li><a href=\"{href}\" rel=\"noopener noreferrer\">\
+                 Open on AO3</a></li></ul></li>",
                 byline = escape(&message.byline),
                 content = sanitize(&message.content_html),
             ));
         }
         body.push_str("</ul>");
     }
-    body.push_str("</section></div>");
+    body.push_str("</div>");
+
+    body.push_str("</div>"); // .splash
     body.push_str(
         "<p class=\"meta home-refresh\"><a href=\"/?refresh=1\">Refresh AO3 home</a></p>",
     );
 
-    layout(ctx, &body)
+    layout_with_class(ctx, "home", &body)
 }
 
 fn reading_blurb(reading: &crate::ao3::home::HomeReading) -> String {
     let work = &reading.work;
     let authors = author_links_from(&work.authors);
-    let fandoms = work
-        .fandoms
-        .iter()
-        .map(|fandom| {
-            format!(
-                "<a class=\"tag\" href=\"{}\">{}</a>",
-                tag_href(fandom),
-                escape(fandom)
-            )
-        })
-        .collect::<Vec<_>>()
-        .join(", ");
+    let fandoms = if work.fandoms.is_empty() {
+        "—".to_string()
+    } else {
+        work.fandoms
+            .iter()
+            .map(|fandom| {
+                format!(
+                    "<a class=\"tag\" href=\"{}\">{}</a>",
+                    tag_href(fandom),
+                    escape(fandom)
+                )
+            })
+            .collect::<Vec<_>>()
+            .join(", ")
+    };
+    let required = required_tags_from(
+        work.rating.as_deref(),
+        &work.warnings,
+        &work.categories,
+        work.complete,
+        false,
+    );
+    let tag_links = |tags: &[String], class: &str| -> String {
+        tags.iter()
+            .map(|tag| {
+                format!(
+                    "<li class=\"{class}\"><a class=\"tag\" href=\"{}\">{}</a></li>",
+                    tag_href(tag),
+                    escape(tag)
+                )
+            })
+            .collect()
+    };
+    let tags_html = format!(
+        "{}{}{}{}",
+        tag_links(&work.warnings, "warnings"),
+        tag_links(&work.relationships, "relationships"),
+        tag_links(&work.characters, "characters"),
+        tag_links(&work.additional_tags, "freeforms"),
+    );
+    let tags_block = if tags_html.is_empty() {
+        String::new()
+    } else {
+        format!("<h6 class=\"landmark heading\">Tags</h6><ul class=\"tags commas\">{tags_html}</ul>")
+    };
     let summary = work
         .summary_html
         .as_deref()
         .map_or_else(String::new, |html| {
             format!(
-                "<blockquote class=\"userstuff summary\">{}</blockquote>",
+                "<h6 class=\"landmark heading\">Summary</h6>\
+                 <blockquote class=\"userstuff summary\">{}</blockquote>",
                 sanitize(html)
             )
         });
     let mut stats = String::new();
     if let Some(words) = work.words {
-        stats.push_str(&format!("Words: {} · ", crate::time::format_count(words)));
+        stats.push_str(&format!(
+            "<dt class=\"words\">Words:</dt><dd class=\"words\">{}</dd>",
+            crate::time::format_count(words)
+        ));
     }
     if let Some(chapters) = &work.chapters {
-        stats.push_str(&format!("Chapters: {} · ", escape(chapters)));
+        stats.push_str(&format!(
+            "<dt class=\"chapters\">Chapters:</dt><dd class=\"chapters\">{}</dd>",
+            escape(chapters)
+        ));
     }
     if let Some(kudos) = work.kudos {
-        stats.push_str(&format!("Kudos: {} · ", crate::time::format_count(kudos)));
+        stats.push_str(&format!(
+            "<dt class=\"kudos\">Kudos:</dt><dd class=\"kudos\">{}</dd>",
+            crate::time::format_count(kudos)
+        ));
     }
     if let Some(hits) = work.hits {
-        stats.push_str(&format!("Hits: {}", crate::time::format_count(hits)));
+        stats.push_str(&format!(
+            "<dt class=\"hits\">Hits:</dt><dd class=\"hits\">{}</dd>",
+            crate::time::format_count(hits)
+        ));
     }
+    let stats_html = if stats.is_empty() {
+        String::new()
+    } else {
+        format!("<dl class=\"stats\">{stats}</dl>")
+    };
     format!(
-        "<li class=\"reading work\"><h4 class=\"heading\">\
-         <a href=\"/open/{id}\">{title}</a> by {authors}</h4>\
-         <p class=\"meta\">{fandoms}</p>{summary}\
-         <p class=\"stats\">{stats}</p>\
-         <p class=\"meta viewed\">{viewed}</p></li>",
+        "<li id=\"work_{id}\" class=\"reading work blurb group\" role=\"article\">\
+         <div class=\"header module\">\
+         <h4 class=\"heading\"><a href=\"/open/{id}\">{title}</a> by {authors}</h4>\
+         <h5 class=\"fandoms heading\"><span class=\"landmark\">Fandoms:</span> {fandoms}</h5>\
+         {required}<p class=\"datetime\">{datetime}</p></div>\
+         {tags_block}{summary}{stats_html}\
+         <div class=\"user module group\"><h4 class=\"viewed heading\">{viewed}</h4></div></li>",
         id = escape(&work.ao3_id),
         title = escape(&work.title),
+        datetime = escape(&work.datetime),
         viewed = escape(&reading.meta),
     )
 }

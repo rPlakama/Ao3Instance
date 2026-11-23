@@ -18,25 +18,26 @@ pub fn pagination(page: i64, per_page: i64, total: i64, path: &str, extra: &str)
         format!("{path}?{query}")
     };
 
-    let mut out = String::from("<ol class=\"pagination actions\">");
+    let mut out =
+        String::from("<ol class=\"pagination actions\" role=\"navigation\" aria-label=\"Pagination\">");
     if page > 1 {
         out.push_str(&format!(
-            "<li><a href=\"{}\" rel=\"prev\">← Previous</a></li>",
+            "<li class=\"previous\"><a href=\"{}\" rel=\"prev\">← Previous</a></li>",
             href(page - 1)
         ));
     } else {
-        out.push_str("<li><span class=\"disabled\">← Previous</span></li>");
+        out.push_str("<li class=\"previous\"><span class=\"disabled\">← Previous</span></li>");
     }
 
     let mut last = 0;
     for candidate in page_numbers(page, pages) {
         if candidate == 0 {
-            out.push_str("<li><span class=\"gap\">…</span></li>");
+            out.push_str("<li class=\"gap\"><span class=\"gap\">…</span></li>");
             continue;
         }
         if candidate == page {
             out.push_str(&format!(
-                "<li class=\"current\"><span>{candidate}</span></li>"
+                "<li class=\"current\"><span class=\"current\">{candidate}</span></li>"
             ));
         } else {
             out.push_str(&format!(
@@ -48,14 +49,14 @@ pub fn pagination(page: i64, per_page: i64, total: i64, path: &str, extra: &str)
     }
     if last < pages && page < pages {
         out.push_str(&format!(
-            "<li><a href=\"{}\" rel=\"next\">Next →</a></li>",
+            "<li class=\"next\"><a href=\"{}\" rel=\"next\">Next →</a></li>",
             href(page + 1)
         ));
     } else if page >= pages {
-        out.push_str("<li><span class=\"disabled\">Next →</span></li>");
+        out.push_str("<li class=\"next\"><span class=\"disabled\">Next →</span></li>");
     } else {
         out.push_str(&format!(
-            "<li><a href=\"{}\" rel=\"next\">Next →</a></li>",
+            "<li class=\"next\"><a href=\"{}\" rel=\"next\">Next →</a></li>",
             href(page + 1)
         ));
     }

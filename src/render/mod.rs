@@ -17,6 +17,21 @@ use crate::ao3::parse::{SpaceMode, percent_encode};
 pub const AO3_CSS: &str = include_str!("assets/ao3.css");
 pub const READER_JS: &str = include_str!("assets/reader.js");
 
+/// Stable FNV-1a content fingerprint used for `?v=` cache-busting on static assets.
+const fn fnv1a_64(bytes: &[u8]) -> u64 {
+    let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
+    let mut idx = 0;
+    while idx < bytes.len() {
+        hash ^= bytes[idx] as u64;
+        hash = hash.wrapping_mul(0x0100_0000_01b3);
+        idx += 1;
+    }
+    hash
+}
+
+pub(crate) const AO3_CSS_HASH: u64 = fnv1a_64(AO3_CSS.as_bytes());
+pub(crate) const READER_JS_HASH: u64 = fnv1a_64(READER_JS.as_bytes());
+
 mod about;
 mod audit;
 mod blurb;

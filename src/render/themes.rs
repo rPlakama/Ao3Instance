@@ -1,6 +1,6 @@
-//! Public AO3 site-skin gallery and custom theme controls.
+//! Public AO3 site-skin gallery modelled on `otwarchive/app/views/skins/index.html.erb`.
 
-use super::chrome::{PageContext, layout};
+use super::chrome::{PageContext, layout_with_class};
 use super::escape;
 use crate::ao3::skins::PublicSkin;
 
@@ -12,9 +12,13 @@ pub fn themes_page(
 ) -> String {
     let mut body = String::from(
         "<h2 class=\"heading\">Public AO3 site skins</h2>\
-         <p class=\"meta\">Fetched from <a href=\"https://archiveofourown.org/skins\">\
-         archiveofourown.org/skins</a>. Selecting a skin imports its CSS locally; \
-         built-in themes remain under <a href=\"/session#appearance\">Appearance</a>.</p>",
+         <ul class=\"navigation actions\" role=\"navigation\">\
+         <li><a href=\"/session#appearance\">Built-in Themes</a></li>\
+         <li class=\"active\"><span class=\"current\">Public Site Skins</span></li></ul>\
+         <p class=\"notes\">Fetched from <a href=\"https://archiveofourown.org/skins\" \
+         rel=\"noopener noreferrer\">archiveofourown.org/skins</a>. Selecting a skin imports \
+         its CSS locally; built-in themes remain under \
+         <a href=\"/session#appearance\">Appearance</a>.</p>",
     );
     if ctx.skin == "public" {
         body.push_str(
@@ -41,7 +45,8 @@ pub fn themes_page(
              request; check <a href=\"/diagnostics\">Diagnostics</a>.</p>",
         );
     } else {
-        body.push_str("<ul class=\"public-skins\">");
+        body.push_str("<h4 class=\"landmark heading\">List of Skins</h4>");
+        body.push_str("<ul class=\"skin picture index group public-skins\">");
         for skin in skins {
             let href = if skin.href.starts_with("https://") {
                 skin.href.clone()
@@ -49,11 +54,15 @@ pub fn themes_page(
                 format!("https://archiveofourown.org{}", skin.href)
             };
             body.push_str(&format!(
-                "<li><h3><a href=\"{href}\">{title}</a></h3>\
-                 <p class=\"meta\">{byline}</p><p>{description}</p>\
+                "<li class=\"skins picture blurb group\">\
+                 <div class=\"header module\">\
+                 <h4 class=\"heading\"><a href=\"{href}\" rel=\"noopener noreferrer\">{title}</a></h4>\
+                 <p class=\"byline\">{byline}</p></div>\
+                 <blockquote class=\"userstuff summary\"><p>{description}</p></blockquote>\
+                 <ul class=\"actions\"><li>\
                  <form class=\"inline\" method=\"post\" action=\"/themes/apply\">\
                  <input type=\"hidden\" name=\"href\" value=\"{apply_href}\">\
-                 <button type=\"submit\">Use this skin</button></form></li>",
+                 <button type=\"submit\">Use this skin</button></form></li></ul></li>",
                 title = escape(&skin.title),
                 byline = escape(&skin.byline),
                 description = escape(&skin.description),
@@ -62,5 +71,5 @@ pub fn themes_page(
         }
         body.push_str("</ul>");
     }
-    layout(ctx, &body)
+    layout_with_class(ctx, "dashboard skins-index", &body)
 }

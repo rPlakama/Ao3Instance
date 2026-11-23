@@ -1,88 +1,171 @@
-//! Original, text-first required-tag badges (AO3's 2x2 square: rating, warning,
-//! category, status). No AO3 artwork is copied; these are plain markup + CSS.
+//! Original, text-first required-tag badges matching AO3's iconic 2x2 square
+//! (top-left: rating, bottom-left: archive warnings, top-right: category,
+//! bottom-right: completion status). No AO3 artwork is copied; pure HTML + CSS.
 
 use super::escape;
 use crate::ao3::parse::{SpaceMode, percent_encode};
 use crate::store::StoredWork;
 
 pub fn required_tags(work: &StoredWork) -> String {
-    let (rating_class, rating_label) = match work
-        .rating
-        .as_deref()
+    required_tags_from(
+        work.rating.as_deref(),
+        &work.tags.warnings,
+        &work.tags.categories,
+        work.complete,
+        true,
+    )
+}
+
+/// Shared 2x2 required-tags square for both cached works and live AO3 blurbs.
+pub fn required_tags_from(
+    rating: Option<&str>,
+    warnings: &[String],
+    categories: &[String],
+    complete: Option<bool>,
+    linked: bool,
+) -> String {
+    let rating_title = rating.unwrap_or("Not Rated");
+    let (rating_class, rating_label) = match rating
         .unwrap_or_default()
         .to_ascii_lowercase()
         .as_str()
     {
-        value if value.contains("general") => ("rating-g", "G"),
-        value if value.contains("teen") => ("rating-t", "T"),
-        value if value.contains("mature") => ("rating-m", "M"),
-        value if value.contains("explicit") => ("rating-e", "E"),
-        _ => ("rating-nr", "NR"),
+        value if value.contains("general") => ("rating-g rating-general-audience", "G"),
+        value if value.contains("teen") => ("rating-t rating-teen", "T"),
+        value if value.contains("mature") => ("rating-m rating-mature", "M"),
+        value if value.contains("explicit") => ("rating-e rating-explicit", "E"),
+        _ => ("rating-nr rating-notrated", "—"),
     };
+    let rating_href = linked.then(|| {
+        rating.map(|value| {
+            format!(
+                "/works?rating={}",
+                percent_encode(value, SpaceMode::Percent20)
+            )
+        })
+    })
+    .flatten();
 
-    let warnings = &work.tags.warnings;
-    let no_warnings = warnings.is_empty()
-        || warnings
-            .iter()
-            .any(|warning| warning.contains("No Archive Warnings"));
-    let (warning_class, warning_label) = if no_warnings {
-        ("warning-no", "–")
-    } else {
-        ("warning-yes", "!")
-    };
-    let warning_href = if no_warnings {
-        None
-    } else {
-        warnings.first().map(|warning| super::tag_href(warning))
-    };
-    let category_href = work
-        .tags
-        .categories
-        .first()
-        .map(|category| super::tag_href(category));
-    let rating_href = work.rating.as_deref().map(|rating| {
-        format!(
-            "/works?rating={}",
-            percent_encode(rating, SpaceMode::Percent20)
-        )
+    let has_choose_not = warnings
+        .iter()
+        .any(|warning| warning.to_ascii_lowercase().contains("chose not to"));
+    let has_real_warning = warnings.iter().any(|warning| {
+        let lower = warning.to_ascii_lowercase();
+        !lower.contains("no archive warnings") && !lower.contains("chose not to")
     });
+    let (warning_class, warning_label, warning_title) = if has_real_warning {
+        (
+            "warning-yes",
+            "!",
+            warnings
+                .first()
+                .map_or("Archive Warnings Apply", String::as_str),
+        )
+    } else if has_choose_not {
+        (
+            "warning-choose warning-choosenotto",
+            "?",
+            "Creator Chose Not To Use Archive Warnings",
+        )
+    } else {
+        ("warning-no", "–", "No Archive Warnings Apply")
+    };
+    let warning_href = if linked && (has_real_warning || has_choose_not) {
+        warnings.first().map(|warning| super::tag_href(warning))
+    } else {
+        None
+    };
 
-    let category = work.tags.categories.first().map_or_else(
-        || "?".to_string(),
-        |category| category.chars().take(4).collect::<String>().to_uppercase(),
-    );
-    let (status_class, status_label, status_title) = match work.complete {
-        Some(true) => ("status-complete", "✓".to_string(), "Completed"),
-        Some(false) => ("status-wip", "WIP".to_string(), "Work in progress"),
-        None => ("status-unknown", "?".to_string(), "Status unknown"),
+    let (category_class, category_label, category_title) = classify_category(categories);
+    let category_href = if linked {
+        categories.first().map(|category| super::tag_href(category))
+    } else {
+        None
+    };
+
+    let (status_class, status_label, status_title) = match complete {
+        Some(true) => ("status-complete complete-yes", "✓", "Work is Complete"),
+        Some(false) => ("status-wip complete-no", "WIP", "Work in Progress"),
+        None => ("status-unknown", "–", "Status unknown"),
     };
 
     format!(
         "<ul class=\"required-tags\" aria-label=\"rating, warnings, category, status\">\
          {rating_cell}{warning_cell}{category_cell}\
-         <li class=\"{status_class}\" title=\"{status_title}\">{status}</li></ul>",
-        rating_cell = badge_cell(rating_class, rating_href.as_deref(), rating_label, "Rating"),
+         <li class=\"{status_class}\" title=\"{status_title}\"><span>{}</span></li></ul>",
+        escape(status_label),
+        rating_cell = badge_cell(rating_class, rating_href.as_deref(), rating_label, rating_title),
         warning_cell = badge_cell(
             warning_class,
             warning_href.as_deref(),
             warning_label,
-            "Archive warnings"
+            warning_title
         ),
-        category_cell = badge_cell("category", category_href.as_deref(), &category, "Category"),
-        status = escape(&status_label),
+        category_cell = badge_cell(
+            category_class,
+            category_href.as_deref(),
+            &category_label,
+            &category_title
+        ),
     )
+}
+
+fn classify_category(categories: &[String]) -> (&'static str, String, String) {
+    if categories.is_empty() {
+        return (
+            "category category-none",
+            "—".to_string(),
+            "No category".to_string(),
+        );
+    }
+    if categories.len() > 1 {
+        return (
+            "category category-multi",
+            "Multi".to_string(),
+            categories.join(", "),
+        );
+    }
+    let first = &categories[0];
+    match first.to_ascii_lowercase().as_str() {
+        "m/m" => ("category category-slash", "M/M".to_string(), first.clone()),
+        "f/f" => (
+            "category category-femslash",
+            "F/F".to_string(),
+            first.clone(),
+        ),
+        "f/m" => ("category category-het", "F/M".to_string(), first.clone()),
+        "gen" => ("category category-gen", "Gen".to_string(), first.clone()),
+        "multi" => (
+            "category category-multi",
+            "Multi".to_string(),
+            first.clone(),
+        ),
+        "other" => (
+            "category category-other",
+            "Other".to_string(),
+            first.clone(),
+        ),
+        "no category" | "?" => (
+            "category category-none",
+            "—".to_string(),
+            "No category".to_string(),
+        ),
+        _ => (
+            "category category-other",
+            first.chars().take(4).collect::<String>().to_uppercase(),
+            first.clone(),
+        ),
+    }
 }
 
 /// A badge cell: a local-filter link when there is something to filter on.
 fn badge_cell(class: &str, href: Option<&str>, label: &str, title: &str) -> String {
+    let title = escape(title);
+    let label = escape(label);
     match href {
         Some(href) => format!(
-            "<li class=\"{class}\" title=\"{title}\"><a href=\"{href}\">{}</a></li>",
-            escape(label)
+            "<li class=\"{class}\" title=\"{title}\"><a href=\"{href}\">{label}</a></li>"
         ),
-        None => format!(
-            "<li class=\"{class}\" title=\"{title}\">{}</li>",
-            escape(label)
-        ),
+        None => format!("<li class=\"{class}\" title=\"{title}\"><span>{label}</span></li>"),
     }
 }

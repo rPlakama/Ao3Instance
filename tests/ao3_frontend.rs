@@ -523,3 +523,87 @@ async fn skin_toggle_persists_and_required_tags_render() {
     handle.abort();
     drop(std::fs::remove_dir_all(dir));
 }
+
+#[tokio::test]
+async fn ao3_html_structure_matches_otwarchive_regions_and_patterns() {
+    let dir = support::temp_dir("frontend-ao3-structure");
+    let (root, store, handle) = serve(&dir).await;
+    support::harness::seed_work(&store).await;
+    let client = http();
+
+    // Home splash: outer/inner wrappers, skiplinks, AO3 splash modules, no dashboard sidebar.
+    let home = client
+        .get(&root)
+        .send()
+        .await
+        .expect("home")
+        .text()
+        .await
+        .expect("body");
+    assert!(home.contains("id=\"outer\" class=\"wrapper\""), "{home}");
+    assert!(home.contains("/assets/ao3.css?v="), "cache-busted stylesheet: {home}");
+    assert!(home.contains("id=\"skiplinks\""), "{home}");
+    assert!(home.contains("id=\"inner\" class=\"wrapper\""), "{home}");
+    assert!(home.contains("class=\"splash\""), "{home}");
+    assert!(home.contains("latest news module"), "{home}");
+    assert!(home.contains("random readings module"), "{home}");
+    assert!(home.contains("latest messages module"), "{home}");
+    assert!(home.contains("Customize"), "AO3 footer customize column");
+    assert!(!home.contains("id=\"dashboard\""), "home omits dashboard sidebar");
+
+    // Work reader: AO3 show layout (work navigation actions, meta wrapper, workskin, chapters, feedback).
+    let reader = client
+        .get(format!("{root}/read/12345"))
+        .send()
+        .await
+        .expect("reader")
+        .text()
+        .await
+        .expect("body");
+    assert!(reader.contains("class=\"work navigation actions\""), "{reader}");
+    assert!(reader.contains("class=\"work meta group\""), "{reader}");
+    assert!(reader.contains("id=\"workskin\""), "{reader}");
+    assert!(reader.contains("id=\"chapters\""), "{reader}");
+    assert!(reader.contains("id=\"feedback\" class=\"feedback\""), "{reader}");
+
+    // Fandoms directory: alphabet jump bar + AO3 letter listbox panels.
+    let fandoms = client
+        .get(format!("{root}/fandoms"))
+        .send()
+        .await
+        .expect("fandoms")
+        .text()
+        .await
+        .expect("body");
+    assert!(fandoms.contains("class=\"alphabet actions\""), "{fandoms}");
+    assert!(fandoms.contains("letter listbox group"), "{fandoms}");
+
+    // Dashboard: shows AO3 #dashboard.region.own sidebar + .user.home + .listbox.group.
+    let dashboard = client
+        .get(format!("{root}/dashboard"))
+        .send()
+        .await
+        .expect("dashboard")
+        .text()
+        .await
+        .expect("body");
+    assert!(dashboard.contains("id=\"dashboard\" class=\"region own\""), "{dashboard}");
+    assert!(dashboard.contains("class=\"user home\""), "{dashboard}");
+    assert!(dashboard.contains("class=\"listbox group\""), "{dashboard}");
+
+    // Search form: AO3 verbose search fieldsets + dl/dt/dd rows.
+    let search = client
+        .get(format!("{root}/works/search"))
+        .send()
+        .await
+        .expect("search form")
+        .text()
+        .await
+        .expect("body");
+    assert!(search.contains("verbose search work-search"), "{search}");
+    assert!(search.contains("<legend>Work Info</legend>"), "{search}");
+    assert!(search.contains("<dl><dt>"), "{search}");
+
+    handle.abort();
+    drop(std::fs::remove_dir_all(dir));
+}
