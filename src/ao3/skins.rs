@@ -2,7 +2,9 @@
 
 use std::sync::OnceLock;
 
-use scraper::{ElementRef, Html, Selector};
+use scraper::{Html, Selector};
+
+use super::html::collapse_text as text;
 
 struct SkinSelectors {
     skin_item: Selector,
@@ -78,16 +80,6 @@ pub fn parse_skin_css(html: &str) -> Option<String> {
         .collect::<Vec<_>>()
         .join("\n");
     (!css.trim().is_empty()).then_some(css)
-}
-
-fn text(element: &ElementRef<'_>) -> String {
-    element
-        .text()
-        .collect::<Vec<_>>()
-        .join(" ")
-        .split_whitespace()
-        .collect::<Vec<_>>()
-        .join(" ")
 }
 
 #[cfg(test)]

@@ -214,14 +214,8 @@ async fn search_results_are_cached_30_minutes_and_support_refresh_and_stale_fall
 #[tokio::test]
 async fn account_lists_and_dashboard_fetch_real_ao3_data_and_cache_it() {
     let mut routes = session_routes(vec![
-        (
-            "GET /users/someone/bookmarks",
-            Response::ok(BOOKMARKS_HTML),
-        ),
-        (
-            "GET /users/someone/readings",
-            Response::ok(READINGS_HTML),
-        ),
+        ("GET /users/someone/bookmarks", Response::ok(BOOKMARKS_HTML)),
+        ("GET /users/someone/readings", Response::ok(READINGS_HTML)),
         (
             "GET /users/someone/readings?show=to-read",
             Response::ok(TO_READ_HTML),
@@ -363,7 +357,10 @@ async fn fandoms_and_tag_search_fetch_live_ao3_and_cache_30_minutes() {
         .expect("body");
     assert!(media.contains("Anime &amp; Manga"), "{media}");
     assert!(media.contains("Re:Zero"), "{media}");
-    assert!(media.contains("/media/Anime%20*a*%20Manga/fandoms"), "{media}");
+    assert!(
+        media.contains("/media/Anime%20*a*%20Manga/fandoms"),
+        "{media}"
+    );
 
     let medium = client
         .get(format!("{root}/media/Anime%20*a*%20Manga/fandoms"))
@@ -396,7 +393,11 @@ async fn fandoms_and_tag_search_fetch_live_ao3_and_cache_30_minutes() {
         "/media/Anime%20*a*%20Manga/fandoms",
         "/tags/search?q=Re",
     ] {
-        let resp = client.get(format!("{root}{path}")).send().await.expect(path);
+        let resp = client
+            .get(format!("{root}{path}"))
+            .send()
+            .await
+            .expect(path);
         assert_eq!(resp.status(), 200);
     }
     assert_eq!(

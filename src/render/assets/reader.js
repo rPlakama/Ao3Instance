@@ -14,12 +14,14 @@
     var label = document.querySelector(".reading-progress .reading-pct");
     var saveChapterInput = document.querySelector("form.save-place input[name='chapter']");
     var savePctInput = document.querySelector("form.save-place input[name='pct']");
+    var byChapterLink = document.querySelector("li.chapter.bychapter a");
 
     var pending = null;
     var lastSentAt = 0;
     var lastSentKey = "";
     var debounceTimer = 0;
     var rafId = 0;
+    var dirty = false;
     var userInteracted = false;
 
     function clampPct(value) {
@@ -88,7 +90,28 @@
         var overall = overallPercent(chapterIdx, pct);
         if (label) label.textContent = overall + "% read";
         if (saveChapterInput) saveChapterInput.value = String(chapterIdx);
-        if (savePctInput) savePctInput.value = String(Math.round(pct));
+        if (savePctInput) savePctInput.value = pct.toFixed(2);
+        if (byChapterLink) {
+            byChapterLink.setAttribute(
+                "href",
+                "/read/" + encodeURIComponent(workId) + "?chapter=" + chapterIdx
+            );
+        }
+    }
+
+    function captureCurrent() {
+        var el = activeChapter();
+        var ch = chapterNumber(el);
+        var pct = percentInChapter(el);
+        return {
+            ch: ch,
+            pct: pct,
+            payload: {
+                work_id: workId,
+                chapter: String(ch),
+                pct: pct.toFixed(2)
+            }
+        };
     }
 
     function send(payload) {
@@ -107,27 +130,32 @@
     }
 
     function flushBeacon() {
+        if (dirty && !restoring) {
+            pending = captureCurrent().payload;
+            dirty = false;
+        }
         if (!pending) return;
         var key = pending.chapter + ":" + pending.pct;
         if (key === lastSentKey) return;
         lastSentKey = key;
         try {
-            navigator.sendBeacon("/progress/auto", new URLSearchParams(pending));
+            var body = new URLSearchParams(pending);
+            if (!navigator.sendBeacon || !navigator.sendBeacon("/progress/auto", body)) {
+                fetch("/progress/auto", {
+                    method: "POST",
+                    headers: { "content-type": "application/x-www-form-urlencoded" },
+                    body: body,
+                    keepalive: true
+                }).catch(function () {});
+            }
         } catch (e) {}
     }
 
     function recordCurrent() {
-        var el = activeChapter();
-        var ch = chapterNumber(el);
-        var pct = percentInChapter(el);
-        paint(ch, pct);
-
-        var formatted = pct.toFixed(2);
-        pending = {
-            work_id: workId,
-            chapter: String(ch),
-            pct: formatted
-        };
+        dirty = false;
+        var current = captureCurrent();
+        paint(current.ch, current.pct);
+        pending = current.payload;
 
         var now = Date.now();
         if (now - lastSentAt >= 1500) {
@@ -143,9 +171,10 @@
     function findResumeTarget() {
         if (window.location.hash && window.location.hash !== "#top") return null;
         for (var i = 0; i < chapters.length; i++) {
-            var pct = chapterResume(chapters[i]);
-            if (pct > 0) {
-                return { el: chapters[i], pct: pct };
+            var el = chapters[i];
+            var pct = chapterResume(el);
+            if (el.getAttribute("data-resume-target") === "1" || pct > 0) {
+                return { el: el, pct: pct };
             }
         }
         return null;
@@ -155,36 +184,82 @@
         var top = chapterTop(target.el);
         var span = chapterSpan(target.el);
         var y = span > 0 ? top + (span * target.pct) / 100 : top;
-        window.scrollTo(0, Math.max(0, Math.round(y)));
+        var targetY = Math.max(0, Math.round(y));
+        try {
+            window.scrollTo({ top: targetY, left: 0, behavior: "instant" });
+        } catch (e) {
+            window.scrollTo(0, targetY);
+        }
     }
 
     var resumeTarget = findResumeTarget();
     var restoring = !!resumeTarget;
+    var restoreSeq = 0;
 
     function markInteracted() {
         userInteracted = true;
+        restoring = false;
     }
 
     window.addEventListener("wheel", markInteracted, { passive: true, once: true });
     window.addEventListener("touchstart", markInteracted, { passive: true, once: true });
-    window.addEventListener("keydown", markInteracted, { passive: true, once: true });
+    window.addEventListener("pointerdown", markInteracted, { passive: true, once: true });
+    window.addEventListener("keydown", function onKeydown(event) {
+        if (
+            event.key === "Shift" ||
+            event.key === "Control" ||
+            event.key === "Alt" ||
+            event.key === "Meta"
+        ) {
+            return;
+        }
+        window.removeEventListener("keydown", onKeydown);
+        markInteracted();
+    }, { passive: true });
 
     if (resumeTarget) {
+        lastSentKey = chapterNumber(resumeTarget.el) + ":" + resumeTarget.pct.toFixed(2);
+        if (window.history && "scrollRestoration" in window.history) {
+            try {
+                window.history.scrollRestoration = "manual";
+            } catch (e) {}
+        }
+
         var applyRestore = function () {
             if (userInteracted) {
                 restoring = false;
                 return;
             }
+            var seq = ++restoreSeq;
+            restoring = true;
             scrollToSaved(resumeTarget);
+            window.requestAnimationFrame(function () {
+                window.requestAnimationFrame(function () {
+                    if (seq === restoreSeq) {
+                        restoring = false;
+                    }
+                });
+            });
         };
 
+        applyRestore();
         window.requestAnimationFrame(function () {
-            applyRestore();
-            window.requestAnimationFrame(function () {
-                if (!userInteracted) applyRestore();
-                restoring = false;
-            });
+            if (!userInteracted) applyRestore();
         });
+        if (document.readyState !== "complete") {
+            window.addEventListener("load", function () {
+                if (!userInteracted) applyRestore();
+            }, { once: true });
+        }
+        if (
+            document.fonts &&
+            document.fonts.ready &&
+            typeof document.fonts.ready.then === "function"
+        ) {
+            document.fonts.ready.then(function () {
+                if (!userInteracted) applyRestore();
+            });
+        }
 
         // Re-anchor if chapter images finish loading before the reader starts scrolling.
         var images = document.querySelectorAll("#chapters img");
@@ -199,10 +274,11 @@
 
     window.addEventListener("scroll", function () {
         if (restoring) return;
+        dirty = true;
         if (rafId) return;
         rafId = window.requestAnimationFrame(function () {
             rafId = 0;
-            recordCurrent();
+            if (!restoring) recordCurrent();
         });
     }, { passive: true });
 

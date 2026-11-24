@@ -1,34 +1,30 @@
-//! AO3 work-list entry: `<li class="work blurb group">` inside
-//! `<ol class="work index group">`, shared by search, browse and tag pages.
+//! AO3 work-list blurb entries (`<li class="work blurb group">`), shared by
+//! offline browse/search, live search/tag/bookmarks, and home read-later cards.
 
-use super::icons::required_tags;
-use super::{escape, sanitize, tag_href};
-use crate::ao3::parse::{SpaceMode, percent_encode};
+use crate::ao3::home::HomeReading;
+use crate::ao3::search::LiveWork;
 use crate::store::StoredWork;
 use crate::time::{format_count, format_date, format_iso_date};
 
-/// Renders one AO3 work blurb. `progress` is the saved chapter, if any.
+use super::components::{
+    author_links_live, author_links_local, fandom_links, stat_row, summary_block, tag_list_items,
+};
+use super::escape;
+use super::icons::{required_tags, required_tags_from};
+
+/// Renders one cached AO3 work blurb. `progress` is the saved chapter, if any.
 pub fn work_blurb(work: &StoredWork, progress: Option<i64>) -> String {
-    let authors = author_links(work);
-    let fandoms = fandom_links(work);
+    let authors = author_links_local(&work.authors);
+    let fandoms = fandom_links(&work.tags.fandoms);
 
-    let mut tags = String::new();
-    tags.push_str(&tag_items(&work.tags.warnings, "warnings"));
-    tags.push_str(&tag_items(&work.tags.relationships, "relationships"));
-    tags.push_str(&tag_items(&work.tags.characters, "characters"));
-    tags.push_str(&tag_items(&work.tags.additional, "freeforms"));
-
-    let summary = work
-        .summary
-        .as_deref()
-        .filter(|summary| !summary.trim().is_empty())
-        .map_or_else(String::new, |summary| {
-            format!(
-                "<h6 class=\"landmark heading\">Summary</h6>\
-                 <blockquote class=\"userstuff summary\">{}</blockquote>",
-                sanitize(summary)
-            )
-        });
+    let tags = [
+        tag_list_items(&work.tags.warnings, "warnings"),
+        tag_list_items(&work.tags.relationships, "relationships"),
+        tag_list_items(&work.tags.characters, "characters"),
+        tag_list_items(&work.tags.additional, "freeforms"),
+    ]
+    .concat();
+    let summary = summary_block(work.summary.as_deref());
 
     let resume_action = progress.map_or_else(String::new, |chapter| {
         format!(
@@ -59,87 +55,188 @@ pub fn work_blurb(work: &StoredWork, progress: Option<i64>) -> String {
         id = escape(&work.ao3_id),
         title = escape(&work.title),
         required = required_tags(work),
-        authors = authors,
-        fandoms = fandoms,
-        stats = stats_block(work),
+        stats = cached_stats_block(work),
     )
 }
 
-fn fandom_links(work: &StoredWork) -> String {
-    if work.tags.fandoms.is_empty() {
-        return "—".to_string();
-    }
-    work.tags
-        .fandoms
-        .iter()
-        .map(|fandom| {
-            format!(
-                "<a class=\"tag\" href=\"{}\">{}</a>",
-                tag_href(fandom),
-                escape(fandom)
-            )
-        })
-        .collect::<Vec<_>>()
-        .join(", ")
+/// Renders one live AO3 work blurb (search results, tag pages, bookmarks, readings).
+pub(super) fn live_blurb(work: &LiveWork) -> String {
+    let authors = author_links_live(&work.authors);
+    let fandoms = fandom_links(&work.fandoms);
+    let tags = live_tags_html(work);
+    let summary = summary_block(work.summary_html.as_deref());
+    let series = live_series_block(work);
+    let restricted = if work.restricted {
+        " <span class=\"restricted\" title=\"Restricted\">(Restricted)</span>"
+    } else {
+        ""
+    };
+    let required = required_tags_from(
+        work.rating.as_deref(),
+        &work.warnings,
+        &work.categories,
+        work.complete,
+        false,
+    );
+    let stats = live_stats_rows(work, true);
+    format!(
+        "<li id=\"work_{id}\" class=\"work blurb group\" role=\"article\">\
+         <div class=\"header module\">\
+         <h4 class=\"heading\"><a href=\"/open/{id}\">{title}</a> by {authors}{restricted}</h4>\
+         <h5 class=\"fandoms heading\"><span class=\"landmark\">Fandoms:</span> {fandoms}</h5>\
+         {required}\
+         <p class=\"datetime\">{datetime}</p></div>\
+         <h6 class=\"landmark heading\">Tags</h6><ul class=\"tags commas\">{tags}</ul>{summary}{series}\
+         <dl class=\"stats\">{stats}</dl>\
+         <h6 class=\"landmark heading\">Actions</h6>\
+         <ul class=\"actions\">\
+         <li><a href=\"https://archiveofourown.org/works/{id}\" \
+         rel=\"noopener noreferrer\">Open on AO3</a></li>\
+         <li><form class=\"inline\" method=\"post\" action=\"/open\">\
+         <input type=\"hidden\" name=\"id\" value=\"{id}\">\
+         <button type=\"submit\">Cache this work</button></form></li></ul></li>",
+        id = escape(&work.ao3_id),
+        title = escape(&work.title),
+        datetime = escape(&work.datetime),
+    )
 }
 
-fn tag_items(tags: &[String], class: &str) -> String {
-    let mut out = String::new();
-    for tag in tags {
-        out.push_str(&format!(
-            "<li class=\"{class}\"><a class=\"tag\" href=\"{}\">{}</a></li>",
-            tag_href(tag),
-            escape(tag)
-        ));
-    }
-    out
+/// Renders a live "Is it later already?" reading blurb on the home splash page.
+pub(super) fn reading_blurb(reading: &HomeReading) -> String {
+    let work = &reading.work;
+    let authors = author_links_local(&work.authors);
+    let fandoms = fandom_links(&work.fandoms);
+    let required = required_tags_from(
+        work.rating.as_deref(),
+        &work.warnings,
+        &work.categories,
+        work.complete,
+        false,
+    );
+    let tags_html = live_tags_html(work);
+    let tags_block = if tags_html.is_empty() {
+        String::new()
+    } else {
+        format!(
+            "<h6 class=\"landmark heading\">Tags</h6><ul class=\"tags commas\">{tags_html}</ul>"
+        )
+    };
+    let summary = summary_block(work.summary_html.as_deref());
+    let stats_rows = live_stats_rows(work, false);
+    let stats_html = if stats_rows.is_empty() {
+        String::new()
+    } else {
+        format!("<dl class=\"stats\">{stats_rows}</dl>")
+    };
+    format!(
+        "<li id=\"work_{id}\" class=\"reading work blurb group\" role=\"article\">\
+         <div class=\"header module\">\
+         <h4 class=\"heading\"><a href=\"/open/{id}\">{title}</a> by {authors}</h4>\
+         <h5 class=\"fandoms heading\"><span class=\"landmark\">Fandoms:</span> {fandoms}</h5>\
+         {required}<p class=\"datetime\">{datetime}</p></div>\
+         {tags_block}{summary}{stats_html}\
+         <div class=\"user module group\"><h4 class=\"viewed heading\">{viewed}</h4></div></li>",
+        id = escape(&work.ao3_id),
+        title = escape(&work.title),
+        datetime = escape(&work.datetime),
+        viewed = escape(&reading.meta),
+    )
 }
 
-fn stats_block(work: &StoredWork) -> String {
+fn live_tags_html(work: &LiveWork) -> String {
+    [
+        tag_list_items(&work.warnings, "warnings"),
+        tag_list_items(&work.relationships, "relationships"),
+        tag_list_items(&work.characters, "characters"),
+        tag_list_items(&work.additional_tags, "freeforms"),
+    ]
+    .concat()
+}
+
+fn live_series_block(work: &LiveWork) -> String {
+    if work.series.is_empty() {
+        return String::new();
+    }
+    let mut items = String::new();
+    for series in &work.series {
+        let part = series.part.as_deref().map_or_else(String::new, |part| {
+            format!("Part <strong>{}</strong> of ", escape(part))
+        });
+        let title = series.href.as_deref().map_or_else(
+            || escape(&series.title),
+            |href| {
+                format!(
+                    "<a href=\"https://archiveofourown.org{}\" rel=\"noopener noreferrer\">{}</a>",
+                    escape(href),
+                    escape(&series.title)
+                )
+            },
+        );
+        items.push_str(&format!("<li>{part}{title}</li>"));
+    }
+    format!("<h6 class=\"landmark heading\">Series</h6><ul class=\"series\">{items}</ul>")
+}
+
+fn live_stats_rows(work: &LiveWork, full: bool) -> String {
+    let mut stats = String::new();
+    if full && let Some(language) = &work.language {
+        stats.push_str(&stat_row("language", "Language", &escape(language)));
+    }
+    if let Some(words) = work.words {
+        stats.push_str(&stat_row("words", "Words", &format_count(words)));
+    }
+    if let Some(chapters) = &work.chapters {
+        stats.push_str(&stat_row("chapters", "Chapters", &escape(chapters)));
+    }
+    let counters: &[(&str, &str, Option<u64>)] = if full {
+        &[
+            ("collections", "Collections", work.collections),
+            ("comments", "Comments", work.comments),
+            ("kudos", "Kudos", work.kudos),
+            ("bookmarks", "Bookmarks", work.bookmarks),
+            ("hits", "Hits", work.hits),
+        ]
+    } else {
+        &[("kudos", "Kudos", work.kudos), ("hits", "Hits", work.hits)]
+    };
+    for (class, label, value) in counters {
+        let show = if full {
+            value.filter(|v| *v > 0)
+        } else {
+            *value
+        };
+        if let Some(value) = show {
+            stats.push_str(&stat_row(class, label, &format_count(value)));
+        }
+    }
+    stats
+}
+
+fn cached_stats_block(work: &StoredWork) -> String {
     let mut rows = String::new();
     if let Some(language) = &work.language {
-        rows.push_str(&format!(
-            "<dt class=\"language\">Language:</dt><dd class=\"language\">{}</dd>",
-            escape(language)
-        ));
+        rows.push_str(&stat_row("language", "Language", &escape(language)));
     }
     if let Some(words) = work.word_count {
-        rows.push_str(&format!(
-            "<dt class=\"words\">Words:</dt><dd class=\"words\">{}</dd>",
-            format_count(words)
-        ));
+        rows.push_str(&stat_row("words", "Words", &format_count(words)));
     }
     let chapters = match work.complete {
         Some(true) => format!("{0}/{0}", work.chapter_count),
         Some(false) => format!("{0}/?", work.chapter_count),
         None => work.chapter_count.to_string(),
     };
-    rows.push_str(&format!(
-        "<dt class=\"chapters\">Chapters:</dt><dd class=\"chapters\">{chapters}</dd>"
-    ));
-    if let Some(comments) = work.comment_count.filter(|count| *count > 0) {
-        rows.push_str(&format!(
-            "<dt class=\"comments\">Comments:</dt><dd class=\"comments\">{}</dd>",
-            format_count(comments)
-        ));
-    }
-    if let Some(kudos) = work.kudos.filter(|count| *count > 0) {
-        rows.push_str(&format!(
-            "<dt class=\"kudos\">Kudos:</dt><dd class=\"kudos\">{}</dd>",
-            format_count(kudos)
-        ));
-    }
-    if let Some(bookmarks) = work.bookmarks.filter(|count| *count > 0) {
-        rows.push_str(&format!(
-            "<dt class=\"bookmarks\">Bookmarks:</dt><dd class=\"bookmarks\">{}</dd>",
-            format_count(bookmarks)
-        ));
+    rows.push_str(&stat_row("chapters", "Chapters", &chapters));
+    for (class, label, value) in [
+        ("comments", "Comments", work.comment_count),
+        ("kudos", "Kudos", work.kudos),
+        ("bookmarks", "Bookmarks", work.bookmarks),
+    ] {
+        if let Some(count) = value.filter(|count| *count > 0) {
+            rows.push_str(&stat_row(class, label, &format_count(count)));
+        }
     }
     if let Some(hits) = work.hits {
-        rows.push_str(&format!(
-            "<dt class=\"hits\">Hits:</dt><dd class=\"hits\">{}</dd>",
-            format_count(hits)
-        ));
+        rows.push_str(&stat_row("hits", "Hits", &format_count(hits)));
     }
     if rows.is_empty() {
         String::new()
@@ -150,22 +247,5 @@ fn stats_block(work: &StoredWork) -> String {
 
 /// Author names as local-filter links.
 pub(super) fn author_links(work: &StoredWork) -> String {
-    author_links_from(&work.authors)
-}
-
-pub(super) fn author_links_from(authors: &[String]) -> String {
-    if authors.is_empty() {
-        return "Anonymous".to_string();
-    }
-    authors
-        .iter()
-        .map(|author| {
-            format!(
-                "<a href=\"/works?author={}\">{}</a>",
-                percent_encode(author, SpaceMode::Percent20),
-                escape(author)
-            )
-        })
-        .collect::<Vec<_>>()
-        .join(", ")
+    author_links_local(&work.authors)
 }

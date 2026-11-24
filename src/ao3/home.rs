@@ -5,6 +5,7 @@
 
 use scraper::{ElementRef, Html, Selector};
 
+use super::html::collapse_text as text;
 use super::search::{LiveWork, parse_work_element};
 
 #[derive(Debug, Default, Clone)]
@@ -117,16 +118,6 @@ fn select_one<'a>(node: &'a ElementRef<'a>, selector: &str) -> Option<ElementRef
 
 fn css(selector: &str) -> Result<Selector, ()> {
     Selector::parse(selector).map_err(|_| ())
-}
-
-fn text(element: &ElementRef<'_>) -> String {
-    element
-        .text()
-        .collect::<Vec<_>>()
-        .join(" ")
-        .split_whitespace()
-        .collect::<Vec<_>>()
-        .join(" ")
 }
 
 #[cfg(test)]

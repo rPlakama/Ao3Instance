@@ -1,4 +1,8 @@
-//! Offline reads, plus the one user-initiated upstream fetch behind `/open`.
+//! Offline reads, home splash, work reader, plus the one user-initiated
+//! upstream fetch behind `/open`.
+
+mod progress;
+mod search;
 
 use std::sync::Arc;
 
@@ -11,14 +15,17 @@ use serde::Deserialize;
 
 use super::AppState;
 use super::error::{AppError, Handled};
-use super::session_identity;
 use super::writes::notice_text;
 use crate::ao3::actions;
+use crate::ao3::html::extract_digits_after;
 use crate::ao3::work::parse_work_page;
 use crate::error::Error;
 use crate::render;
 use crate::render::NavSection;
 use crate::store::sha256_hex;
+
+pub(super) use progress::{auto_progress, save_progress};
+pub(super) use search::{search, search_post};
 
 /// CSP for the chapter iframe: no scripts, no forms, inline styles only, images
 /// from https only. Author content never runs in the app's origin.
@@ -263,13 +270,9 @@ pub(super) async fn read_work(
         .chapter
         .or_else(|| progress.map(|saved| saved.chapter_idx))
         .unwrap_or_else(|| chapters.first().map(|chapter| chapter.idx).unwrap_or(1));
-    let resume_pct = if query.chapter.is_none() {
-        progress_exact
-            .filter(|(chapter_idx, _)| *chapter_idx == current)
-            .map(|(_, pct)| pct)
-    } else {
-        None
-    };
+    let resume_pct = progress_exact
+        .filter(|(chapter_idx, _)| *chapter_idx == current)
+        .map(|(_, pct)| pct);
     let full_work = query
         .view_full_work
         .as_deref()
@@ -361,315 +364,12 @@ pub(super) async fn read_chapter(
     Ok(response)
 }
 
-#[derive(Deserialize)]
-pub(super) struct SearchQuery {
-    q: Option<String>,
-    page: Option<i64>,
-    title: Option<String>,
-    creator: Option<String>,
-    fandom: Option<String>,
-    characters: Option<String>,
-    relationships: Option<String>,
-    additional_tags: Option<String>,
-    rating: Option<String>,
-    warning: Option<String>,
-    category: Option<String>,
-    language: Option<String>,
-    words_min: Option<String>,
-    words_max: Option<String>,
-    kudos_min: Option<String>,
-    comments_min: Option<String>,
-    single_chapter: Option<String>,
-    sort: Option<String>,
-    direction: Option<String>,
-    edit_search: Option<String>,
-    date: Option<String>,
-    complete: Option<String>,
-    crossover: Option<String>,
-    hits_min: Option<String>,
-    bookmarks_min: Option<String>,
-    include_tags: Option<String>,
-    exclude_tags: Option<String>,
-    local: Option<String>,
-    solved: Option<String>,
-    refresh: Option<String>,
-}
-
-pub(super) async fn search(
-    State(state): State<Arc<AppState>>,
-    Query(query): Query<SearchQuery>,
-) -> Handled<Html<String>> {
-    perform_search(state.as_ref(), query).await
-}
-
-/// The AO3-shaped form posts here. AO3's own web search endpoint is GET-only,
-/// so the server issues exactly one literal GET upstream for this POST.
-pub(super) async fn search_post(
-    State(state): State<Arc<AppState>>,
-    Form(query): Form<SearchQuery>,
-) -> Handled<Html<String>> {
-    perform_search(state.as_ref(), query).await
-}
-
-async fn perform_search(app: &AppState, query: SearchQuery) -> Handled<Html<String>> {
-    let raw = query.q.clone().unwrap_or_default();
-    let local = query.local.as_deref() == Some("1");
-
-    // Local-cache mode stays available as an explicit offline fallback.
-    if local {
-        let filter = render::search_filter_from(
-            query.title,
-            query.creator,
-            query.fandom,
-            query.characters,
-            query.relationships,
-            query.additional_tags,
-            query.rating,
-            query.warning,
-            query.category,
-            query.language,
-            query.words_min,
-            query.words_max,
-            query.kudos_min,
-            query.comments_min,
-            query.single_chapter,
-            query.sort,
-            query.direction,
-        );
-        let submitted = !raw.trim().is_empty() || filter.has_filters();
-        if submitted && query.edit_search.as_deref() != Some("true") {
-            let result = app
-                .store
-                .search_works_filtered(&raw, &filter, query.page.unwrap_or(1), 20)
-                .await?;
-            let page =
-                super::page_context(app, "Local Search — AO3Instance", NavSection::Search).await;
-            return Ok(Html(render::search_results_page(
-                &page, &raw, &result, &filter,
-            )));
-        }
-        let (account, _) = session_identity(app).await;
-        let facets = app
-            .store
-            .browse_works(&account, &crate::store::WorkFilter::default())
-            .await?;
-        let page = super::page_context(app, "Local Search — AO3Instance", NavSection::Search).await;
-        return Ok(Html(render::search_form_page(
-            &page, &raw, &facets, &filter,
-        )));
-    }
-
-    let live = live_query_from(&query, &raw);
-    let edit = query.edit_search.as_deref() == Some("true");
-
-    // A search solved by the local browser is rendered from the captured page
-    // rather than immediately retried through the direct client.
-    if query.solved.as_deref() == Some("1") {
-        let preview = {
-            let mut slot = app.solved_search.lock().await;
-            slot.take()
-        };
-        if let Some(preview) =
-            preview.filter(|preview| crate::time::now_secs().saturating_sub(preview.at) < 120)
-        {
-            let results =
-                crate::ao3::search::parse_search_results(&preview.html).map_err(AppError::from)?;
-            let page =
-                super::page_context(app, "Search Results — AO3Instance", NavSection::Search).await;
-            return Ok(Html(render::live_search_results_page(
-                &page, &live, &results, None,
-            )));
-        }
-    }
-    if live.has_criteria() && !edit {
-        let path = live.path(live.page);
-        let refresh = query.refresh.as_deref() == Some("1");
-        let cache_account = super::cache::cache_account(app).await;
-        match super::cache::fetch_cached_page(app, &cache_account, &path, true, refresh).await {
-            Ok(fetched) => {
-                let results = crate::ao3::search::parse_search_results(&fetched.body)
-                    .map_err(AppError::from)?;
-                let page =
-                    super::page_context(app, "Search Results — AO3Instance", NavSection::Search)
-                        .await;
-                return Ok(Html(render::live_search_results_page(
-                    &page,
-                    &live,
-                    &results,
-                    Some((fetched.from_cache, fetched.fetched_at)),
-                )));
-            }
-            Err(super::cache::PageFetchError::Error(error)) => {
-                return Err(AppError::from(error));
-            }
-            Err(super::cache::PageFetchError::Status { status, location }) => {
-                if location
-                    .as_deref()
-                    .is_some_and(|loc| loc.contains("/users/login"))
-                {
-                    return Err(AppError::from(crate::error::Error::LoggedOut));
-                }
-                match status {
-                    403 | 503 | 429 => {
-                        let solver_available = super::solver::solver_available(app).await;
-                        let send_cookies_allowed = {
-                            let session = app.session.lock().await;
-                            session.solver_may_receive_cookies()
-                        };
-                        let target = live.path(live.page);
-                        let mut retry = format!("/works/search?{}", live.form_query());
-                        if live.page > 1 {
-                            retry.push_str(&format!("&page={}", live.page));
-                        }
-                        return Err(AppError::BlockedSearch {
-                            status,
-                            target,
-                            retry,
-                            solver_available,
-                            send_cookies_allowed,
-                        });
-                    }
-                    302 | 303 => {
-                        return Err(AppError::Upstream(
-                            "AO3 redirected the search; sign in on the Session page.".into(),
-                        ));
-                    }
-                    other => {
-                        return Err(AppError::Upstream(format!(
-                            "Unexpected HTTP {other} from AO3 search."
-                        )));
-                    }
-                }
-            }
-        }
-    }
-
-    let page = super::page_context(app, "Work Search — AO3Instance", NavSection::Search).await;
-    Ok(Html(render::live_search_form_page(&page, &live)))
-}
-
-fn live_query_from(query: &SearchQuery, raw: &str) -> crate::ao3::search::LiveSearchQuery {
-    let clean = |value: &Option<String>| {
-        value
-            .as_deref()
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
-            .map(str::to_string)
-    };
-    let number = |value: &Option<String>| value.as_deref().and_then(|value| value.parse().ok());
-    let split_tags = |value: &Option<String>| {
-        value
-            .as_deref()
-            .map(|value| {
-                value
-                    .split(',')
-                    .map(str::trim)
-                    .filter(|tag| !tag.is_empty())
-                    .map(str::to_string)
-                    .collect()
-            })
-            .unwrap_or_default()
-    };
-    let words = match (clean(&query.words_min), clean(&query.words_max)) {
-        (Some(min), Some(max)) => Some(format!("{min}-{max}")),
-        (Some(min), None) => Some(format!(">{min}")),
-        (None, Some(max)) => Some(format!("<{max}")),
-        (None, None) => None,
-    };
-    crate::ao3::search::LiveSearchQuery {
-        query: raw.trim().to_string(),
-        title: clean(&query.title),
-        creator: clean(&query.creator),
-        date: clean(&query.date),
-        complete: clean(&query.complete),
-        crossover: clean(&query.crossover),
-        single_chapter: query
-            .single_chapter
-            .as_deref()
-            .is_some_and(|value| matches!(value, "1" | "true" | "on")),
-        word_count: words,
-        language: clean(&query.language),
-        fandom: clean(&query.fandom),
-        characters: clean(&query.characters),
-        relationships: clean(&query.relationships),
-        additional_tags: clean(&query.additional_tags),
-        include_tags: split_tags(&query.include_tags),
-        exclude_tags: split_tags(&query.exclude_tags),
-        rating: clean(&query.rating),
-        warning: clean(&query.warning),
-        category: clean(&query.category),
-        hits_min: number(&query.hits_min),
-        kudos_min: number(&query.kudos_min),
-        comments_min: number(&query.comments_min),
-        bookmarks_min: number(&query.bookmarks_min),
-        sort: clean(&query.sort),
-        direction: clean(&query.direction),
-        page: query.page.unwrap_or(1),
-    }
-}
-
-#[derive(Deserialize)]
-pub(super) struct AutoProgressForm {
-    work_id: String,
-    chapter: i64,
-    pct: f64,
-}
-
-/// Fire-and-forget progress beacon from the reader. Returns no body.
-pub(super) async fn auto_progress(
-    State(state): State<Arc<AppState>>,
-    Form(form): Form<AutoProgressForm>,
-) -> Handled<axum::http::StatusCode> {
-    if form.chapter < 1 {
-        return Err(AppError::BadRequest("chapter must be positive".into()));
-    }
-    if !form.pct.is_finite() {
-        return Err(AppError::BadRequest("pct must be finite".into()));
-    }
-    if state.store.get_work(&form.work_id).await?.is_none() {
-        return Err(AppError::NotFound);
-    }
-    state
-        .store
-        .save_progress_exact(&form.work_id, form.chapter, form.pct)
-        .await?;
-    Ok(axum::http::StatusCode::NO_CONTENT)
-}
-
 /// One AO3 home fetch, cached in SQLite for 30 minutes (with stale-on-error
 /// fallback when AO3 is unreachable).
 async fn live_home_html(state: &AppState, account: &str, refresh: bool) -> Option<String> {
     super::cache::fetch_cached_optional(state, account, "/", !account.is_empty(), refresh)
         .await
         .map(|fetched| fetched.body)
-}
-
-#[derive(Deserialize)]
-pub(super) struct ProgressForm {
-    work_id: String,
-    chapter: i64,
-    pct: Option<f64>,
-}
-
-pub(super) async fn save_progress(
-    State(state): State<Arc<AppState>>,
-    Form(form): Form<ProgressForm>,
-) -> Handled<Redirect> {
-    if form.chapter < 1 {
-        return Err(AppError::BadRequest("chapter must be positive".into()));
-    }
-    if state.store.get_work(&form.work_id).await?.is_none() {
-        return Err(AppError::NotFound);
-    }
-    let pct = form.pct.filter(|v| v.is_finite()).unwrap_or(0.0);
-    state
-        .store
-        .save_progress_exact(&form.work_id, form.chapter, pct)
-        .await?;
-    Ok(Redirect::to(&format!(
-        "/read/{}?chapter={}",
-        form.work_id, form.chapter
-    )))
 }
 
 /// AO3's adult interstitial has no work title, so the parser reports drift; the
@@ -696,17 +396,7 @@ pub(super) fn normalize_work_id(input: &str) -> Option<String> {
     if trimmed.chars().all(|ch| ch.is_ascii_digit()) {
         return Some(trimmed.to_string());
     }
-    let marker = "/works/";
-    let start = trimmed.find(marker)? + marker.len();
-    let digits: String = trimmed[start..]
-        .chars()
-        .take_while(char::is_ascii_digit)
-        .collect();
-    if digits.is_empty() {
-        None
-    } else {
-        Some(digits)
-    }
+    extract_digits_after(trimmed, "/works/").map(str::to_string)
 }
 
 #[cfg(test)]

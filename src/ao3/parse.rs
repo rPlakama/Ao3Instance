@@ -67,52 +67,42 @@ fn hex_nibble(byte: u8) -> Option<u8> {
 /// order or quote style, bounded to a single `<meta …>` tag so it never leaks
 /// into another meta tag's `content` attribute.
 pub fn csrf_token_from_meta(html: &str) -> Option<&str> {
-    let bytes = html.as_bytes();
-    let mut pos = 0;
-    while pos < bytes.len() {
-        let rel = html[pos..].find('<')?;
-        let start = pos + rel;
-        let close = html[start..].find('>')?;
-        let tag = &html[start..start + close + 1];
-        let tag_head = tag.get(1..5).unwrap_or_default();
-        if tag_head.eq_ignore_ascii_case("meta")
-            && tag
-                .get(5..6)
-                .is_some_and(|ch| ch.bytes().all(|b| b.is_ascii_whitespace()))
-            && attr_value(tag, "name") == Some("csrf-token")
-            && let Some(token) = attr_value(tag, "content")
-            && !token.is_empty()
-        {
-            return Some(token);
-        }
-        pos = start + close + 1;
-    }
-    None
+    find_tag_attr(html, "meta", "name", "csrf-token", "content")
 }
 
 /// Extracts a Rails CSRF token from either `<meta name="csrf-token" content="…">`
 /// or a form's `<input name="authenticity_token" value="…">`.
 pub fn csrf_token_from_html(html: &str) -> Option<String> {
-    if let Some(token) = csrf_token_from_meta(html) {
-        return Some(token.to_string());
-    }
+    csrf_token_from_meta(html)
+        .or_else(|| find_tag_attr(html, "input", "name", "authenticity_token", "value"))
+        .map(str::to_string)
+}
+
+fn find_tag_attr<'a>(
+    html: &'a str,
+    tag_name: &str,
+    match_attr: &str,
+    match_value: &str,
+    value_attr: &str,
+) -> Option<&'a str> {
     let bytes = html.as_bytes();
+    let head_end = 1 + tag_name.len();
     let mut pos = 0;
     while pos < bytes.len() {
         let rel = html[pos..].find('<')?;
         let start = pos + rel;
         let close = html[start..].find('>')?;
         let tag = &html[start..start + close + 1];
-        let tag_head = tag.get(1..6).unwrap_or_default();
-        if tag_head.eq_ignore_ascii_case("input")
+        let tag_head = tag.get(1..head_end).unwrap_or_default();
+        if tag_head.eq_ignore_ascii_case(tag_name)
             && tag
-                .get(6..7)
+                .get(head_end..head_end + 1)
                 .is_some_and(|ch| ch.bytes().all(|b| b.is_ascii_whitespace()))
-            && attr_value(tag, "name") == Some("authenticity_token")
-            && let Some(token) = attr_value(tag, "value")
+            && attr_value(tag, match_attr) == Some(match_value)
+            && let Some(token) = attr_value(tag, value_attr)
             && !token.is_empty()
         {
-            return Some(token.to_string());
+            return Some(token);
         }
         pos = start + close + 1;
     }
@@ -208,7 +198,7 @@ pub fn flash_message(html: &str) -> Option<String> {
     let body = &after[open + 1..];
     // Stop at the closing div of the flash block; nested tags are stripped below.
     let close = body.find("</div>")?;
-    let text = collapse_whitespace(&strip_tags(&body[..close]));
+    let text = super::html::collapse_whitespace(&strip_tags(&body[..close]));
     if text.is_empty() { None } else { Some(text) }
 }
 
@@ -226,10 +216,6 @@ fn strip_tags(text: &str) -> String {
     out
 }
 
-fn collapse_whitespace(text: &str) -> String {
-    text.split_whitespace().collect::<Vec<_>>().join(" ")
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -245,7 +231,8 @@ mod tests {
         let reversed = r#"<meta content="rev-tok" name="csrf-token"><meta name="viewport" content="width=device-width">"#;
         assert_eq!(csrf_token_from_meta(reversed), Some("rev-tok"));
         // Single quotes and input fallback.
-        let form = r#"<form><input type="hidden" value="form-tok" name='authenticity_token'></form>"#;
+        let form =
+            r#"<form><input type="hidden" value="form-tok" name='authenticity_token'></form>"#;
         assert_eq!(csrf_token_from_html(form).as_deref(), Some("form-tok"));
     }
 

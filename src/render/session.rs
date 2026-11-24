@@ -1,7 +1,10 @@
 //! AO3 session page: status, appearance/skins, cookie import, password login,
 //! adult opt-in — using AO3's `<fieldset><legend><dl>` form pattern.
 
+use crate::consts::BUILTIN_SKINS;
+
 use super::chrome::{PageContext, layout_with_class};
+use super::components::{flash_error, flash_notice};
 use super::escape;
 
 #[allow(
@@ -56,18 +59,8 @@ pub fn session_page(
              <li><a href=\"/users/logout/confirm\">Log out of AO3</a></li></ul>",
         );
     }
-    if let Some(notice) = notice {
-        body.push_str(&format!(
-            "<div class=\"flash notice\">{}</div>",
-            escape(notice)
-        ));
-    }
-    if let Some(error) = error {
-        body.push_str(&format!(
-            "<div class=\"flash error\">{}</div>",
-            escape(error)
-        ));
-    }
+    body.push_str(&flash_notice(notice));
+    body.push_str(&flash_error(error));
 
     if state == "blocked" {
         body.push_str(
@@ -81,18 +74,8 @@ pub fn session_page(
     let selected = |value: &str| {
         if ctx.skin == value { " checked" } else { "" }
     };
-    let themes = [
-        ("auto", "Auto (follow the system light/dark preference)"),
-        ("default", "Classic (light)"),
-        ("reversi", "Reversi (dark)"),
-        ("snow", "Snow (blue on white)"),
-        ("frost", "Frost (cool blue)"),
-        ("cloud", "Cloud (soft grey)"),
-        ("sepia", "Sepia (warm paper)"),
-        ("midnight", "Midnight (deep blue)"),
-    ];
     let mut theme_inputs = String::new();
-    for (value, label) in themes {
+    for (value, label) in BUILTIN_SKINS {
         theme_inputs.push_str(&format!(
             "<li><label class=\"check\"><input type=\"radio\" name=\"skin\" value=\"{value}\"{}> \
              {label}</label></li>",

@@ -17,7 +17,7 @@ mod works;
 mod writes;
 
 use serde::{Deserialize, Serialize};
-use sqlx::SqlitePool;
+use sqlx::{Row, SqlitePool};
 
 /// AO3's tag groups, stored together as one JSON column.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -182,6 +182,12 @@ impl Store {
     pub fn pool(&self) -> &SqlitePool {
         &self.pool
     }
+}
+
+pub(super) fn authors_from_row(row: &sqlx::sqlite::SqliteRow) -> Vec<String> {
+    row.get::<Option<String>, _>("authors_json")
+        .and_then(|json| serde_json::from_str(&json).ok())
+        .unwrap_or_default()
 }
 
 pub(super) use crate::time::now_secs;

@@ -92,16 +92,9 @@ pub fn default_pseud(html: &str) -> Option<Pseud> {
 
 /// Extracts the numeric id from a `/users/<login>/pseuds/<id>` href.
 pub fn pseud_id_from_href(href: &str) -> Option<i64> {
-    let marker = "/pseuds/";
-    let start = href.find(marker)? + marker.len();
-    let digits: String = href[start..]
-        .chars()
-        .take_while(|ch| ch.is_ascii_digit())
-        .collect();
-    if digits.is_empty() {
-        return None;
-    }
-    digits.parse::<i64>().ok()
+    super::html::extract_digits_after(href, "/pseuds/")?
+        .parse::<i64>()
+        .ok()
 }
 
 /// Validates that a page looks like the pseuds index (drift detection).

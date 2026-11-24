@@ -3,8 +3,9 @@
 
 use std::collections::{HashMap, HashSet};
 
+use super::blurb::live_blurb;
 use super::chrome::{PageContext, layout};
-use super::search::live_blurb;
+use super::components::{author_links_live, author_links_local, cache_banner};
 use super::{escape, sanitize};
 use crate::ao3::account_lists::{LiveBookmarksPage, LiveReadingsPage, LiveSubscriptionsPage};
 use crate::ao3::parse::{SpaceMode, percent_encode};
@@ -48,7 +49,11 @@ pub fn live_subscriptions_page(
     body.push_str(&format!(
         "<li><a href=\"{refresh_href}\">Refresh from AO3</a></li></ul>"
     ));
-    body.push_str(&cache_banner(cache_meta, &refresh_href));
+    body.push_str(&cache_banner(
+        cache_meta,
+        &refresh_href,
+        "Live from archiveofourown.org",
+    ));
 
     let extra_query = filter_type.map_or_else(String::new, |kind| format!("type={kind}"));
     let pager = page_pager(
@@ -92,7 +97,7 @@ pub fn live_subscriptions_page(
             } else {
                 format!(
                     "<div class=\"byline\">by {}</div>",
-                    live_author_cell(&item.authors)
+                    author_links_live(&item.authors)
                 )
             };
             let action = if ctx.write_enabled
@@ -146,7 +151,11 @@ pub fn live_bookmarks_page(
          <li><a href=\"/bookmarks?local=1\">Local Cache</a></li>\
          <li><a href=\"{refresh_href}\">Refresh from AO3</a></li></ul>"
     );
-    body.push_str(&cache_banner(cache_meta, &refresh_href));
+    body.push_str(&cache_banner(
+        cache_meta,
+        &refresh_href,
+        "Live from archiveofourown.org",
+    ));
 
     let total_pages = page
         .total_pages
@@ -262,7 +271,11 @@ pub fn live_readings_page(
         "<li><a href=\"/reading?local=1\">Local Progress</a></li>\
          <li><a href=\"{refresh_href}\">Refresh from AO3</a></li></ul>"
     ));
-    body.push_str(&cache_banner(cache_meta, &refresh_href));
+    body.push_str(&cache_banner(
+        cache_meta,
+        &refresh_href,
+        "Live from archiveofourown.org",
+    ));
 
     let extra_query = if marked_for_later_only {
         "show=to-read"
@@ -332,7 +345,7 @@ pub fn subscriptions_page(ctx: &PageContext, entries: &[SubscriptionEntry]) -> S
             } else {
                 "—".to_string()
             };
-            let authors = author_cell(&entry.authors);
+            let authors = author_links_local(&entry.authors);
             let title_html = match entry.target_kind.as_str() {
                 "Work" => format!(
                     "<a href=\"/read/{}\">{}</a>",
@@ -383,7 +396,7 @@ pub fn bookmarks_page(ctx: &PageContext, entries: &[BookmarkEntry]) -> String {
                  <td class=\"datetime\">{saved}</td></tr>",
                 id = escape(&entry.work_id),
                 title = escape(title),
-                authors = author_cell(&entry.authors),
+                authors = author_links_local(&entry.authors),
                 saved = escape(&format_utc(entry.created_at)),
             ));
         }
@@ -429,7 +442,7 @@ pub fn reading_page(ctx: &PageContext, entries: &[ReadingEntry]) -> String {
                  <td>{flag}</td></tr>",
                 id = escape(&entry.work_id),
                 title = escape(title),
-                authors = author_cell(&entry.authors),
+                authors = author_links_local(&entry.authors),
                 flag = escape(entry.reading_state.as_deref().unwrap_or("—")),
             ));
         }
@@ -438,57 +451,10 @@ pub fn reading_page(ctx: &PageContext, entries: &[ReadingEntry]) -> String {
     layout(ctx, &body)
 }
 
-fn cache_banner(cache_meta: Option<(bool, i64)>, refresh_href: &str) -> String {
-    let Some((from_cache, fetched_at)) = cache_meta else {
-        return String::new();
-    };
-    let status = if from_cache {
-        format!(
-            "Cached from archiveofourown.org at {} (30-min cache)",
-            escape(&format_utc(fetched_at))
-        )
-    } else {
-        "Live from archiveofourown.org (cached for 30 min)".to_string()
-    };
-    format!("<p class=\"meta\">{status} · <a href=\"{refresh_href}\">Refresh now</a></p>")
-}
-
 fn page_pager(current: i64, total_pages: i64, base: &str, extra_query: &str) -> String {
     if total_pages <= 1 {
         return String::new();
     }
     let total_items = total_pages.saturating_mul(20);
     super::pagination(current, 20, total_items, base, extra_query)
-}
-
-fn live_author_cell(authors: &[String]) -> String {
-    authors
-        .iter()
-        .map(|author| {
-            format!(
-                "<a href=\"/works/search?creator={}\">{}</a>",
-                percent_encode(author, SpaceMode::Percent20),
-                escape(author)
-            )
-        })
-        .collect::<Vec<_>>()
-        .join(", ")
-}
-
-/// Author names as local-filter links (entries, not decorations).
-fn author_cell(authors: &[String]) -> String {
-    if authors.is_empty() {
-        return "Anonymous".to_string();
-    }
-    authors
-        .iter()
-        .map(|author| {
-            format!(
-                "<a href=\"/works?author={}\">{}</a>",
-                percent_encode(author, SpaceMode::Percent20),
-                escape(author)
-            )
-        })
-        .collect::<Vec<_>>()
-        .join(", ")
 }

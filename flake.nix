@@ -25,6 +25,7 @@
       allowFiles = [
         "Cargo.toml"
         "Cargo.lock"
+        "build.rs"
         "clippy.toml"
         "README.md"
         "flake.nix"
@@ -54,6 +55,22 @@
         openssl
         sqlite
       ];
+      clangDeps = with pkgs; [
+        pkg-config
+        llvmPackages.clang
+        llvmPackages.libclang
+      ];
+      libclangPath = "${pkgs.llvmPackages.libclang.lib}/lib";
+
+      evalModuleConfig =
+        cfg:
+        (nixpkgs.lib.nixosSystem {
+          inherit system;
+          modules = [
+            self.nixosModules.default
+            { services.ao3instance = cfg; }
+          ];
+        }).config;
 
       ao3instance = pkgs.rustPlatform.buildRustPackage {
         pname = "ao3instance";
@@ -62,14 +79,10 @@
         inherit src;
         cargoLock.lockFile = ./Cargo.lock;
 
-        nativeBuildInputs = with pkgs; [
-          pkg-config
-          llvmPackages.clang
-          llvmPackages.libclang
-        ];
+        nativeBuildInputs = clangDeps;
         buildInputs = nativeDeps;
 
-        LIBCLANG_PATH = "${pkgs.llvmPackages.libclang.lib}/lib";
+        LIBCLANG_PATH = libclangPath;
 
         # Tests run in CI/dev shell, not in the package build (same split as MUSIKA).
         doCheck = false;
@@ -82,103 +95,84 @@
     {
       packages.${system} = {
         default = ao3instance;
-        ao3instance = ao3instance;
+        inherit ao3instance;
       };
 
       nixosModules.default = import ./nix/module.nix { package = ao3instance; };
 
       checks.${system} = {
         ao3instance-module-open-firewall =
-        let
-          exposed = (nixpkgs.lib.nixosSystem {
-            inherit system;
-            modules = [
-              self.nixosModules.default
-              {
-                services.ao3instance = {
-                  enable = true;
-                  dataDir = "/srv/ao3instance-test";
-                  port = 9123;
-                  openFirewall = true;
-                };
-              }
-            ];
-          }).config;
-          values = pkgs.writeText "ao3instance-module-open-firewall.txt" ''
-            DATA_DIR=${toString exposed.services.ao3instance.dataDir}
-            PORTS=${builtins.concatStringsSep "," (map toString exposed.networking.firewall.allowedTCPPorts)}
-            ${builtins.concatStringsSep "\n" (map (value: "ENV=${value}") exposed.systemd.services.ao3instance.serviceConfig.Environment)}
+          let
+            exposed = evalModuleConfig {
+              enable = true;
+              dataDir = "/srv/ao3instance-test";
+              port = 9123;
+              openFirewall = true;
+            };
+            values = pkgs.writeText "ao3instance-module-open-firewall.txt" ''
+              DATA_DIR=${toString exposed.services.ao3instance.dataDir}
+              PORTS=${builtins.concatStringsSep "," (map toString exposed.networking.firewall.allowedTCPPorts)}
+              ${builtins.concatStringsSep "\n" (map (value: "ENV=${value}") exposed.systemd.services.ao3instance.serviceConfig.Environment)}
+            '';
+          in
+          pkgs.runCommand "check-ao3instance-module-open-firewall" { } ''
+            grep -qx "DATA_DIR=/srv/ao3instance-test" ${values}
+            grep -qx "PORTS=9123" ${values}
+            grep -q "ENV=AO3I_BIND=0.0.0.0" ${values}
+            ! grep -q "^ENV=AO3I_FLARESOLVERR_URL=" ${values}
+            touch $out
           '';
-        in
-        pkgs.runCommand "check-ao3instance-module-open-firewall" { } ''
-          grep -qx "DATA_DIR=/srv/ao3instance-test" ${values}
-          grep -qx "PORTS=9123" ${values}
-          grep -q "ENV=AO3I_BIND=0.0.0.0" ${values}
-          ! grep -q "^ENV=AO3I_FLARESOLVERR_URL=" ${values}
-          touch $out
-        '';
 
         ao3instance-module-flaresolverr-port =
-        let
-          configured = (nixpkgs.lib.nixosSystem {
-            inherit system;
-            modules = [
-              self.nixosModules.default
-              {
-                services.ao3instance = {
-                  enable = true;
-                  flaresolverrPort = 8192;
-                };
-              }
-            ];
-          }).config;
-          values = pkgs.writeText "ao3instance-module-flaresolverr-port.txt" ''
-            ${builtins.concatStringsSep "\n" (map (value: "ENV=${value}") configured.systemd.services.ao3instance.serviceConfig.Environment)}
+          let
+            configured = evalModuleConfig {
+              enable = true;
+              flaresolverrPort = 8192;
+            };
+            values = pkgs.writeText "ao3instance-module-flaresolverr-port.txt" ''
+              ${builtins.concatStringsSep "\n" (map (value: "ENV=${value}") configured.systemd.services.ao3instance.serviceConfig.Environment)}
+            '';
+          in
+          pkgs.runCommand "check-ao3instance-module-flaresolverr-port" { } ''
+            grep -qx "ENV=AO3I_FLARESOLVERR_URL=http://127.0.0.1:8192" ${values}
+            touch $out
           '';
-        in
-        pkgs.runCommand "check-ao3instance-module-flaresolverr-port" { } ''
-          grep -qx "ENV=AO3I_FLARESOLVERR_URL=http://127.0.0.1:8192" ${values}
-          touch $out
-        '';
 
         ao3instance-module = nixosTest.runTest {
-        name = "ao3instance-module";
-        nodes.machine = {
-          imports = [ self.nixosModules.default ];
-          services.ao3instance = {
-            enable = true;
-            dataDir = "/var/lib/ao3instance-test";
-            port = 9123;
+          name = "ao3instance-module";
+          nodes.machine = {
+            imports = [ self.nixosModules.default ];
+            services.ao3instance = {
+              enable = true;
+              dataDir = "/var/lib/ao3instance-test";
+              port = 9123;
+            };
           };
+          testScript = ''
+            machine.wait_for_unit("ao3instance.service")
+            machine.wait_for_open_port(9123)
+            machine.succeed("curl -fsS http://127.0.0.1:9123/health | grep -qx ok")
+            machine.succeed("test -s /var/lib/ao3instance-test/ao3i.db")
+            machine.succeed("test -s /var/lib/ao3instance-test/key")
+          '';
         };
-        testScript = ''
-          machine.wait_for_unit("ao3instance.service")
-          machine.wait_for_open_port(9123)
-          machine.succeed("curl -fsS http://127.0.0.1:9123/health | grep -qx ok")
-          machine.succeed("test -s /var/lib/ao3instance-test/ao3i.db")
-          machine.succeed("test -s /var/lib/ao3instance-test/key")
-        '';
-      };
-
       };
 
       devShells.${system}.default = pkgs.mkShell {
-        nativeBuildInputs = with pkgs; [
-          rustc
-          cargo
-          clippy
-          rustfmt
-          rust-analyzer
-          pkg-config
-          openssl
-          sqlite
-          sqlx-cli
-          llvmPackages.clang
-          llvmPackages.libclang
-          cargo-deny
-        ];
+        nativeBuildInputs =
+          nativeDeps
+          ++ clangDeps
+          ++ (with pkgs; [
+            rustc
+            cargo
+            clippy
+            rustfmt
+            rust-analyzer
+            sqlx-cli
+            cargo-deny
+          ]);
 
-        LIBCLANG_PATH = "${pkgs.llvmPackages.libclang.lib}/lib";
+        LIBCLANG_PATH = libclangPath;
         RUST_SRC_PATH = "${pkgs.rustPlatform.rustLibSrc}";
       };
     };

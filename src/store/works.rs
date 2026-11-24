@@ -2,12 +2,35 @@
 
 use super::{
     Progress, SearchFilter, SearchPage, Store, StoredChapter, StoredWork, TagGroups, WorkSummary,
-    now_secs,
+    authors_from_row, now_secs,
 };
 use crate::ao3::work::WorkPage;
 use sqlx::Row;
 
 use crate::error::{Error, Result};
+
+macro_rules! works_columns {
+    () => {
+        "ao3_id, title, authors_json, summary, tags_json, rating, language, \
+         published_at, complete, word_count, kudos, comment_count, hits, bookmarks, \
+         chapter_count, content_hash, fetched_at"
+    };
+}
+
+macro_rules! works_columns_w {
+    () => {
+        "w.ao3_id, w.title, w.authors_json, w.summary, w.tags_json, w.rating, \
+         w.language, w.published_at, w.complete, w.word_count, w.kudos, w.comment_count, \
+         w.hits, w.bookmarks, w.chapter_count, w.content_hash, w.fetched_at"
+    };
+}
+
+macro_rules! work_summary_columns_w {
+    () => {
+        "w.ao3_id, w.title, w.authors_json, w.chapter_count, \
+         p.chapter_idx AS progress_chapter, p.pct AS progress_pct"
+    };
+}
 
 impl Store {
     /// Upserts a fetched work and replaces its chapters in one transaction.
@@ -123,12 +146,11 @@ impl Store {
     }
 
     pub async fn get_work(&self, ao3_id: &str) -> Result<Option<StoredWork>> {
-        let row = sqlx::query(
-            "SELECT ao3_id, title, authors_json, summary, tags_json, rating, language,
-                    published_at, complete, word_count, kudos, comment_count, hits,
-                    bookmarks, chapter_count, content_hash, fetched_at
-             FROM works WHERE ao3_id = ?1",
-        )
+        let row = sqlx::query(concat!(
+            "SELECT ",
+            works_columns!(),
+            " FROM works WHERE ao3_id = ?1"
+        ))
         .bind(ao3_id)
         .fetch_optional(&self.pool)
         .await
@@ -138,12 +160,11 @@ impl Store {
 
     /// Every cached work, for the offline browse/facet pages.
     pub async fn all_works(&self) -> Result<Vec<StoredWork>> {
-        let rows = sqlx::query(
-            "SELECT ao3_id, title, authors_json, summary, tags_json, rating, language,
-                    published_at, complete, word_count, kudos, comment_count, hits,
-                    bookmarks, chapter_count, content_hash, fetched_at
-             FROM works ORDER BY fetched_at DESC, ao3_id DESC",
-        )
+        let rows = sqlx::query(concat!(
+            "SELECT ",
+            works_columns!(),
+            " FROM works ORDER BY fetched_at DESC, ao3_id DESC"
+        ))
         .fetch_all(&self.pool)
         .await
         .map_err(|e| Error::Store(format!("select all works: {e}")))?;
@@ -172,34 +193,18 @@ impl Store {
     }
 
     pub async fn list_works(&self, limit: i64) -> Result<Vec<WorkSummary>> {
-        let rows = sqlx::query(
-            "SELECT w.ao3_id, w.title, w.authors_json, w.chapter_count,
-                    p.chapter_idx AS progress_chapter, p.pct AS progress_pct
-             FROM works w
+        let rows = sqlx::query(concat!(
+            "SELECT ",
+            work_summary_columns_w!(),
+            " FROM works w
              LEFT JOIN progress p ON p.work_id = w.ao3_id AND p.account_id = 'local'
-             ORDER BY w.fetched_at DESC, w.ao3_id DESC LIMIT ?1",
-        )
+             ORDER BY w.fetched_at DESC, w.ao3_id DESC LIMIT ?1"
+        ))
         .bind(limit)
         .fetch_all(&self.pool)
         .await
         .map_err(|e| Error::Store(format!("list works: {e}")))?;
-
-        let mut works = Vec::with_capacity(rows.len());
-        for row in rows {
-            let authors_json: String = row.get("authors_json");
-            let authors: Vec<String> = serde_json::from_str(&authors_json).unwrap_or_default();
-            works.push(WorkSummary {
-                ao3_id: row.get("ao3_id"),
-                title: row.get("title"),
-                authors,
-                chapter_count: row.get("chapter_count"),
-                progress_chapter: row.get("progress_chapter"),
-                progress_pct: row
-                    .get::<Option<f64>, _>("progress_pct")
-                    .map(|pct| pct.round() as i64),
-            });
-        }
-        Ok(works)
+        Ok(rows.iter().map(work_summary_from_row).collect())
     }
 
     /// Full-text search over cached works. Returns recent-first ties broken by
@@ -208,50 +213,33 @@ impl Store {
         let Some(fts) = fts_query(query) else {
             return Ok(Vec::new());
         };
-        let rows = sqlx::query(
-            "SELECT w.ao3_id, w.title, w.authors_json, w.chapter_count,
-                    p.chapter_idx AS progress_chapter, p.pct AS progress_pct
-             FROM work_search
+        let rows = sqlx::query(concat!(
+            "SELECT ",
+            work_summary_columns_w!(),
+            " FROM work_search
              JOIN works w ON w.ao3_id = work_search.work_id
              LEFT JOIN progress p ON p.work_id = w.ao3_id AND p.account_id = 'local'
              WHERE work_search MATCH ?1
              ORDER BY rank
-             LIMIT ?2",
-        )
+             LIMIT ?2"
+        ))
         .bind(fts)
         .bind(limit)
         .fetch_all(&self.pool)
         .await
         .map_err(|e| Error::Store(format!("search works: {e}")))?;
-
-        let mut works = Vec::with_capacity(rows.len());
-        for row in rows {
-            let authors_json: String = row.get("authors_json");
-            let authors: Vec<String> = serde_json::from_str(&authors_json).unwrap_or_default();
-            works.push(WorkSummary {
-                ao3_id: row.get("ao3_id"),
-                title: row.get("title"),
-                authors,
-                chapter_count: row.get("chapter_count"),
-                progress_chapter: row.get("progress_chapter"),
-                progress_pct: row
-                    .get::<Option<f64>, _>("progress_pct")
-                    .map(|pct| pct.round() as i64),
-            });
-        }
-        Ok(works)
+        Ok(rows.iter().map(work_summary_from_row).collect())
     }
 
     /// The recent works list with full rows, for the shared blurb card.
     pub async fn list_works_detailed(&self, limit: i64) -> Result<Vec<StoredWork>> {
-        let rows = sqlx::query(
-            "SELECT ao3_id, title, authors_json, summary, tags_json, rating, language,
-                    published_at, complete, word_count, kudos, comment_count, hits,
-                    bookmarks, chapter_count, content_hash, fetched_at
-             FROM works
+        let rows = sqlx::query(concat!(
+            "SELECT ",
+            works_columns!(),
+            " FROM works
              ORDER BY fetched_at DESC, ao3_id DESC
-             LIMIT ?1",
-        )
+             LIMIT ?1"
+        ))
         .bind(limit)
         .fetch_all(&self.pool)
         .await
@@ -299,16 +287,14 @@ impl Store {
         }
 
         let mut candidates: Vec<StoredWork> = if let Some(fts) = fts {
-            let rows = sqlx::query(
-                "SELECT w.ao3_id, w.title, w.authors_json, w.summary, w.tags_json, w.rating,
-                        w.language, w.published_at, w.complete, w.word_count, w.kudos,
-                        w.comment_count, w.hits, w.bookmarks, w.chapter_count, w.content_hash,
-                        w.fetched_at
-                 FROM work_search
+            let rows = sqlx::query(concat!(
+                "SELECT ",
+                works_columns_w!(),
+                " FROM work_search
                  JOIN works w ON w.ao3_id = work_search.work_id
                  WHERE work_search MATCH ?1
-                 ORDER BY rank LIMIT 1000",
-            )
+                 ORDER BY rank LIMIT 1000"
+            ))
             .bind(&fts)
             .fetch_all(&self.pool)
             .await
@@ -365,17 +351,15 @@ impl Store {
         let Some(fts) = fts_query(query) else {
             return Ok(Vec::new());
         };
-        let rows = sqlx::query(
-            "SELECT w.ao3_id, w.title, w.authors_json, w.summary, w.tags_json, w.rating,
-                    w.language, w.published_at, w.complete, w.word_count, w.kudos,
-                    w.comment_count, w.hits, w.bookmarks, w.chapter_count, w.content_hash,
-                    w.fetched_at
-             FROM work_search
+        let rows = sqlx::query(concat!(
+            "SELECT ",
+            works_columns_w!(),
+            " FROM work_search
              JOIN works w ON w.ao3_id = work_search.work_id
              WHERE work_search MATCH ?1
              ORDER BY rank
-             LIMIT ?2",
-        )
+             LIMIT ?2"
+        ))
         .bind(fts)
         .bind(limit)
         .fetch_all(&self.pool)
@@ -545,7 +529,20 @@ fn search_matches(work: &StoredWork, filter: &SearchFilter) -> bool {
         && (!filter.single_chapter || work.chapter_count == 1)
 }
 
-/// One `works` row (the column list is repeated by `get_work`/`all_works`).
+fn work_summary_from_row(row: &sqlx::sqlite::SqliteRow) -> WorkSummary {
+    WorkSummary {
+        ao3_id: row.get("ao3_id"),
+        title: row.get("title"),
+        authors: authors_from_row(row),
+        chapter_count: row.get("chapter_count"),
+        progress_chapter: row.get("progress_chapter"),
+        progress_pct: row
+            .get::<Option<f64>, _>("progress_pct")
+            .map(|pct| pct.round() as i64),
+    }
+}
+
+/// One `works` row projected via `works_columns!` / `works_columns_w!`.
 fn stored_work_from_row(row: &sqlx::sqlite::SqliteRow) -> Result<StoredWork> {
     let authors_json: String = row.get("authors_json");
     let tags_json: String = row.get("tags_json");

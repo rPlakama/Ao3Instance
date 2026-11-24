@@ -39,6 +39,7 @@ mod audit;
 mod blurb;
 mod browse;
 mod chrome;
+mod components;
 mod dashboard;
 mod diagnostics;
 mod fandoms;

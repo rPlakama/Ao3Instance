@@ -7,7 +7,7 @@ use sqlx::Row;
 
 use crate::error::{Error, Result};
 
-use super::{Store, StoredWork};
+use super::{Store, StoredWork, authors_from_row};
 
 /// Which local reading state a browse filter wants.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -521,12 +521,6 @@ struct ProgressRow {
     chapter_count: i64,
     title: Option<String>,
     authors: Vec<String>,
-}
-
-fn authors_from_row(row: &sqlx::sqlite::SqliteRow) -> Vec<String> {
-    row.get::<Option<String>, _>("authors_json")
-        .and_then(|json| serde_json::from_str(&json).ok())
-        .unwrap_or_default()
 }
 
 /// Counts values of one facet across all works (case preserved, sorted).

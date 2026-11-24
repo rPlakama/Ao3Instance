@@ -134,20 +134,7 @@ pub async fn router(config: &Config, store: Store) -> Result<Router> {
         .await
         .ok()
         .flatten()
-        .filter(|skin| {
-            matches!(
-                skin.as_str(),
-                "auto"
-                    | "default"
-                    | "reversi"
-                    | "snow"
-                    | "frost"
-                    | "cloud"
-                    | "sepia"
-                    | "midnight"
-                    | "public"
-            )
-        })
+        .filter(|skin| crate::consts::is_stored_skin(skin))
         .unwrap_or_else(|| "default".to_string());
     let saved_skin_css = store
         .get_setting("display.skin_css")

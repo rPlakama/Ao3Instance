@@ -73,3 +73,44 @@ pub const SOLVER_EVENT_RETENTION: i64 = 200;
 pub const PAGE_CACHE_TTL_SECS: i64 = 30 * 60;
 /// Maximum cached AO3 pages kept in SQLite before oldest entries are pruned.
 pub const PAGE_CACHE_MAX_ROWS: i64 = 500;
+
+/// Built-in display skins (`(value, preferences_label)`). Single source of truth
+/// shared by settings loading, `/skin` validation, chapter rendering, and the
+/// session preferences UI.
+pub const BUILTIN_SKINS: &[(&str, &str)] = &[
+    ("auto", "Auto (follow the system light/dark preference)"),
+    ("default", "Classic (light)"),
+    ("reversi", "Reversi (dark)"),
+    ("snow", "Snow (blue on white)"),
+    ("frost", "Frost (cool blue)"),
+    ("cloud", "Cloud (soft grey)"),
+    ("sepia", "Sepia (warm paper)"),
+    ("midnight", "Midnight (deep blue)"),
+];
+
+/// Returns `true` when `skin` is one of the built-in palettes.
+pub fn is_builtin_skin(skin: &str) -> bool {
+    BUILTIN_SKINS.iter().any(|(name, _)| *name == skin)
+}
+
+/// Returns `true` when `skin` may be stored in `display.skin` (built-in or imported `"public"`).
+pub fn is_stored_skin(skin: &str) -> bool {
+    skin == "public" || is_builtin_skin(skin)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn skin_validators_accept_known_palettes_and_reject_unknown() {
+        for (name, _) in BUILTIN_SKINS {
+            assert!(is_builtin_skin(name), "{name}");
+            assert!(is_stored_skin(name), "{name}");
+        }
+        assert!(!is_builtin_skin("public"));
+        assert!(is_stored_skin("public"));
+        assert!(!is_builtin_skin("neon"));
+        assert!(!is_stored_skin("neon"));
+    }
+}

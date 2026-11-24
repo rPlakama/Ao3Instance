@@ -284,3 +284,50 @@ async fn reading_flag_csrf_failure_is_a_failed_audit() {
     handle.abort();
     drop(std::fs::remove_dir_all(dir));
 }
+
+#[tokio::test]
+async fn reading_rate_limit_engages_governor_cooldown() {
+    let upstream = Server::start(session_routes(vec![(
+        "PATCH /works/12345/mark_for_later",
+        Response::new(429)
+            .with_header("retry-after", "60")
+            .with_body("Retry later"),
+    )]));
+    let (root, store, dir, handle) = start(&upstream, true).await;
+    let client = http();
+    sign_in(&client, &root).await;
+    seed_work(&store).await;
+
+    let first = post_form(
+        &format!("{root}/write/reading"),
+        "target_id=12345&action=later",
+    )
+    .send()
+    .await
+    .expect("first reading");
+    assert_eq!(first.status(), 200);
+
+    let before = upstream.requests().len();
+    let second = post_form(
+        &format!("{root}/write/reading"),
+        "target_id=12345&action=read",
+    )
+    .send()
+    .await
+    .expect("second reading");
+    assert_eq!(
+        second.status(),
+        502,
+        "governor cooldown should block immediate retry"
+    );
+    let body = second.text().await.expect("body");
+    assert!(body.contains("rate limiting"), "{body}");
+    assert_eq!(
+        upstream.requests().len(),
+        before,
+        "governor cooldown must prevent hitting AO3 again"
+    );
+
+    handle.abort();
+    drop(std::fs::remove_dir_all(dir));
+}

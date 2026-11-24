@@ -2,11 +2,12 @@
 //! live AO3 tag search (cached 30 min) with an offline cached-tag fallback.
 
 use super::chrome::{PageContext, layout_with_class};
+use super::components::cache_banner;
 use super::escape;
 use crate::ao3::account_lists::LiveTagSearchResults;
 use crate::ao3::parse::{SpaceMode, percent_encode};
 use crate::store::TagHit;
-use crate::time::{format_count, format_utc};
+use crate::time::format_count;
 
 /// Renders live (or 30-minute cached) AO3 Tag Search results.
 pub fn live_tag_search_page(
@@ -19,19 +20,11 @@ pub fn live_tag_search_page(
     let mut body = tag_search_header(query);
     let q_enc = percent_encode(query.trim(), SpaceMode::Percent20);
     let refresh_href = format!("/tags/search?q={q_enc}&page={page}&refresh=1");
-    if let Some((from_cache, fetched_at)) = cache_meta {
-        let status = if from_cache {
-            format!(
-                "Cached from archiveofourown.org at {} (30-min cache)",
-                escape(&format_utc(fetched_at))
-            )
-        } else {
-            "Live from archiveofourown.org (cached for 30 min)".to_string()
-        };
-        body.push_str(&format!(
-            "<p class=\"meta\">{status} · <a href=\"{refresh_href}\">Refresh now</a></p>"
-        ));
-    }
+    body.push_str(&cache_banner(
+        cache_meta,
+        &refresh_href,
+        "Live from archiveofourown.org",
+    ));
 
     if results.hits.is_empty() {
         body.push_str(&format!(

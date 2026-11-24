@@ -2,9 +2,9 @@
 //! favorites/fandoms, news, read-later readings, and unread inbox modules inside
 //! `.splash`, plus the local Continue Reading and Open a work panels.
 
-use super::blurb::author_links_from;
+use super::blurb::reading_blurb;
 use super::chrome::{PageContext, layout_with_class};
-use super::icons::required_tags_from;
+use super::components::{author_links_local, flash_notice};
 use super::{escape, sanitize, tag_href};
 use crate::ao3::home::HomeModules;
 use crate::store::{StoredWork, WorkSummary};
@@ -18,13 +18,7 @@ pub fn home_page(
     flash: Option<&str>,
     modules: &HomeModules,
 ) -> String {
-    let mut body = String::new();
-    if let Some(flash) = flash {
-        body.push_str(&format!(
-            "<div class=\"flash notice\">{}</div>",
-            escape(flash)
-        ));
-    }
+    let mut body = flash_notice(flash);
 
     body.push_str("<div class=\"splash\">");
 
@@ -83,7 +77,7 @@ pub fn home_page(
                  <span class=\"meta\">· by {authors} · continue ch. {chapter} · {pct}%</span></li>",
                 id = escape(&work.ao3_id),
                 title = escape(&work.title),
-                authors = author_links_from(&work.authors),
+                authors = author_links_local(&work.authors),
             ));
         }
         body.push_str("</ul></div>");
@@ -242,111 +236,6 @@ pub fn home_page(
     );
 
     layout_with_class(ctx, "home", &body)
-}
-
-fn reading_blurb(reading: &crate::ao3::home::HomeReading) -> String {
-    let work = &reading.work;
-    let authors = author_links_from(&work.authors);
-    let fandoms = if work.fandoms.is_empty() {
-        "—".to_string()
-    } else {
-        work.fandoms
-            .iter()
-            .map(|fandom| {
-                format!(
-                    "<a class=\"tag\" href=\"{}\">{}</a>",
-                    tag_href(fandom),
-                    escape(fandom)
-                )
-            })
-            .collect::<Vec<_>>()
-            .join(", ")
-    };
-    let required = required_tags_from(
-        work.rating.as_deref(),
-        &work.warnings,
-        &work.categories,
-        work.complete,
-        false,
-    );
-    let tag_links = |tags: &[String], class: &str| -> String {
-        tags.iter()
-            .map(|tag| {
-                format!(
-                    "<li class=\"{class}\"><a class=\"tag\" href=\"{}\">{}</a></li>",
-                    tag_href(tag),
-                    escape(tag)
-                )
-            })
-            .collect()
-    };
-    let tags_html = format!(
-        "{}{}{}{}",
-        tag_links(&work.warnings, "warnings"),
-        tag_links(&work.relationships, "relationships"),
-        tag_links(&work.characters, "characters"),
-        tag_links(&work.additional_tags, "freeforms"),
-    );
-    let tags_block = if tags_html.is_empty() {
-        String::new()
-    } else {
-        format!(
-            "<h6 class=\"landmark heading\">Tags</h6><ul class=\"tags commas\">{tags_html}</ul>"
-        )
-    };
-    let summary = work
-        .summary_html
-        .as_deref()
-        .map_or_else(String::new, |html| {
-            format!(
-                "<h6 class=\"landmark heading\">Summary</h6>\
-                 <blockquote class=\"userstuff summary\">{}</blockquote>",
-                sanitize(html)
-            )
-        });
-    let mut stats = String::new();
-    if let Some(words) = work.words {
-        stats.push_str(&format!(
-            "<dt class=\"words\">Words:</dt><dd class=\"words\">{}</dd>",
-            crate::time::format_count(words)
-        ));
-    }
-    if let Some(chapters) = &work.chapters {
-        stats.push_str(&format!(
-            "<dt class=\"chapters\">Chapters:</dt><dd class=\"chapters\">{}</dd>",
-            escape(chapters)
-        ));
-    }
-    if let Some(kudos) = work.kudos {
-        stats.push_str(&format!(
-            "<dt class=\"kudos\">Kudos:</dt><dd class=\"kudos\">{}</dd>",
-            crate::time::format_count(kudos)
-        ));
-    }
-    if let Some(hits) = work.hits {
-        stats.push_str(&format!(
-            "<dt class=\"hits\">Hits:</dt><dd class=\"hits\">{}</dd>",
-            crate::time::format_count(hits)
-        ));
-    }
-    let stats_html = if stats.is_empty() {
-        String::new()
-    } else {
-        format!("<dl class=\"stats\">{stats}</dl>")
-    };
-    format!(
-        "<li id=\"work_{id}\" class=\"reading work blurb group\" role=\"article\">\
-         <div class=\"header module\">\
-         <h4 class=\"heading\"><a href=\"/open/{id}\">{title}</a> by {authors}</h4>\
-         <h5 class=\"fandoms heading\"><span class=\"landmark\">Fandoms:</span> {fandoms}</h5>\
-         {required}<p class=\"datetime\">{datetime}</p></div>\
-         {tags_block}{summary}{stats_html}\
-         <div class=\"user module group\"><h4 class=\"viewed heading\">{viewed}</h4></div></li>",
-        id = escape(&work.ao3_id),
-        title = escape(&work.title),
-        datetime = escape(&work.datetime),
-        viewed = escape(&reading.meta),
-    )
 }
 
 /// First `max` characters of an HTML summary's text, without markup.

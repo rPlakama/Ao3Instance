@@ -1,6 +1,7 @@
 //! Public AO3 site-skin gallery modelled on `otwarchive/app/views/skins/index.html.erb`.
 
 use super::chrome::{PageContext, layout_with_class};
+use super::components::{flash_error, flash_notice};
 use super::escape;
 use crate::ao3::skins::PublicSkin;
 
@@ -27,18 +28,8 @@ pub fn themes_page(
              <button type=\"submit\">Remove public skin</button></form></div>",
         );
     }
-    if let Some(notice) = notice {
-        body.push_str(&format!(
-            "<div class=\"flash notice\">{}</div>",
-            escape(notice)
-        ));
-    }
-    if let Some(error) = error {
-        body.push_str(&format!(
-            "<div class=\"flash error\">{}</div>",
-            escape(error)
-        ));
-    }
+    body.push_str(&flash_notice(notice));
+    body.push_str(&flash_error(error));
     if skins.is_empty() {
         body.push_str(
             "<p class=\"muted\">No public skins were returned. AO3 may be blocking the \

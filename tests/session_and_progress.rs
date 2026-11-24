@@ -201,6 +201,70 @@ async fn progress_is_saved_listed_and_offered_as_resume() {
         reader_exact.contains("data-resume-exact=\"42.75\""),
         "{reader_exact}"
     );
+    assert!(
+        reader_exact.contains("data-resume-target=\"1\""),
+        "{reader_exact}"
+    );
+
+    // Returning via an explicit `?chapter=<saved>` link (Continue Reading, Resume banner,
+    // dashboard, reading history, Save Place redirect) also auto-scrolls to the saved spot.
+    let resumed_by_chapter = client
+        .get(format!("{root}/read/12345?chapter=2"))
+        .send()
+        .await
+        .expect("reader explicit saved chapter")
+        .text()
+        .await
+        .expect("reader explicit saved chapter body");
+    assert!(
+        resumed_by_chapter.contains("data-resume-exact=\"42.75\""),
+        "{resumed_by_chapter}"
+    );
+    assert!(
+        resumed_by_chapter.contains("data-resume-target=\"1\""),
+        "{resumed_by_chapter}"
+    );
+
+    // Entire Work mode also anchors onto the saved chapter at the exact saved percentage.
+    let full_work_resume = client
+        .get(format!("{root}/read/12345?view_full_work=true"))
+        .send()
+        .await
+        .expect("full work resume")
+        .text()
+        .await
+        .expect("full work resume body");
+    assert!(
+        full_work_resume.contains(
+            "id=\"chapter-1\" data-work-id=\"12345\" data-chapter=\"1\" data-total-chapters=\"2\" data-resume=\"0\" data-resume-exact=\"0.00\">"
+        ),
+        "{full_work_resume}"
+    );
+    assert!(
+        full_work_resume.contains(
+            "id=\"chapter-2\" data-work-id=\"12345\" data-chapter=\"2\" data-total-chapters=\"2\" data-resume=\"43\" data-resume-exact=\"42.75\" data-resume-target=\"1\">"
+        ),
+        "{full_work_resume}"
+    );
+
+    // Save Place preserves exact scroll precision and redirects back with auto-scroll intact.
+    let saved_exact = client
+        .post(format!("{root}/progress"))
+        .header("content-type", "application/x-www-form-urlencoded")
+        .body("work_id=12345&chapter=2&pct=42.75")
+        .send()
+        .await
+        .expect("save exact progress");
+    assert_eq!(saved_exact.status(), 200);
+    let saved_exact_body = saved_exact.text().await.expect("saved exact body");
+    assert!(
+        saved_exact_body.contains("data-resume-exact=\"42.75\""),
+        "{saved_exact_body}"
+    );
+    assert!(
+        saved_exact_body.contains("data-resume-target=\"1\""),
+        "{saved_exact_body}"
+    );
 
     // Offline reading history preserves work title and authors for progress-only works.
     let history = store
@@ -259,7 +323,7 @@ async fn progress_is_saved_listed_and_offered_as_resume() {
         100
     );
 
-    // Reading an earlier chapter offers to resume the saved one.
+    // Reading an earlier chapter offers to resume the saved one and does not auto-scroll.
     let reader = client
         .get(format!("{root}/read/12345?chapter=1"))
         .send()
@@ -270,6 +334,11 @@ async fn progress_is_saved_listed_and_offered_as_resume() {
         .expect("reader body");
     assert!(reader.contains("You were at chapter 2"), "{reader}");
     assert!(reader.contains("chapter=2"));
+    assert!(
+        !reader.contains("data-resume-target=\"1\""),
+        "other chapters must not auto-scroll: {reader}"
+    );
+    assert!(reader.contains("data-resume-exact=\"0.00\""), "{reader}");
 
     handle.abort();
     drop(std::fs::remove_dir_all(dir));

@@ -4,10 +4,11 @@
 use std::collections::BTreeMap;
 
 use super::chrome::{PageContext, layout_with_class};
+use super::components::cache_banner;
 use super::escape;
 use crate::ao3::account_lists::{LiveMedium, LiveMediumFandoms};
 use crate::ao3::parse::{SpaceMode, percent_encode};
-use crate::time::{format_count, format_utc};
+use crate::time::format_count;
 
 /// Renders AO3's live (or 30-minute cached) `/media` directory.
 pub fn live_media_page(
@@ -22,7 +23,11 @@ pub fn live_media_page(
          <li><a href=\"/fandoms?local=1\">Cached Fandoms</a></li>\
          <li><a href=\"/fandoms?refresh=1\">Refresh from AO3</a></li></ul>",
     );
-    body.push_str(&cache_note(cache_meta, "/fandoms?refresh=1"));
+    body.push_str(&cache_banner(
+        cache_meta,
+        "/fandoms?refresh=1",
+        "Live from archiveofourown.org",
+    ));
     if media.is_empty() {
         body.push_str("<p class=\"muted\">No media categories returned by AO3.</p>");
         return layout_with_class(ctx, "media-index", &body);
@@ -79,44 +84,37 @@ pub fn live_medium_fandoms_page(
          <kbd>ctrl F</kbd> / <kbd>cmd F</kbd>.</p>",
         escape(title)
     );
-    body.push_str(&cache_note(cache_meta, &refresh_href));
+    body.push_str(&cache_banner(
+        cache_meta,
+        &refresh_href,
+        "Live from archiveofourown.org",
+    ));
     if data.groups.is_empty() {
         body.push_str("<p class=\"muted\">No fandoms found for this category.</p>");
         return layout_with_class(ctx, "fandoms-index", &body);
     }
 
-    body.push_str(
-        "<h3 class=\"landmark heading\">Alphabet Navigation</h3>\
-         <ul class=\"alphabet actions\" id=\"alphabet\" role=\"navigation\">",
-    );
-    for (letter, _) in &data.groups {
-        body.push_str(&format!(
-            "<li><a href=\"#letter-{l}\">{l}</a></li>",
-            l = escape(letter)
-        ));
-    }
-    body.push_str("</ul><ol class=\"alphabet fandom index group\">");
-    for (letter, entries) in &data.groups {
-        body.push_str(&format!(
-            "<li id=\"letter-{l}\" class=\"letter listbox group\">\
-             <h3 class=\"heading\">{l}\
-             <span class=\"action top\" title=\"top\"><a href=\"#alphabet\">↑</a></span></h3>\
-             <ul class=\"tags index group\">",
-            l = escape(letter)
-        ));
-        for fandom in entries {
-            let count = fandom
-                .count
-                .map_or_else(String::new, |n| format!(" ({})", format_count(n)));
-            body.push_str(&format!(
-                "<li><a class=\"tag\" href=\"{}\">{}</a>{count}</li>",
-                super::tag_href(&fandom.name),
-                escape(&fandom.name),
-            ));
-        }
-        body.push_str("</ul></li>");
-    }
-    body.push_str("</ol>");
+    let groups: Vec<(String, Vec<String>)> = data
+        .groups
+        .iter()
+        .map(|(letter, entries)| {
+            let items = entries
+                .iter()
+                .map(|fandom| {
+                    let count = fandom
+                        .count
+                        .map_or_else(String::new, |n| format!(" ({})", format_count(n)));
+                    format!(
+                        "<li><a class=\"tag\" href=\"{}\">{}</a>{count}</li>",
+                        super::tag_href(&fandom.name),
+                        escape(&fandom.name),
+                    )
+                })
+                .collect();
+            (letter.clone(), items)
+        })
+        .collect();
+    body.push_str(&render_alphabet_groups(&groups, false));
     layout_with_class(ctx, "fandoms-index", &body)
 }
 
@@ -138,64 +136,54 @@ pub fn fandoms_page(ctx: &PageContext, fandoms: &[(String, usize)]) -> String {
         return layout_with_class(ctx, "fandoms-index", &body);
     }
 
-    let mut groups: BTreeMap<char, Vec<&(String, usize)>> = BTreeMap::new();
-    for fandom in fandoms {
+    let mut grouped: BTreeMap<char, Vec<String>> = BTreeMap::new();
+    for (fandom, count) in fandoms {
         let letter = fandom
-            .0
             .chars()
             .next()
             .map(|ch| ch.to_ascii_uppercase())
             .filter(|ch| ch.is_ascii_alphabetic())
             .unwrap_or('#');
-        groups.entry(letter).or_default().push(fandom);
-    }
-
-    body.push_str(
-        "<h3 class=\"landmark heading\">Alphabet Navigation</h3>\
-         <ul class=\"alphabet actions\" id=\"alphabet\" role=\"navigation\">",
-    );
-    for letter in groups.keys() {
-        body.push_str(&format!(
-            "<li><a href=\"#letter-{letter}\">{letter}</a></li>"
+        grouped.entry(letter).or_default().push(format!(
+            "<li><a class=\"tag\" href=\"/works?fandom={}\">{}</a> ({count})</li>",
+            escape(&percent_encode(fandom, SpaceMode::Percent20)),
+            escape(fandom),
         ));
     }
-    body.push_str("</ul>");
-
-    body.push_str(
-        "<h3 class=\"landmark heading\">Alphabetised List of Fandoms</h3>\
-         <ol class=\"alphabet fandom index group\">",
-    );
-    for (letter, entries) in &groups {
-        body.push_str(&format!(
-            "<li id=\"letter-{letter}\" class=\"letter listbox group\">\
-             <h3 class=\"heading\">{letter}\
-             <span class=\"action top\" title=\"top\"><a href=\"#alphabet\">↑</a></span></h3>\
-             <ul class=\"tags index group\">"
-        ));
-        for (fandom, count) in entries {
-            body.push_str(&format!(
-                "<li><a class=\"tag\" href=\"/works?fandom={}\">{}</a> ({count})</li>",
-                escape(&percent_encode(fandom, SpaceMode::Percent20)),
-                escape(fandom),
-            ));
-        }
-        body.push_str("</ul></li>");
-    }
-    body.push_str("</ol>");
+    let groups: Vec<(String, Vec<String>)> = grouped
+        .into_iter()
+        .map(|(letter, items)| (letter.to_string(), items))
+        .collect();
+    body.push_str(&render_alphabet_groups(&groups, true));
     layout_with_class(ctx, "fandoms-index", &body)
 }
 
-fn cache_note(cache_meta: Option<(bool, i64)>, refresh_href: &str) -> String {
-    let Some((from_cache, fetched_at)) = cache_meta else {
-        return String::new();
-    };
-    let status = if from_cache {
-        format!(
-            "Cached from archiveofourown.org at {} (30-min cache)",
-            escape(&format_utc(fetched_at))
-        )
-    } else {
-        "Live from archiveofourown.org (cached for 30 min)".to_string()
-    };
-    format!("<p class=\"meta\">{status} · <a href=\"{refresh_href}\">Refresh now</a></p>")
+fn render_alphabet_groups(groups: &[(String, Vec<String>)], with_list_landmark: bool) -> String {
+    let mut out = String::from(
+        "<h3 class=\"landmark heading\">Alphabet Navigation</h3>\
+         <ul class=\"alphabet actions\" id=\"alphabet\" role=\"navigation\">",
+    );
+    for (letter, _) in groups {
+        out.push_str(&format!(
+            "<li><a href=\"#letter-{l}\">{l}</a></li>",
+            l = escape(letter)
+        ));
+    }
+    out.push_str("</ul>");
+    if with_list_landmark {
+        out.push_str("<h3 class=\"landmark heading\">Alphabetised List of Fandoms</h3>");
+    }
+    out.push_str("<ol class=\"alphabet fandom index group\">");
+    for (letter, items) in groups {
+        out.push_str(&format!(
+            "<li id=\"letter-{l}\" class=\"letter listbox group\">\
+             <h3 class=\"heading\">{l}\
+             <span class=\"action top\" title=\"top\"><a href=\"#alphabet\">↑</a></span></h3>\
+             <ul class=\"tags index group\">{}</ul></li>",
+            items.concat(),
+            l = escape(letter),
+        ));
+    }
+    out.push_str("</ol>");
+    out
 }

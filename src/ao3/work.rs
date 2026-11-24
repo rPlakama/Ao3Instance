@@ -31,6 +31,7 @@ use std::sync::OnceLock;
 
 use scraper::{ElementRef, Html, Selector};
 
+use crate::ao3::html::{collapse_whitespace, parse_number, parse_selector as css};
 use crate::error::{Error, Result};
 
 /// One parsed AO3 work page.
@@ -126,13 +127,11 @@ pub fn parse_work_page(html: &str) -> Result<WorkPage> {
             let label = label.to_ascii_lowercase();
             label.contains("completed")
         }),
-        word_count: meta_value(meta, &selectors.words).and_then(|value| number_from_text(&value)),
-        kudos: meta_value(meta, &selectors.kudos).and_then(|value| number_from_text(&value)),
-        comment_count: meta_value(meta, &selectors.comments)
-            .and_then(|value| number_from_text(&value)),
-        hits: meta_value(meta, &selectors.hits).and_then(|value| number_from_text(&value)),
-        bookmarks: meta_value(meta, &selectors.bookmarks)
-            .and_then(|value| number_from_text(&value)),
+        word_count: meta_value(meta, &selectors.words).and_then(|value| parse_number(&value)),
+        kudos: meta_value(meta, &selectors.kudos).and_then(|value| parse_number(&value)),
+        comment_count: meta_value(meta, &selectors.comments).and_then(|value| parse_number(&value)),
+        hits: meta_value(meta, &selectors.hits).and_then(|value| parse_number(&value)),
+        bookmarks: meta_value(meta, &selectors.bookmarks).and_then(|value| parse_number(&value)),
         chapter_count,
         chapters,
         comment_form_present,
@@ -224,11 +223,6 @@ fn build_selectors() -> Result<Selectors> {
         )?,
         work_paths: css("a[href], form[action]")?,
     })
-}
-
-fn css(text: &str) -> Result<Selector> {
-    Selector::parse(text)
-        .map_err(|_| Error::UpstreamChanged(format!("parser selector is invalid: {text}")))
 }
 
 fn first<'a>(element: ElementRef<'a>, selector: &Selector) -> Option<ElementRef<'a>> {
@@ -453,22 +447,8 @@ fn extract_chapter_count(document: &Html, selectors: &Selectors, chapters: &[Cha
     if listed > 0 { listed } else { chapters.len() }
 }
 
-/// Reads a displayed number such as `1,024` (Rails `number_with_delimiter`).
-fn number_from_text(text: &str) -> Option<u64> {
-    let digits: String = text.chars().filter(char::is_ascii_digit).collect();
-    if digits.is_empty() {
-        None
-    } else {
-        digits.parse().ok()
-    }
-}
-
 fn collapsed_text(element: ElementRef<'_>) -> String {
     collapse_whitespace(&element.text().collect::<String>())
-}
-
-fn collapse_whitespace(text: &str) -> String {
-    text.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
 #[cfg(test)]
@@ -477,10 +457,10 @@ mod tests {
 
     #[test]
     fn displayed_numbers_ignore_thousands_separators() {
-        assert_eq!(number_from_text("4,321"), Some(4321));
-        assert_eq!(number_from_text(" 1,024 "), Some(1024));
-        assert_eq!(number_from_text("—"), None);
-        assert_eq!(number_from_text(""), None);
+        assert_eq!(parse_number("4,321"), Some(4321));
+        assert_eq!(parse_number(" 1,024 "), Some(1024));
+        assert_eq!(parse_number("—"), None);
+        assert_eq!(parse_number(""), None);
     }
 
     #[test]

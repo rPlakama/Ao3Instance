@@ -6,6 +6,7 @@ pub mod client;
 pub mod cookie_file;
 pub mod governor;
 pub mod home;
+pub(crate) mod html;
 pub mod jar;
 pub mod parse;
 pub mod pseuds;

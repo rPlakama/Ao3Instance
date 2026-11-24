@@ -9,8 +9,9 @@
 
 use std::time::Duration;
 
-use super::{AccountSession, Jar, Response, SessionState, redirect_path};
-use crate::ao3::client::{classify_status, form_urlencode};
+use super::login::redirect_path;
+use super::{AccountSession, Jar, SessionState};
+use crate::ao3::client::{Response, classify_status, form_urlencode};
 use crate::ao3::solver::{SolveOutcome, SolverStatus};
 use crate::config::SolverMode;
 use crate::consts;

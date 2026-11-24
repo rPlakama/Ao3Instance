@@ -17,11 +17,13 @@
 //!    AO3's CSRF failure is a redirect, and a pwned-password login is redirected
 //!    to a different page while already signed in.
 
-use serde::Deserialize;
+mod csrf;
+mod login;
+mod solver;
 
-use crate::ao3::client::{Client, Response};
+use crate::ao3::client::Client;
 use crate::ao3::jar::Jar;
-use crate::ao3::parse::{SpaceMode, percent_decode, percent_encode};
+use crate::ao3::parse::{SpaceMode, percent_encode};
 use crate::ao3::pseuds::Pseud;
 use crate::ao3::solver::{Solver, SolverStatus};
 use crate::config::Config;
@@ -29,8 +31,6 @@ use crate::consts;
 use crate::crypto::SecretString;
 use crate::error::{Error, Result};
 use crate::time::now_secs;
-
-mod solver;
 
 /// What the session currently is. See `docs/write-client-plan.md` §2.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -70,11 +70,6 @@ impl std::fmt::Display for SessionState {
         };
         f.write_str(name)
     }
-}
-
-#[derive(Deserialize)]
-struct TokenDispenser {
-    token: String,
 }
 
 /// A logged-in AO3 identity plus the transport that carries it.
@@ -165,30 +160,6 @@ impl AccountSession {
         Ok(self.state)
     }
 
-    /// The masked CSRF token for mutating requests, if the session has one.
-    pub fn csrf_token(&self) -> Result<&str> {
-        self.csrf
-            .as_ref()
-            .map(SecretString::expose)
-            .ok_or(Error::CsrfMissing)
-    }
-
-    /// Keeps the in-memory CSRF token in sync after a direct `Client` read:
-    /// clears any stale token if cookies rotated, and captures a fresh token
-    /// from an authenticated HTML response when present.
-    pub fn sync_csrf_from_response(&mut self, response: &Response) {
-        if response.jar_changed {
-            self.csrf = None;
-        }
-        if response.status == 200
-            && !self.account.is_empty()
-            && self.jar().is_complete()
-            && let Some(token) = crate::ao3::parse::csrf_token_from_html(&response.body)
-        {
-            self.csrf = Some(SecretString::new(token));
-        }
-    }
-
     /// Adopts a cookie jar supplied by the user and proves it works.
     ///
     /// An incomplete jar is rejected **before installation** and without network
@@ -275,99 +246,6 @@ impl AccountSession {
                     .into(),
             )
         })
-    }
-
-    /// Logs in with an AO3 username/password (ADR-0001 option B).
-    pub async fn login(&mut self, account: &str, password: SecretString) -> Result<SessionState> {
-        self.ensure_alive()?;
-        let account = validate_account(account)?.to_string();
-        match self.login_once(&account, password.expose()).await {
-            Err(Error::CsrfExpired) if self.solver_status.reachable => {
-                // A stale FlareSolverr browser session can hold an older
-                // `_otwarchive_session` than the freshly parsed form token.
-                // Reset the browser session and try once more.
-                self.solver.reset_session().await;
-                self.login_once(&account, password.expose()).await
-            }
-            other => other,
-        }
-    }
-
-    async fn login_once(&mut self, account: &str, password: &str) -> Result<SessionState> {
-        self.account = account.to_string();
-        self.csrf = None;
-        self.pseud = None;
-        // One account per jar: never authenticate on top of a previous identity.
-        self.client.set_jar(Jar::new());
-        self.state = SessionState::LoggedOut;
-
-        let login_page = match self.upstream_get(consts::LOGIN_PATH, None).await {
-            Ok(page) => page,
-            Err(err) => {
-                self.wipe();
-                return Err(err);
-            }
-        };
-        if let Err(err) = self.classify_pre_login(&login_page) {
-            if !matches!(err, Error::BlockedByEdge { .. }) {
-                self.wipe();
-            }
-            return Err(err);
-        }
-        let Some(token) = crate::ao3::parse::csrf_token_from_html(&login_page.body) else {
-            self.wipe();
-            return Err(Error::CsrfMissing);
-        };
-
-        let response = match self
-            .upstream_post_form(
-                consts::LOGIN_PATH,
-                &[
-                    ("user[login]", account),
-                    ("user[password]", password),
-                    ("user[remember_me]", "1"),
-                    ("authenticity_token", &token),
-                ],
-            )
-            .await
-        {
-            Ok(response) => response,
-            Err(err) => {
-                self.wipe();
-                return Err(err);
-            }
-        };
-
-        match response.status {
-            // Stock Rails re-renders the form with a flash on a failed
-            // navigational login.
-            200 => {
-                let message = crate::ao3::parse::flash_message(&response.body)
-                    .unwrap_or_else(|| "login rejected by upstream".to_string());
-                self.wipe();
-                Err(Error::LoginRejected(message))
-            }
-            302 | 303 => self.classify_login_redirect(&response).await,
-            429 => {
-                self.wipe();
-                Err(Error::RateLimited {
-                    retry_after: response.retry_after,
-                })
-            }
-            403 | 503 => {
-                self.wipe();
-                self.state = SessionState::Blocked;
-                Err(Error::BlockedByEdge {
-                    status: response.status,
-                })
-            }
-            status => {
-                self.wipe();
-                Err(Error::UpstreamChanged(format!(
-                    "login returned HTTP {status}"
-                )))
-            }
-        }
     }
 
     /// Proves the session with an authenticated read.
@@ -528,7 +406,7 @@ impl AccountSession {
         self.state = SessionState::Killed;
     }
 
-    async fn finish_validation(&mut self) -> Result<SessionState> {
+    pub(super) async fn finish_validation(&mut self) -> Result<SessionState> {
         let state = self.probe().await?;
         if state != SessionState::Active {
             return Ok(state);
@@ -577,237 +455,11 @@ impl AccountSession {
         }
     }
 
-    async fn ensure_csrf_token(&mut self) -> Result<String> {
-        if self.csrf.is_none() {
-            self.fetch_csrf().await?;
-        }
-        self.csrf_token().map(str::to_string)
-    }
-
-    /// CSRF-protected form POST for a write action.
-    ///
-    /// Lazily refreshes a missing token and retries once if AO3 rejects a stale
-    /// token with a redirect to `/auth_error` (Rails aborts before running the
-    /// controller action, so one retry cannot double-post).
-    pub async fn post_write(&mut self, path: &str, fields: &[(&str, &str)]) -> Result<Response> {
-        let token = self.ensure_csrf_token().await?;
-        let mut all: Vec<(&str, &str)> = fields.to_vec();
-        all.push(("authenticity_token", token.as_str()));
-        let response = self.upstream_post_form(path, &all).await?;
-        if is_auth_error_redirect(&response) {
-            self.csrf = None;
-            if self.fetch_csrf().await.is_ok()
-                && let Ok(fresh) = self.csrf_token().map(str::to_string)
-            {
-                let mut retry: Vec<(&str, &str)> = fields.to_vec();
-                retry.push(("authenticity_token", fresh.as_str()));
-                return self.upstream_post_form(path, &retry).await;
-            }
-        }
-        Ok(response)
-    }
-
-    /// CSRF-protected PATCH for a write action (reading flags).
-    pub async fn patch_write(&mut self, path: &str, fields: &[(&str, &str)]) -> Result<Response> {
-        let token = self.ensure_csrf_token().await?;
-        let mut all: Vec<(&str, &str)> = fields.to_vec();
-        all.push(("authenticity_token", token.as_str()));
-        let response = self.upstream_patch_form(path, &all).await?;
-        if is_auth_error_redirect(&response) {
-            self.csrf = None;
-            if self.fetch_csrf().await.is_ok()
-                && let Ok(fresh) = self.csrf_token().map(str::to_string)
-            {
-                let mut retry: Vec<(&str, &str)> = fields.to_vec();
-                retry.push(("authenticity_token", fresh.as_str()));
-                return self.upstream_patch_form(path, &retry).await;
-            }
-        }
-        Ok(response)
-    }
-
-    /// CSRF-protected DELETE for a write action (e.g. unsubscribe).
-    pub async fn delete_write(&mut self, path: &str) -> Result<Response> {
-        let token = self.ensure_csrf_token().await?;
-        let response = self.upstream_delete_with_csrf(path, &token).await?;
-        if is_auth_error_redirect(&response) {
-            self.csrf = None;
-            if self.fetch_csrf().await.is_ok()
-                && let Ok(fresh) = self.csrf_token().map(str::to_string)
-            {
-                return self.upstream_delete_with_csrf(path, &fresh).await;
-            }
-        }
-        Ok(response)
-    }
-
-    /// Fetches a fresh CSRF token from `/token_dispenser.json`, falling back to
-    /// an authenticated HTML page's `<meta name="csrf-token">` if the dispenser
-    /// endpoint fails transiently (403/404/429/503 or network error).
-    async fn fetch_csrf(&mut self) -> Result<()> {
-        let before = self.jar_signature();
-        let response = match self
-            .upstream_get(consts::TOKEN_PATH, Some(consts::TOKEN_TIMEOUT))
-            .await
-        {
-            Ok(response) => response,
-            Err(err) => {
-                if self.try_csrf_from_html().await {
-                    return Ok(());
-                }
-                return Err(err);
-            }
-        };
-        if before != self.jar_signature() {
-            self.csrf = None;
-        }
-        match response.status {
-            200 => {
-                let json = crate::ao3::solver::extract_json_body(&response.body);
-                let parsed: TokenDispenser = serde_json::from_str(&json)
-                    .map_err(|_| Error::UpstreamChanged("token dispenser is not JSON".into()))?;
-                if parsed.token.is_empty() {
-                    return Err(Error::CsrfMissing);
-                }
-                self.csrf = Some(SecretString::new(parsed.token));
-                Ok(())
-            }
-            302 | 303 => {
-                if response.location_contains("/lost_cookie") {
-                    self.state = SessionState::SessionIncomplete;
-                    self.client.set_jar(Jar::new());
-                    return Err(Error::SessionIncomplete);
-                }
-                self.state = SessionState::LoggedOut;
-                self.client.set_jar(Jar::new());
-                Err(Error::LoggedOut)
-            }
-            429 => {
-                if self.try_csrf_from_html().await {
-                    return Ok(());
-                }
-                Err(Error::RateLimited {
-                    retry_after: response.retry_after,
-                })
-            }
-            403 | 503 => {
-                if self.try_csrf_from_html().await {
-                    return Ok(());
-                }
-                Err(Error::BlockedByEdge {
-                    status: response.status,
-                })
-            }
-            404 => {
-                if self.try_csrf_from_html().await {
-                    return Ok(());
-                }
-                Err(Error::UpstreamChanged(
-                    "token dispenser returned HTTP 404".into(),
-                ))
-            }
-            status => Err(Error::UpstreamChanged(format!(
-                "token dispenser returned HTTP {status}"
-            ))),
-        }
-    }
-
-    async fn try_csrf_from_html(&mut self) -> bool {
-        let Ok(account) = validate_account(&self.account).map(str::to_string) else {
-            return false;
-        };
-        let path = format!(
-            "/users/{}/subscriptions",
-            percent_encode(&account, SpaceMode::Percent20)
-        );
-        let Ok(response) = self.upstream_get(&path, Some(consts::TOKEN_TIMEOUT)).await else {
-            return false;
-        };
-        if response.status != 200 {
-            return false;
-        }
-        let Some(token) = crate::ao3::parse::csrf_token_from_html(&response.body) else {
-            return false;
-        };
-        self.csrf = Some(SecretString::new(token));
-        true
-    }
-
-    /// Classifies the page served for `GET /users/login`.
-    fn classify_pre_login(&mut self, response: &Response) -> Result<()> {
-        match response.status {
-            200 => Ok(()),
-            429 => Err(Error::RateLimited {
-                retry_after: response.retry_after,
-            }),
-            403 | 503 => {
-                // Wipe first: wipe() resets the state, so set Blocked after it.
-                self.wipe();
-                self.state = SessionState::Blocked;
-                Err(Error::BlockedByEdge {
-                    status: response.status,
-                })
-            }
-            status => Err(Error::UpstreamChanged(format!(
-                "login page returned HTTP {status}"
-            ))),
-        }
-    }
-
-    /// Decides what the post-login redirect means. A 302 alone is not success.
-    async fn classify_login_redirect(&mut self, response: &Response) -> Result<SessionState> {
-        let Some(location) = response.location.clone() else {
-            self.wipe();
-            return Err(Error::UpstreamChanged(
-                "login redirect carried no Location".into(),
-            ));
-        };
-        let Some(path) = self.location_path(&location) else {
-            self.wipe();
-            return Err(Error::UpstreamChanged(format!(
-                "login redirected off-origin to {location:?}"
-            )));
-        };
-
-        match classify_login_path(&path) {
-            Some(LoginRedirect::AuthError) => {
-                self.wipe();
-                Err(Error::CsrfExpired)
-            }
-            Some(LoginRedirect::LoginPage) => {
-                self.wipe();
-                Err(Error::LoginRejected("login rejected by upstream".into()))
-            }
-            Some(LoginRedirect::ChangePassword) => {
-                // Signed in, but AO3 demands a password change before use.
-                self.wipe();
-                Err(Error::PasswordChangeRequired)
-            }
-            Some(LoginRedirect::User(login)) => {
-                self.account = login;
-                self.state = SessionState::Imported;
-                self.finish_validation().await
-            }
-            None => {
-                self.wipe();
-                Err(Error::UpstreamChanged(format!(
-                    "login redirected to {location:?}"
-                )))
-            }
-        }
-    }
-
-    /// The path of a same-origin (or root-relative, not protocol-relative)
-    /// redirect target.
-    fn location_path(&self, location: &str) -> Option<String> {
-        redirect_path(location, self.client.base_url())
-    }
-
-    fn jar_signature(&self) -> Option<String> {
+    pub(super) fn jar_signature(&self) -> Option<String> {
         self.client.jar().cookie_header()
     }
 
-    fn ensure_alive(&self) -> Result<()> {
+    pub(super) fn ensure_alive(&self) -> Result<()> {
         if self.state == SessionState::Killed {
             return Err(Error::Killed);
         }
@@ -815,7 +467,7 @@ impl AccountSession {
     }
 
     /// Local wipe: jar, token, pseud, state.
-    fn wipe(&mut self) {
+    pub(super) fn wipe(&mut self) {
         self.client.set_jar(Jar::new());
         self.csrf = None;
         self.pseud = None;
@@ -823,141 +475,10 @@ impl AccountSession {
     }
 }
 
-fn validate_account(account: &str) -> Result<&str> {
+pub(super) fn validate_account(account: &str) -> Result<&str> {
     let trimmed = account.trim();
     if trimmed.is_empty() {
         return Err(Error::Config("AO3 account login is empty".into()));
     }
     Ok(trimmed)
-}
-
-/// Recovers the canonical login from a success redirect such as
-/// `/users/some_one` or `https://archiveofourown.org/users/some_one`.
-///
-/// The login typed by the user may be an email, so the redirect is the only
-/// reliable source of the canonical username for the probe path.
-/// Extracts the path of a same-origin or root-relative redirect.
-///
-/// Rejects absolute URLs to other origins and protocol-relative references
-/// (`//host/path`), which would otherwise be misread as root-relative.
-fn redirect_path(location: &str, base: &str) -> Option<String> {
-    if location.starts_with("//") {
-        return None;
-    }
-    let rest = if let Some(rest) = location.strip_prefix(base) {
-        rest
-    } else if location.starts_with('/') {
-        location
-    } else {
-        return None;
-    };
-    let path = rest.split(['?', '#']).next().unwrap_or(rest);
-    if path.is_empty() {
-        None
-    } else {
-        Some(path.to_string())
-    }
-}
-
-#[derive(Debug, PartialEq, Eq)]
-enum LoginRedirect {
-    AuthError,
-    LoginPage,
-    ChangePassword,
-    /// Success: the canonical login for the probe path.
-    User(String),
-}
-
-/// Classifies a same-origin login redirect path.
-///
-/// Whole segments only: `/users/auth_error` is a *user*, `/auth_error` is the
-/// CSRF page; `/users/someone/change_password` is the forced change, while a
-/// user called `change_password` alone is just a user.
-///
-/// Known ambiguity: an account literally named `login` redirects to
-/// `/users/login`, which is byte-identical to the login page. We fail closed
-/// (`LoginRejected`); cookie import still works for such an account.
-fn classify_login_path(path: &str) -> Option<LoginRedirect> {
-    let path = path.split(['?', '#']).next().unwrap_or(path);
-    let segments: Vec<&str> = path
-        .split('/')
-        .filter(|segment| !segment.is_empty())
-        .collect();
-    match segments.as_slice() {
-        ["auth_error"] => Some(LoginRedirect::AuthError),
-        ["users", "login"] => Some(LoginRedirect::LoginPage),
-        ["users", _login, "change_password"] => Some(LoginRedirect::ChangePassword),
-        ["users", login] => percent_decode(login)
-            .filter(|login| !login.is_empty())
-            .map(LoginRedirect::User),
-        _ => None,
-    }
-}
-
-fn is_auth_error_redirect(response: &Response) -> bool {
-    response.is_redirect() && response.location_contains("/auth_error")
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn login_redirects_are_classified_by_whole_segments() {
-        assert_eq!(
-            classify_login_path("/users/someone"),
-            Some(LoginRedirect::User("someone".into()))
-        );
-        assert_eq!(
-            classify_login_path("/users/some_one?x=1"),
-            Some(LoginRedirect::User("some_one".into()))
-        );
-        assert_eq!(
-            classify_login_path("/users/a%20b"),
-            Some(LoginRedirect::User("a b".into()))
-        );
-        assert_eq!(
-            classify_login_path("/auth_error"),
-            Some(LoginRedirect::AuthError)
-        );
-        assert_eq!(
-            classify_login_path("/users/login"),
-            Some(LoginRedirect::LoginPage)
-        );
-        assert_eq!(
-            classify_login_path("/users/someone/change_password"),
-            Some(LoginRedirect::ChangePassword)
-        );
-        // Usernames that merely contain the magic words are users, not pages.
-        assert_eq!(
-            classify_login_path("/users/change_password_fan"),
-            Some(LoginRedirect::User("change_password_fan".into()))
-        );
-        assert_eq!(
-            classify_login_path("/users/auth_error"),
-            Some(LoginRedirect::User("auth_error".into()))
-        );
-        assert_eq!(classify_login_path("/users/"), None);
-        assert_eq!(classify_login_path("/somewhere/new"), None);
-    }
-
-    #[test]
-    fn redirect_paths_are_same_origin_or_root_relative_only() {
-        let base = "https://archiveofourown.org";
-        assert_eq!(
-            redirect_path("https://archiveofourown.org/users/x", base).as_deref(),
-            Some("/users/x")
-        );
-        assert_eq!(redirect_path("/users/x", base).as_deref(), Some("/users/x"));
-        assert_eq!(
-            redirect_path("/users/x?y=1#z", base).as_deref(),
-            Some("/users/x")
-        );
-        assert_eq!(redirect_path("https://evil.example/users/x", base), None);
-        assert_eq!(redirect_path("//evil.example/users/x", base), None);
-        assert_eq!(redirect_path("users/x", base), None);
-        assert_eq!(redirect_path("/", base).as_deref(), Some("/"));
-        // A root redirect is a valid path but not a login-redirect class.
-        assert_eq!(classify_login_path("/"), None);
-    }
 }
