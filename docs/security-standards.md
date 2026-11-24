@@ -229,7 +229,7 @@ POST (`otwarchive/app/controllers/muted/users_controller.rb:75-79`).
 
 | id | threat | vector | control |
 | --- | --- | --- | --- |
-| T1 | XSS via work content | author HTML/CSS | sanitized XHTML in a sandboxed iframe + CSP (audit §5.7); never inject into the app document |
+| T1 | XSS via work content | author HTML/CSS | strict `ammonia` HTML sanitization (tag/attribute allowlist, `http`/`https` schemes only, forced `noopener noreferrer`, stripping scripts/styles/event handlers) rendered inline inside `#chapters` (matching AO3's `sanitize_field` model) so built-in and public site skins style prose cleanly; standalone `/read/{id}/chapter/{idx}` retains `CHAPTER_CSP` |
 | T2 | CSRF against us | malicious page posts to our routes | CSRF token + Origin check + SameSite; confirmation for public actions |
 | T3 | Session theft | cookie exfiltration | HttpOnly/Secure; short local session; AO3 jar encrypted and never exposed |
 | T4 | Secret leakage | logs, errors, JSON, traces | `Secret<T>` redaction; typed errors; serialization test |

@@ -461,7 +461,7 @@ pub fn filter_from(
 // Live AO3 search (the default path)
 // ---------------------------------------------------------------------------
 
-use crate::ao3::search::{LiveSearchQuery, LiveSearchResults, LiveWork};
+use crate::ao3::search::{LiveSearchQuery, LiveSearchResults, LiveTagFacets, LiveWork, TagFacet};
 
 /// AO3 Work Search form. It submits to our server, which performs one literal
 /// AO3 search request (AO3's own web form uses GET, so this does too).
@@ -576,7 +576,13 @@ pub fn live_search_form_page(ctx: &PageContext, query: &LiveSearchQuery) -> Stri
     );
     body.push_str(&row(
         "Fandoms",
-        &text_input("fandom", query.fandom.as_deref(), "fandom name"),
+        &autocomplete_input(
+            None,
+            "fandom",
+            query.fandom.as_deref(),
+            "fandom name",
+            "fandom",
+        ),
     ));
     body.push_str(&row(
         "Rating",
@@ -607,38 +613,52 @@ pub fn live_search_form_page(ctx: &PageContext, query: &LiveSearchQuery) -> Stri
     ));
     body.push_str(&row(
         "Characters",
-        &text_input("characters", query.characters.as_deref(), "character name"),
+        &autocomplete_input(
+            None,
+            "characters",
+            query.characters.as_deref(),
+            "character name",
+            "character",
+        ),
     ));
     body.push_str(&row(
         "Relationships",
-        &text_input(
+        &autocomplete_input(
+            None,
             "relationships",
             query.relationships.as_deref(),
             "relationship name",
+            "relationship",
         ),
     ));
     body.push_str(&row(
         "Additional Tags",
-        &text_input(
+        &autocomplete_input(
+            None,
             "additional_tags",
             query.additional_tags.as_deref(),
             "freeform tag",
+            "freeform",
         ),
     ));
     body.push_str(&row(
         "Other tags to include",
-        &text_input(
+        &autocomplete_input(
+            None,
             "include_tags",
             Some(&query.include_tags.join(", ")),
-            "comma-separated tag names",
+            "Search tags to include",
+            "tag",
         ),
     ));
     body.push_str(&row(
         "Other tags to exclude",
-        &text_input(
+        &autocomplete_input(
+            None,
             "exclude_tags",
             Some(&query.exclude_tags.join(", ")),
-            "comma-separated tag names",
+            "Search tags to exclude",
+            "tag",
         ),
     ));
     body.push_str("</dl></fieldset>");
@@ -876,36 +896,91 @@ impl TagFilter {
     }
 }
 
-fn facet_group(action: &str, label: &str, values: &[&str], selected: &[String]) -> String {
-    let mut out = format!(
-        "<details class=\"filter-group {action}\"><summary>{label}</summary><ul class=\"facet-list\">"
-    );
-    for value in values {
-        let checked = if selected.iter().any(|item| item == value) {
-            " checked"
-        } else {
-            ""
-        };
-        out.push_str(&format!(
-            "<li><label><input type=\"checkbox\" name=\"{action}_tag\" value=\"{value}\"{checked}>\
-             <span class=\"indicator\" aria-hidden=\"true\"></span><span>{value}</span></label></li>",
-            value = escape(value),
-        ));
-    }
-    out.push_str("</ul></details>");
-    out
-}
-
-fn text_group(name: &str, label: &str, value: &str, placeholder: &str) -> String {
+fn autocomplete_input(
+    id: Option<&str>,
+    name: &str,
+    value: Option<&str>,
+    placeholder: &str,
+    kind: &str,
+) -> String {
+    let id_attr = id
+        .map(|id| format!(" id=\"{}\"", escape(id)))
+        .unwrap_or_default();
     format!(
-        "<details class=\"filter-group\"><summary>{label}</summary>\
-         <input type=\"text\" name=\"{name}\" value=\"{}\" placeholder=\"{}\"></details>",
-        escape(value),
-        escape(placeholder)
+        "<div class=\"autocomplete-field\" data-autocomplete=\"{kind}\">\
+         <input{id_attr} type=\"text\" name=\"{name}\" value=\"{}\" placeholder=\"{}\" autocomplete=\"off\">\
+         </div>",
+        escape(value.unwrap_or_default()),
+        escape(placeholder),
     )
 }
 
-fn tag_filter_sidebar(tag: &str, filter: &TagFilter) -> String {
+fn facet_group(
+    action: &str,
+    label: &str,
+    facets: &[TagFacet],
+    fallback: &[&str],
+    selected: &[String],
+    fallback_input: Option<(&str, &str, &str, &str)>,
+    rendered_selected: &mut Vec<String>,
+) -> String {
+    let items: Vec<TagFacet> = if !facets.is_empty() {
+        facets.to_vec()
+    } else {
+        fallback
+            .iter()
+            .map(|name| TagFacet {
+                name: (*name).to_string(),
+                count: None,
+            })
+            .collect()
+    };
+
+    let has_checked = items
+        .iter()
+        .any(|facet| selected.iter().any(|item| item == &facet.name));
+    let has_text = fallback_input.is_some_and(|(_, value, _, _)| !value.trim().is_empty());
+    let open_attr = if has_checked || has_text { " open" } else { "" };
+
+    let mut out =
+        format!("<details class=\"filter-group {action}\"{open_attr}><summary>{label}</summary>");
+    if !items.is_empty() {
+        out.push_str("<ul class=\"facet-list\">");
+        for facet in &items {
+            let is_checked = selected.iter().any(|item| item == &facet.name);
+            if is_checked {
+                rendered_selected.push(facet.name.clone());
+            }
+            let checked = if is_checked { " checked" } else { "" };
+            let count_suffix = facet.count.map_or_else(String::new, |n| {
+                format!(" ({})", crate::time::format_count(n))
+            });
+            out.push_str(&format!(
+                "<li><label><input type=\"checkbox\" name=\"{action}_tag\" value=\"{value}\"{checked}>\
+                 <span class=\"indicator\" aria-hidden=\"true\"></span><span>{value}{count_suffix}</span></label></li>",
+                value = escape(&facet.name),
+            ));
+        }
+        out.push_str("</ul>");
+    }
+    if let Some((name, value, placeholder, kind)) = fallback_input
+        && (items.is_empty() || !value.trim().is_empty())
+    {
+        out.push_str("<div class=\"facet-extra\">");
+        out.push_str(&autocomplete_input(
+            None,
+            name,
+            Some(value),
+            placeholder,
+            kind,
+        ));
+        out.push_str("</div>");
+    }
+    out.push_str("</details>");
+    out
+}
+
+fn tag_filter_sidebar(tag: &str, filter: &TagFilter, facets: &LiveTagFacets) -> String {
     let path = format!("/tags/{}/works", percent_encode(tag, SpaceMode::Percent20));
     let mut out = format!(
         "<form id=\"work-filters\" class=\"filters\" method=\"get\" action=\"{path}\">\
@@ -935,43 +1010,57 @@ fn tag_filter_sidebar(tag: &str, filter: &TagFilter) -> String {
     }
     out.push_str("</select></label>");
 
+    const DEFAULT_RATINGS: &[&str] = &[
+        "Not Rated",
+        "General Audiences",
+        "Teen And Up Audiences",
+        "Mature",
+        "Explicit",
+    ];
+    const DEFAULT_WARNINGS: &[&str] = &[
+        "Creator Chose Not To Use Archive Warnings",
+        "No Archive Warnings Apply",
+        "Graphic Depictions Of Violence",
+        "Major Character Death",
+        "Rape/Non-Con",
+        "Underage Sex",
+    ];
+    const DEFAULT_CATEGORIES: &[&str] = &["F/F", "F/M", "Gen", "M/M", "Multi", "Other"];
+
     for (action, label, include) in [("include", "Include", true), ("exclude", "Exclude", false)] {
         let selected = if include {
             &filter.include
         } else {
             &filter.exclude
         };
+        let mut rendered_selected = Vec::new();
         out.push_str(&format!("<h4 class=\"filter-heading\">{label}</h4>"));
         out.push_str(&facet_group(
             action,
             "Ratings",
-            &[
-                "Not Rated",
-                "General Audiences",
-                "Teen And Up Audiences",
-                "Mature",
-                "Explicit",
-            ],
+            &facets.ratings,
+            DEFAULT_RATINGS,
             selected,
+            None,
+            &mut rendered_selected,
         ));
         out.push_str(&facet_group(
             action,
-            "Archive Warnings",
-            &[
-                "Creator Chose Not To Use Archive Warnings",
-                "No Archive Warnings Apply",
-                "Graphic Depictions Of Violence",
-                "Major Character Death",
-                "Rape/Non-Con",
-                "Underage Sex",
-            ],
+            "Warnings",
+            &facets.warnings,
+            DEFAULT_WARNINGS,
             selected,
+            None,
+            &mut rendered_selected,
         ));
         out.push_str(&facet_group(
             action,
             "Categories",
-            &["F/F", "F/M", "Gen", "M/M", "Multi", "Other"],
+            &facets.categories,
+            DEFAULT_CATEGORIES,
             selected,
+            None,
+            &mut rendered_selected,
         ));
         let prefix = if include { "include" } else { "exclude" };
         let (fandoms, characters, relationships, additional, other) = if include {
@@ -991,35 +1080,92 @@ fn tag_filter_sidebar(tag: &str, filter: &TagFilter) -> String {
                 &filter.other_exclude,
             )
         };
-        out.push_str(&text_group(
-            &format!("{prefix}_fandoms"),
+        out.push_str(&facet_group(
+            action,
             "Fandoms",
-            fandoms,
-            "comma-separated fandom names",
+            &facets.fandoms,
+            &[],
+            selected,
+            Some((
+                &format!("{prefix}_fandoms"),
+                fandoms,
+                "Search fandoms",
+                "fandom",
+            )),
+            &mut rendered_selected,
         ));
-        out.push_str(&text_group(
-            &format!("{prefix}_characters"),
+        out.push_str(&facet_group(
+            action,
             "Characters",
-            characters,
-            "comma-separated character names",
+            &facets.characters,
+            &[],
+            selected,
+            Some((
+                &format!("{prefix}_characters"),
+                characters,
+                "Search characters",
+                "character",
+            )),
+            &mut rendered_selected,
         ));
-        out.push_str(&text_group(
-            &format!("{prefix}_relationships"),
+        out.push_str(&facet_group(
+            action,
             "Relationships",
-            relationships,
-            "comma-separated relationship names",
+            &facets.relationships,
+            &[],
+            selected,
+            Some((
+                &format!("{prefix}_relationships"),
+                relationships,
+                "Search relationships",
+                "relationship",
+            )),
+            &mut rendered_selected,
         ));
-        out.push_str(&text_group(
-            &format!("{prefix}_additional"),
+        out.push_str(&facet_group(
+            action,
             "Additional Tags",
-            additional,
-            "comma-separated freeform tags",
+            &facets.freeforms,
+            &[],
+            selected,
+            Some((
+                &format!("{prefix}_additional"),
+                additional,
+                "Search additional tags",
+                "freeform",
+            )),
+            &mut rendered_selected,
         ));
-        out.push_str(&text_group(
-            &format!("other_tags_{prefix}"),
-            "Other tags",
-            other,
-            "comma-separated tag names",
+
+        // Preserve any checked tag that narrowed out of the top-10 facets
+        // inside the "Other tags to include/exclude" autocomplete field so
+        // the user can still see and remove it.
+        let mut other_parts: Vec<String> = other
+            .split(',')
+            .map(str::trim)
+            .filter(|part| !part.is_empty())
+            .map(str::to_string)
+            .collect();
+        for item in selected {
+            if !rendered_selected.iter().any(|seen| seen == item)
+                && !other_parts.iter().any(|seen| seen == item)
+            {
+                other_parts.push(item.clone());
+            }
+        }
+        let other_value = other_parts.join(", ");
+        let other_name = format!("other_tags_{prefix}");
+        let other_label = format!("Other tags to {prefix}");
+        out.push_str(&format!(
+            "<div class=\"filter-autocomplete\">\
+             <label for=\"{other_name}\">{other_label}</label>{}</div>",
+            autocomplete_input(
+                Some(&other_name),
+                &other_name,
+                Some(&other_value),
+                "",
+                "tag",
+            )
         ));
     }
 
@@ -1185,7 +1331,7 @@ pub fn live_tag_page(
         }
     }
     body.push_str("</section>");
-    body.push_str(&tag_filter_sidebar(tag, filter));
+    body.push_str(&tag_filter_sidebar(tag, filter, &results.facets));
     body.push_str("</div>");
     layout_with_class(ctx, "works-index filtered", &body)
 }

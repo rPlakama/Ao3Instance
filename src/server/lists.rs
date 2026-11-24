@@ -1,12 +1,14 @@
 //! Offline list pages: browse, fandoms, dashboard and the account ledgers.
 
+use std::collections::HashSet;
 use std::sync::Arc;
 
 use axum::{
     extract::{Path, Query, RawQuery, State},
-    response::Html,
+    http::{HeaderValue, header},
+    response::{Html, IntoResponse, Response},
 };
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 use super::AppState;
 use super::error::{AppError, Handled};
@@ -112,13 +114,32 @@ pub(super) async fn tag_browse(
         page,
         ..crate::ao3::search::LiveSearchQuery::default()
     };
-    let path = live_query.path(page);
+    let tag_path = live_query.tag_works_path(
+        &tag,
+        nonempty(&filter.words_from).as_deref(),
+        nonempty(&filter.words_to).as_deref(),
+        page,
+    );
     let refresh = first(&pairs, "refresh").as_deref() == Some("1");
     let cache_account = super::cache::cache_account(&state).await;
-    if let Some(fetched) =
-        super::cache::fetch_cached_optional(&state, &cache_account, &path, true, refresh).await
-        && let Ok(results) = crate::ao3::search::parse_search_results(&fetched.body)
+
+    let fetched = match fetch_tag_page(&state, &cache_account, &tag_path, refresh).await {
+        Some(page_html) => Some(page_html),
+        None => {
+            // Non-canonical / unwrangled tags may 404 on `/tags/<tag>/works`;
+            // fall back to AO3's `/works/search` endpoint.
+            let search_path = live_query.path(page);
+            super::cache::fetch_cached_optional(&state, &cache_account, &search_path, true, refresh)
+                .await
+        }
+    };
+
+    if let Some(fetched) = fetched
+        && let Ok(mut results) = crate::ao3::search::parse_search_results(&fetched.body)
     {
+        if results.facets.is_empty() && !results.works.is_empty() {
+            results.facets = crate::ao3::search::LiveTagFacets::from_works(&results.works);
+        }
         let page_ctx =
             super::page_context(&state, &format!("{tag} — AO3Instance"), NavSection::Fandoms).await;
         return Ok(Html(render::live_tag_page(
@@ -132,6 +153,111 @@ pub(super) async fn tag_browse(
     }
     // Offline/cached fallback: the tag page still shows local works.
     render_browse(&state, browse_query(page), Some(tag)).await
+}
+
+async fn fetch_tag_page(
+    state: &AppState,
+    cache_account: &str,
+    path: &str,
+    refresh: bool,
+) -> Option<super::cache::CachedHtml> {
+    match super::cache::fetch_cached_page(state, cache_account, path, true, refresh).await {
+        Ok(fetched) => Some(fetched),
+        Err(super::cache::PageFetchError::Status {
+            status: 301 | 302 | 303 | 307 | 308,
+            location: Some(location),
+        }) => {
+            // Follow one canonical-tag redirect (e.g. synonym -> canonical tag works page).
+            let next_path = extract_tag_redirect_path(&location)?;
+            super::cache::fetch_cached_optional(state, cache_account, &next_path, true, refresh)
+                .await
+        }
+        Err(_) => None,
+    }
+}
+
+fn extract_tag_redirect_path(location: &str) -> Option<String> {
+    let trimmed = location.trim();
+    if trimmed.starts_with("/tags/") {
+        return Some(trimmed.to_string());
+    }
+    let after_scheme = trimmed
+        .strip_prefix("https://")
+        .or_else(|| trimmed.strip_prefix("http://"))?;
+    let (_, rest) = after_scheme.split_once('/')?;
+    let path = format!("/{rest}");
+    path.starts_with("/tags/").then_some(path)
+}
+
+#[derive(Deserialize)]
+pub(super) struct AutocompleteQuery {
+    term: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct AutocompleteItem {
+    id: String,
+    name: String,
+}
+
+/// Live tag autocomplete proxy (`GET /autocomplete/{kind}?term=...`), backed by
+/// AO3's `/autocomplete/{kind}.json` (30-min SQLite cache) with an offline
+/// fallback over cached works' tags.
+pub(super) async fn autocomplete(
+    State(state): State<Arc<AppState>>,
+    Path(kind): Path<String>,
+    Query(query): Query<AutocompleteQuery>,
+) -> Handled<Response> {
+    let kind = match kind.as_str() {
+        "tag" | "fandom" | "character" | "relationship" | "freeform" => kind.as_str(),
+        _ => return Err(AppError::BadRequest("unsupported autocomplete kind".into())),
+    };
+    let term = query.term.as_deref().unwrap_or_default().trim();
+    if term.is_empty() || term.len() > 200 {
+        return Ok(json_response("[]"));
+    }
+
+    let encoded = crate::ao3::parse::percent_encode(term, crate::ao3::parse::SpaceMode::Percent20);
+    let upstream_path = format!("/autocomplete/{kind}.json?term={encoded}");
+    if let Some(fetched) =
+        super::cache::fetch_cached_optional(&state, "", &upstream_path, false, false).await
+    {
+        let raw = crate::ao3::solver::extract_json_body(&fetched.body);
+        if let Ok(mut items) = serde_json::from_str::<Vec<AutocompleteItem>>(&raw) {
+            items.truncate(25);
+            let body = serde_json::to_string(&items).unwrap_or_else(|_| "[]".to_string());
+            return Ok(json_response(&body));
+        }
+    }
+
+    // Offline / upstream-unavailable fallback: search locally cached tags.
+    let hits = state.store.search_tags(term, 50).await.unwrap_or_default();
+    let mut seen = HashSet::new();
+    let items: Vec<AutocompleteItem> = hits
+        .into_iter()
+        .filter(|hit| kind == "tag" || hit.kind == kind)
+        .filter(|hit| seen.insert(hit.name.clone()))
+        .take(15)
+        .map(|hit| AutocompleteItem {
+            id: hit.name.clone(),
+            name: hit.name,
+        })
+        .collect();
+    let body = serde_json::to_string(&items).unwrap_or_else(|_| "[]".to_string());
+    Ok(json_response(&body))
+}
+
+fn json_response(body: &str) -> Response {
+    let mut response = body.to_string().into_response();
+    response.headers_mut().insert(
+        header::CONTENT_TYPE,
+        HeaderValue::from_static("application/json; charset=utf-8"),
+    );
+    response.headers_mut().insert(
+        header::CACHE_CONTROL,
+        HeaderValue::from_static("private, max-age=300"),
+    );
+    response
 }
 
 fn browse_query(page: i64) -> BrowseQuery {
@@ -266,8 +392,9 @@ pub(super) async fn medium_fandoms(
     Query(query): Query<RefreshQuery>,
 ) -> Handled<Html<String>> {
     let refresh = query.refresh.as_deref() == Some("1");
-    let encoded = crate::ao3::parse::percent_encode(&medium, crate::ao3::parse::SpaceMode::Percent20)
-        .replace("%2A", "*");
+    let encoded =
+        crate::ao3::parse::percent_encode(&medium, crate::ao3::parse::SpaceMode::Percent20)
+            .replace("%2A", "*");
     let path = format!("/media/{encoded}/fandoms");
     if let Some(fetched) =
         super::cache::fetch_cached_optional(&state, "", &path, false, refresh).await
@@ -287,8 +414,12 @@ pub(super) async fn medium_fandoms(
         )));
     }
     let fandoms = state.store.list_fandoms().await?;
-    let page =
-        super::page_context(&state, &format!("{medium} — AO3Instance"), NavSection::Fandoms).await;
+    let page = super::page_context(
+        &state,
+        &format!("{medium} — AO3Instance"),
+        NavSection::Fandoms,
+    )
+    .await;
     Ok(Html(render::fandoms_page(&page, &fandoms)))
 }
 
@@ -311,33 +442,18 @@ pub(super) async fn dashboard(
         let subs_path = format!("/users/{user_seg}/subscriptions");
         let bm_path = format!("/users/{user_seg}/bookmarks");
         let read_path = format!("/users/{user_seg}/readings");
-        let live_subs = super::cache::fetch_cached_optional(
-            &state,
-            &cache_acct,
-            &subs_path,
-            true,
-            refresh,
-        )
-        .await
-        .and_then(|fetched| crate::ao3::account_lists::parse_subscriptions(&fetched.body));
-        let live_bm = super::cache::fetch_cached_optional(
-            &state,
-            &cache_acct,
-            &bm_path,
-            true,
-            refresh,
-        )
-        .await
-        .and_then(|fetched| crate::ao3::account_lists::parse_bookmarks(&fetched.body));
-        let live_read = super::cache::fetch_cached_optional(
-            &state,
-            &cache_acct,
-            &read_path,
-            true,
-            refresh,
-        )
-        .await
-        .and_then(|fetched| crate::ao3::account_lists::parse_readings(&fetched.body));
+        let live_subs =
+            super::cache::fetch_cached_optional(&state, &cache_acct, &subs_path, true, refresh)
+                .await
+                .and_then(|fetched| crate::ao3::account_lists::parse_subscriptions(&fetched.body));
+        let live_bm =
+            super::cache::fetch_cached_optional(&state, &cache_acct, &bm_path, true, refresh)
+                .await
+                .and_then(|fetched| crate::ao3::account_lists::parse_bookmarks(&fetched.body));
+        let live_read =
+            super::cache::fetch_cached_optional(&state, &cache_acct, &read_path, true, refresh)
+                .await
+                .and_then(|fetched| crate::ao3::account_lists::parse_readings(&fetched.body));
         (live_subs, live_bm, live_read)
     } else {
         (None, None, None)
@@ -403,12 +519,9 @@ pub(super) async fn subscriptions(
             && let Some(parsed) = crate::ao3::account_lists::parse_subscriptions(&fetched.body)
         {
             let cached_works = state.store.cached_work_ids().await?;
-            let page = super::page_context(
-                &state,
-                "Subscriptions — AO3Instance",
-                NavSection::Dashboard,
-            )
-            .await;
+            let page =
+                super::page_context(&state, "Subscriptions — AO3Instance", NavSection::Dashboard)
+                    .await;
             return Ok(Html(render::live_subscriptions_page(
                 &page,
                 &parsed,

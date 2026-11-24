@@ -51,7 +51,12 @@ pub fn live_subscriptions_page(
     body.push_str(&cache_banner(cache_meta, &refresh_href));
 
     let extra_query = filter_type.map_or_else(String::new, |kind| format!("type={kind}"));
-    let pager = page_pager(current_page, page.total_pages, "/subscriptions", &extra_query);
+    let pager = page_pager(
+        current_page,
+        page.total_pages,
+        "/subscriptions",
+        &extra_query,
+    );
     if page.items.is_empty() {
         body.push_str("<p class=\"muted\">No subscriptions on AO3 for this filter.</p>");
     } else {
@@ -190,10 +195,7 @@ pub fn live_bookmarks_page(
             if has_user_info {
                 body.push_str("<div class=\"own user module group\">");
                 if !meta_parts.is_empty() {
-                    body.push_str(&format!(
-                        "<p class=\"meta\">{}</p>",
-                        meta_parts.join(" · ")
-                    ));
+                    body.push_str(&format!("<p class=\"meta\">{}</p>", meta_parts.join(" · ")));
                 }
                 if !item.tags.is_empty() {
                     body.push_str("<ul class=\"meta tags commas\">");
@@ -448,9 +450,7 @@ fn cache_banner(cache_meta: Option<(bool, i64)>, refresh_href: &str) -> String {
     } else {
         "Live from archiveofourown.org (cached for 30 min)".to_string()
     };
-    format!(
-        "<p class=\"meta\">{status} · <a href=\"{refresh_href}\">Refresh now</a></p>"
-    )
+    format!("<p class=\"meta\">{status} · <a href=\"{refresh_href}\">Refresh now</a></p>")
 }
 
 fn page_pager(current: i64, total_pages: i64, base: &str, extra_query: &str) -> String {

@@ -139,10 +139,7 @@ async fn solver_is_always_used_when_available_and_keeps_clearance_secret() {
                 .with_header("cf-ray", "ray-777")
                 .with_body("challenge body _otwarchive_session=leak"),
         ),
-        (
-            "GET /works/888?view_full_work=true",
-            Response::new(403),
-        ),
+        ("GET /works/888?view_full_work=true", Response::new(403)),
     ]);
     let solver = Server::start_sequence(vec![(
         "POST /v1",
@@ -166,7 +163,7 @@ async fn solver_is_always_used_when_available_and_keeps_clearance_secret() {
         body.contains("PLACEHOLDER: The Map and the Mirror"),
         "{body}"
     );
-    assert!(body.contains("iframe"), "{body}");
+    assert!(body.contains("class=\"userstuff module\""), "{body}");
     assert!(
         upstream.requests().is_empty(),
         "direct upstream should not be called while solver is available"
@@ -205,10 +202,7 @@ async fn solver_is_always_used_when_available_and_keeps_clearance_secret() {
 #[tokio::test]
 async fn search_always_uses_solver_when_available() {
     let search_path = "/works/search?work_search%5Bquery%5D=mirror";
-    let upstream = Server::start(vec![(
-        format!("GET {search_path}"),
-        Response::new(429),
-    )]);
+    let upstream = Server::start(vec![(format!("GET {search_path}"), Response::new(429))]);
     let solver = Server::start_sequence(vec![(
         "POST /v1",
         vec![
@@ -471,7 +465,9 @@ async fn login_validation_and_writes_all_use_solver_when_available() {
     );
     assert!(
         solver_reqs[5].body.contains(r#""cmd":"request.post""#)
-            && solver_reqs[5].body.contains("authenticity_token=solver-csrf"),
+            && solver_reqs[5]
+                .body
+                .contains("authenticity_token=solver-csrf"),
         "kudos POST went through solver: {}",
         solver_reqs[5].body
     );
@@ -603,7 +599,10 @@ async fn persistent_solver_session_and_auth_error_direct_fallback() {
     let direct_posts = upstream.requests();
     assert_eq!(direct_posts.len(), 1, "direct fallback completed the write");
     assert_eq!(direct_posts[0].path, "/kudos.js");
-    assert_eq!(direct_posts[0].header("x-csrf-token"), Some("solver-csrf-1"));
+    assert_eq!(
+        direct_posts[0].header("x-csrf-token"),
+        Some("solver-csrf-1")
+    );
     assert_eq!(direct_posts[0].header("origin"), Some(base.as_str()));
     assert_eq!(
         direct_posts[0].header("user-agent"),
@@ -633,7 +632,8 @@ async fn persistent_solver_session_and_auth_error_direct_fallback() {
     assert!(
         solver_bodies
             .iter()
-            .any(|b| b.contains(r#""cmd":"request.get""#) && b.contains(r#""session":"ao3instance""#)),
+            .any(|b| b.contains(r#""cmd":"request.get""#)
+                && b.contains(r#""session":"ao3instance""#)),
         "expected persistent session on request.get: {solver_bodies:?}"
     );
     assert!(

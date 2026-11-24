@@ -31,7 +31,10 @@ async fn ensure_usable_session(state: &AppState) -> (String, bool) {
             session.account().to_string(),
             session.state().is_usable(),
             !session.account().is_empty()
-                && matches!(session.state(), SessionState::Imported | SessionState::Blocked)
+                && matches!(
+                    session.state(),
+                    SessionState::Imported | SessionState::Blocked
+                )
                 && session.jar().is_complete(),
         )
     };
@@ -42,6 +45,7 @@ async fn ensure_usable_session(state: &AppState) -> (String, bool) {
         let _solver_guard = state.solver_lock.lock().await;
         let mut session = state.session.lock().await;
         drop(session.ensure_active().await);
+        super::sync_session_snapshot(state, &session).await;
         (session.account().to_string(), session.state().is_usable())
     };
     super::solver::sync_solver_state(state).await;
@@ -523,6 +527,7 @@ pub(super) async fn ensure_pseud(
         .await
         .map_err(AppError::from)?;
     session.set_pseud(pseud.clone());
+    super::sync_session_snapshot(state, session).await;
     persist_session(state, session)
         .await
         .map_err(AppError::from)?;

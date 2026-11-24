@@ -5,10 +5,31 @@
 //! user-initiated request (ADR-0002 §3), never a paging crawl. Results are not
 //! written to the cache; opening a result is a separate explicit action.
 
+use std::collections::BTreeMap;
+
 use scraper::{ElementRef, Html, Selector};
 
 use crate::ao3::parse::{SpaceMode, percent_encode};
 use crate::error::{Error, Result};
+
+/// Encodes a tag name into AO3's URL path segment format (`Tag#to_param`).
+///
+/// AO3 substitutes `/`, `&`, `.`, `?`, and `#` with `*s*`, `*a*`, `*d*`,
+/// `*q*`, and `*h*` before percent-encoding the remaining characters.
+pub fn ao3_tag_param(tag: &str) -> String {
+    let mut escaped = String::with_capacity(tag.len());
+    for ch in tag.chars() {
+        match ch {
+            '/' => escaped.push_str("*s*"),
+            '&' => escaped.push_str("*a*"),
+            '.' => escaped.push_str("*d*"),
+            '?' => escaped.push_str("*q*"),
+            '#' => escaped.push_str("*h*"),
+            _ => escaped.push(ch),
+        }
+    }
+    percent_encode(&escaped, SpaceMode::Percent20).replace("%2A", "*")
+}
 
 /// What AO3's Work Search form sends. Flat local field names are translated
 /// into AO3's `work_search[...]` parameters by [`Self::path`].
@@ -168,6 +189,112 @@ impl LiveSearchQuery {
         format!("/works/search?{encoded}")
     }
 
+    /// AO3's native `/tags/<tag>/works` URL for one filtered tag page.
+    ///
+    /// Unlike `/works/search`, AO3's tag works index runs with `faceted: true`
+    /// and renders `#work-filters` with global top-10 popular tags + counts.
+    pub fn tag_works_path(
+        &self,
+        tag: &str,
+        words_from: Option<&str>,
+        words_to: Option<&str>,
+        page: i64,
+    ) -> String {
+        let mut pairs: Vec<(String, String)> = Vec::new();
+        let push = |pairs: &mut Vec<(String, String)>, name: &str, value: &str| {
+            if !value.trim().is_empty() {
+                pairs.push((format!("work_search[{name}]"), value.trim().to_string()));
+            }
+        };
+
+        let mut other_tags: Vec<String> = self
+            .include_tags
+            .iter()
+            .filter(|item| !item.eq_ignore_ascii_case(tag))
+            .cloned()
+            .collect();
+        for value in [&self.rating, &self.warning, &self.category]
+            .into_iter()
+            .flatten()
+        {
+            if !value.eq_ignore_ascii_case(tag) {
+                other_tags.push(value.clone());
+            }
+        }
+
+        let (sort, _) = sort_columns(self.sort.as_deref(), self.direction.as_deref());
+        let has_filters = !self.query.trim().is_empty()
+            || !other_tags.is_empty()
+            || !self.exclude_tags.is_empty()
+            || self.complete.is_some()
+            || self.crossover.is_some()
+            || self.language.is_some()
+            || words_from.is_some_and(|v| !v.trim().is_empty())
+            || words_to.is_some_and(|v| !v.trim().is_empty())
+            || self.word_count.is_some();
+
+        // AO3's default sort on `/tags/<tag>/works` is `revised_at`. Keep the
+        // unfiltered URL completely clean so it hits AO3's cached tag index.
+        if sort != "revised_at" || has_filters {
+            push(&mut pairs, "sort_column", sort);
+        }
+        push(&mut pairs, "query", &self.query);
+
+        if !other_tags.is_empty() {
+            push(&mut pairs, "other_tag_names", &other_tags.join(", "));
+        }
+        if !self.exclude_tags.is_empty() {
+            push(
+                &mut pairs,
+                "excluded_tag_names",
+                &self.exclude_tags.join(", "),
+            );
+        }
+        if let Some(complete) = &self.complete {
+            push(&mut pairs, "complete", complete);
+        }
+        if let Some(crossover) = &self.crossover {
+            push(&mut pairs, "crossover", crossover);
+        }
+        if let Some(from) = words_from {
+            push(&mut pairs, "words_from", from);
+        }
+        if let Some(to) = words_to {
+            push(&mut pairs, "words_to", to);
+        }
+        if words_from.is_none()
+            && words_to.is_none()
+            && let Some(words) = &self.word_count
+        {
+            push(&mut pairs, "word_count", words);
+        }
+        if let Some(language) = &self.language {
+            push(&mut pairs, "language_id", language);
+        }
+
+        let page = if page > 1 { page } else { self.page.max(1) };
+        if page > 1 {
+            pairs.push(("page".to_string(), page.to_string()));
+        }
+
+        let base = format!("/tags/{}/works", ao3_tag_param(tag));
+        if pairs.is_empty() {
+            return base;
+        }
+        let encoded = pairs
+            .iter()
+            .map(|(key, value)| {
+                format!(
+                    "{}={}",
+                    percent_encode(key, SpaceMode::Percent20),
+                    percent_encode(value, SpaceMode::Percent20)
+                )
+            })
+            .collect::<Vec<_>>()
+            .join("&");
+        format!("{base}?{encoded}")
+    }
+
     /// Query string for the form/results links (without AO3's bracket syntax).
     pub fn form_query(&self) -> String {
         let encode = |value: &str| percent_encode(value, SpaceMode::Percent20);
@@ -250,6 +377,82 @@ fn sort_columns(sort: Option<&str>, direction: Option<&str>) -> (&'static str, &
     (column, direction)
 }
 
+/// One popular tag facet from AO3's `#work-filters` sidebar (or tallied from
+/// the returned works when `#work-filters` is absent).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TagFacet {
+    pub name: String,
+    pub count: Option<u64>,
+}
+
+/// Popular tag facets rendered in the `#work-filters` sidebar on tag pages.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct LiveTagFacets {
+    pub ratings: Vec<TagFacet>,
+    pub warnings: Vec<TagFacet>,
+    pub categories: Vec<TagFacet>,
+    pub fandoms: Vec<TagFacet>,
+    pub characters: Vec<TagFacet>,
+    pub relationships: Vec<TagFacet>,
+    pub freeforms: Vec<TagFacet>,
+}
+
+impl LiveTagFacets {
+    pub fn is_empty(&self) -> bool {
+        self.ratings.is_empty()
+            && self.warnings.is_empty()
+            && self.categories.is_empty()
+            && self.fandoms.is_empty()
+            && self.characters.is_empty()
+            && self.relationships.is_empty()
+            && self.freeforms.is_empty()
+    }
+
+    /// Fallback popular-tag facets tallied from the returned works when AO3's
+    /// `#work-filters` sidebar wasn't present (e.g., `/works/search` fallback).
+    pub fn from_works(works: &[LiveWork]) -> Self {
+        Self {
+            ratings: tally_facets(works, |w| w.rating.iter().map(String::as_str)),
+            warnings: tally_facets(works, |w| w.warnings.iter().map(String::as_str)),
+            categories: tally_facets(works, |w| w.categories.iter().map(String::as_str)),
+            fandoms: tally_facets(works, |w| w.fandoms.iter().map(String::as_str)),
+            characters: tally_facets(works, |w| w.characters.iter().map(String::as_str)),
+            relationships: tally_facets(works, |w| w.relationships.iter().map(String::as_str)),
+            freeforms: tally_facets(works, |w| w.additional_tags.iter().map(String::as_str)),
+        }
+    }
+}
+
+fn tally_facets<'a, I>(works: &'a [LiveWork], extract: impl Fn(&'a LiveWork) -> I) -> Vec<TagFacet>
+where
+    I: Iterator<Item = &'a str>,
+{
+    let mut counts: BTreeMap<String, u64> = BTreeMap::new();
+    for work in works {
+        for raw in extract(work) {
+            let trimmed = raw.trim();
+            if !trimmed.is_empty() {
+                *counts.entry(trimmed.to_string()).or_insert(0) += 1;
+            }
+        }
+    }
+    let mut items: Vec<TagFacet> = counts
+        .into_iter()
+        .map(|(name, count)| TagFacet {
+            name,
+            count: Some(count),
+        })
+        .collect();
+    items.sort_by(|a, b| {
+        b.count
+            .unwrap_or(0)
+            .cmp(&a.count.unwrap_or(0))
+            .then_with(|| a.name.cmp(&b.name))
+    });
+    items.truncate(10);
+    items
+}
+
 /// Parsed AO3 search page.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LiveSearchResults {
@@ -258,6 +461,8 @@ pub struct LiveSearchResults {
     /// Total matches AO3 reports (may exceed the 20 shown).
     pub total: usize,
     pub works: Vec<LiveWork>,
+    /// Popular tag facets parsed from AO3's `#work-filters` sidebar, if present.
+    pub facets: LiveTagFacets,
 }
 
 /// One AO3 result entry.
@@ -345,10 +550,85 @@ pub fn parse_search_results(html: &str) -> Result<LiveSearchResults> {
         ));
     }
 
+    let facets = parse_tag_facets(&document);
+
     Ok(LiveSearchResults {
         summary,
         total,
         works,
+        facets,
+    })
+}
+
+fn parse_tag_facets(document: &Html) -> LiveTagFacets {
+    LiveTagFacets {
+        ratings: parse_facet_section(document, "rating"),
+        warnings: parse_facet_section(document, "archive_warning"),
+        categories: parse_facet_section(document, "category"),
+        fandoms: parse_facet_section(document, "fandom"),
+        characters: parse_facet_section(document, "character"),
+        relationships: parse_facet_section(document, "relationship"),
+        freeforms: parse_facet_section(document, "freeform"),
+    }
+}
+
+fn parse_facet_section(document: &Html, tag_type: &str) -> Vec<TagFacet> {
+    let mut out = parse_facet_dd(document, &format!("dd#include_{tag_type}_tags ul li label"));
+    if out.is_empty() {
+        out = parse_facet_dd(document, &format!("dd#exclude_{tag_type}_tags ul li label"));
+    }
+    out
+}
+
+fn parse_facet_dd(document: &Html, selector_str: &str) -> Vec<TagFacet> {
+    let Ok(selector) = Selector::parse(selector_str) else {
+        return Vec::new();
+    };
+    let span_selector = Selector::parse("span").ok();
+    let mut out = Vec::new();
+    for label in document.select(&selector) {
+        let raw = span_selector
+            .as_ref()
+            .and_then(|sel| label.select(sel).last())
+            .map(|span| text(&span))
+            .filter(|s| !s.is_empty())
+            .unwrap_or_else(|| text(&label));
+        if let Some(facet) = parse_facet_label(&raw) {
+            out.push(facet);
+        }
+    }
+    out
+}
+
+/// Parses an AO3 `#work-filters` label like `"Emilia (Re:Zero) (1,234)"` into
+/// `TagFacet { name: "Emilia (Re:Zero)", count: Some(1234) }`.
+fn parse_facet_label(raw: &str) -> Option<TagFacet> {
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    if let Some(without_close) = trimmed.strip_suffix(')')
+        && let Some((head, tail)) = without_close.rsplit_once('(')
+    {
+        let inner = tail.trim();
+        let all_count_chars = !inner.is_empty()
+            && inner
+                .chars()
+                .all(|ch| ch.is_ascii_digit() || ch == ',' || ch == ' ')
+            && inner.chars().any(|ch| ch.is_ascii_digit());
+        if all_count_chars {
+            let name = head.trim();
+            if !name.is_empty() {
+                return Some(TagFacet {
+                    name: name.to_string(),
+                    count: parse_number(inner),
+                });
+            }
+        }
+    }
+    Some(TagFacet {
+        name: trimmed.to_string(),
+        count: None,
     })
 }
 
@@ -667,5 +947,111 @@ mod tests {
         assert!(!path.contains("sort_column"), "{path}");
         assert!(!path.contains("commit"), "{path}");
         assert!(path.contains("work_search%5Bquery%5D=re%20zero"), "{path}");
+    }
+
+    #[test]
+    fn encodes_ao3_tag_params_and_tag_works_paths() {
+        assert_eq!(ao3_tag_param("A/B"), "A*s*B");
+        assert_eq!(
+            ao3_tag_param("Re:Zero & Friends? #1.0"),
+            "Re%3AZero%20*a*%20Friends*q*%20*h*1*d*0"
+        );
+
+        let default_query = LiveSearchQuery {
+            sort: Some("date".into()),
+            direction: Some("desc".into()),
+            ..LiveSearchQuery::default()
+        };
+        assert_eq!(
+            default_query.tag_works_path("A/B", None, None, 1),
+            "/tags/A*s*B/works"
+        );
+        assert_eq!(
+            default_query.tag_works_path("A/B", None, None, 2),
+            "/tags/A*s*B/works?page=2"
+        );
+
+        let filtered = LiveSearchQuery {
+            include_tags: vec!["A/B".into(), "Fluff".into()],
+            exclude_tags: vec!["Angst".into()],
+            sort: Some("kudos".into()),
+            complete: Some("T".into()),
+            ..LiveSearchQuery::default()
+        };
+        let path = filtered.tag_works_path("A/B", Some("1000"), Some("5000"), 1);
+        assert!(path.starts_with("/tags/A*s*B/works?"), "{path}");
+        assert!(
+            path.contains("work_search%5Bsort_column%5D=kudos_count"),
+            "{path}"
+        );
+        assert!(
+            path.contains("work_search%5Bother_tag_names%5D=Fluff"),
+            "{path}"
+        );
+        assert!(
+            !path.contains("A%2FB"),
+            "page tag should not duplicate: {path}"
+        );
+        assert!(
+            path.contains("work_search%5Bexcluded_tag_names%5D=Angst"),
+            "{path}"
+        );
+        assert!(path.contains("work_search%5Bwords_from%5D=1000"), "{path}");
+        assert!(path.contains("work_search%5Bwords_to%5D=5000"), "{path}");
+    }
+
+    #[test]
+    fn parses_work_filters_popular_tag_facets() {
+        let html = r#"
+            <html><body>
+            <h2 class="heading">1 - 2 of 2 Works in Re:Zero</h2>
+            <form id="work-filters">
+              <dd id="include_rating_tags"><ul>
+                <li><label><input type="radio" value="10"><span class="indicator"></span><span>Teen And Up Audiences (1,234)</span></label></li>
+              </ul></dd>
+              <dd id="include_relationship_tags"><ul>
+                <li><label><input type="checkbox" value="1"><span class="indicator"></span><span>Emilia (Re:Zero)/Natsuki Subaru (987)</span></label></li>
+                <li><label><input type="checkbox" value="2"><span class="indicator"></span><span>Rem (Re:Zero)/Natsuki Subaru (456)</span></label></li>
+              </ul></dd>
+              <dd id="include_freeform_tags"><ul>
+                <li><label><input type="checkbox" value="3"><span class="indicator"></span><span>Fluff (Anime)</span></label></li>
+              </ul></dd>
+            </form>
+            <ol class="work index group">
+              <li id="work_42" class="work blurb group">
+                <h4 class="heading"><a href="/works/42">Sample</a></h4>
+              </li>
+            </ol>
+            </body></html>
+        "#;
+        let parsed = parse_search_results(html).expect("parse");
+        assert_eq!(parsed.facets.ratings.len(), 1);
+        assert_eq!(parsed.facets.ratings[0].name, "Teen And Up Audiences");
+        assert_eq!(parsed.facets.ratings[0].count, Some(1_234));
+        assert_eq!(parsed.facets.relationships.len(), 2);
+        assert_eq!(
+            parsed.facets.relationships[0].name,
+            "Emilia (Re:Zero)/Natsuki Subaru"
+        );
+        assert_eq!(parsed.facets.relationships[0].count, Some(987));
+        assert_eq!(parsed.facets.freeforms.len(), 1);
+        assert_eq!(parsed.facets.freeforms[0].name, "Fluff (Anime)");
+        assert_eq!(parsed.facets.freeforms[0].count, None);
+    }
+
+    #[test]
+    fn computes_fallback_facets_from_works() {
+        let parsed = parse_search_results(RESULTS).expect("parse");
+        assert!(parsed.facets.is_empty());
+        let tallied = LiveTagFacets::from_works(&parsed.works);
+        assert!(
+            tallied
+                .fandoms
+                .iter()
+                .any(|f| f.name == "Test Fandom" && f.count == Some(1))
+        );
+        assert_eq!(tallied.relationships[0].name, "A/B");
+        assert_eq!(tallied.characters[0].name, "Character A");
+        assert_eq!(tallied.freeforms[0].name, "Fluff");
     }
 }

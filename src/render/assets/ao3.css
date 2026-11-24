@@ -612,14 +612,12 @@ ul#skiplinks a { border: 0; font-weight: 700; }
 }
 #greeting ul.user > li > a:hover,
 #greeting ul.user > li > a:focus,
-#greeting ul.user > li.dropdown:hover > a,
-#greeting ul.user > li.dropdown:focus-within > a {
+#greeting ul.user > li.dropdown.open > a {
     background: var(--ao3-surface-mid);
     color: var(--ao3-red);
     box-shadow: none;
 }
-#greeting ul.user > li.dropdown:hover > a,
-#greeting ul.user > li.dropdown:focus-within > a {
+#greeting ul.user > li.dropdown.open > a {
     border-radius: 0.25em 0.25em 0 0;
 }
 #greeting .menu {
@@ -635,9 +633,19 @@ ul#skiplinks a { border: 0; font-weight: 700; }
     background: linear-gradient(to bottom, var(--ao3-menu-top) 0%, var(--ao3-menu-bot) 100%);
     box-shadow: -1px 2px 5px rgba(0, 0, 0, 0.3);
 }
-#greeting li.dropdown:hover > .menu,
-#greeting li.dropdown:focus-within > .menu {
+#greeting li.dropdown.open > .menu {
     display: block;
+}
+@media (hover: hover) and (pointer: fine) {
+    #greeting ul.user > li.dropdown:hover > a {
+        background: var(--ao3-surface-mid);
+        color: var(--ao3-red);
+        box-shadow: none;
+        border-radius: 0.25em 0.25em 0 0;
+    }
+    #greeting li.dropdown:hover > .menu {
+        display: block;
+    }
 }
 #greeting .menu li {
     border-bottom: 1px solid var(--ao3-menu-divider);
@@ -751,6 +759,7 @@ ul#skiplinks a { border: 0; font-weight: 700; }
 /* primary crimson navigation bar */
 
 #header nav[aria-label="Site"] {
+    position: relative;
     width: 100%;
     background: var(--ao3-bar-bg);
     border-bottom: 1px solid var(--ao3-bar-border);
@@ -785,9 +794,7 @@ ul.primary.navigation > li.active > a {
     background: rgba(0, 0, 0, 0.22);
     color: #fff;
 }
-ul.primary.navigation > li.dropdown:hover > a,
-ul.primary.navigation > li.dropdown:focus-within > a,
-ul.primary.navigation > li > a:hover,
+ul.primary.navigation > li.dropdown.open > a,
 ul.primary.navigation > li > a:focus {
     background: var(--ao3-surface-mid);
     color: var(--ao3-link);
@@ -808,9 +815,18 @@ ul.primary.navigation li.dropdown > .menu {
     background: linear-gradient(to bottom, var(--ao3-menu-top) 0%, var(--ao3-menu-bot) 100%);
     box-shadow: 1px 2px 5px rgba(0, 0, 0, 0.35);
 }
-ul.primary.navigation li.dropdown:hover > .menu,
-ul.primary.navigation li.dropdown:focus-within > .menu {
+ul.primary.navigation li.dropdown.open > .menu {
     display: block;
+}
+@media (hover: hover) and (pointer: fine) {
+    ul.primary.navigation > li.dropdown:hover > a,
+    ul.primary.navigation > li > a:hover {
+        background: var(--ao3-surface-mid);
+        color: var(--ao3-link);
+    }
+    ul.primary.navigation li.dropdown:hover > .menu {
+        display: block;
+    }
 }
 ul.primary.navigation li.dropdown > .menu li {
     border-bottom: 1px solid var(--ao3-menu-divider);
@@ -1634,43 +1650,55 @@ dl.stats dd {
 
 ul.work.navigation.actions {
     justify-content: flex-end;
-    margin: 0 0 0.65em;
+    margin: 0 0 0.75em;
+    position: relative;
 }
-ul.work.navigation.actions select {
-    padding: 0.2em 0.4em;
+ul.work.navigation.actions li.dropdown {
+    position: relative;
+}
+ul.work.navigation.actions li.dropdown.open > button {
+    background: var(--ao3-current-bg);
+    color: var(--ao3-link);
+    box-shadow: inset 1px 1px 3px var(--ao3-current-shadow);
+}
+ul.work.navigation.actions ul.expandable.secondary.menu {
+    display: none;
+    position: absolute;
+    top: calc(100% + 0.2em);
+    right: 0;
+    z-index: 80;
+    min-width: 18em;
+    margin: 0;
+    padding: 0.55em 0.65em;
+    list-style: none;
+    background: var(--ao3-bg);
+    border: 1px solid var(--ao3-border-strong);
+    border-radius: 0.25em;
+    box-shadow: 0 2px 6px var(--ao3-shadow);
+}
+ul.work.navigation.actions li.dropdown.open > ul.expandable.secondary.menu {
+    display: block;
+}
+ul.work.navigation.actions ul.expandable.secondary.menu li {
+    display: block;
+    margin: 0;
+}
+ul.work.navigation.actions ul.expandable.secondary.menu form {
+    display: flex;
+    align-items: center;
+    gap: 0.35em;
+    width: 100%;
+}
+ul.work.navigation.actions ul.expandable.secondary.menu select {
+    flex: 1 1 auto;
+    min-width: 0;
+    padding: 0.25em 0.45em;
     font: inherit;
     color: var(--ao3-text);
     background: var(--ao3-bg);
     border: 1px solid var(--ao3-border-strong);
     border-radius: 0.2em;
-    max-width: 15em;
-}
-
-.reader-status.module {
-    display: flex;
-    flex-wrap: wrap;
-    align-items: center;
-    justify-content: space-between;
-    gap: 0.6em 1em;
-    padding: 0.45em 0.75em;
-    margin: 0 0 0.85em;
-    background: var(--ao3-surface-soft);
-    border: 1px solid var(--ao3-border);
-    border-radius: 0.25em;
-    font-size: 0.88em;
-}
-.reader-status .reading-progress {
-    display: inline-flex;
-    align-items: center;
-    gap: 0.5em;
-}
-.reader-status progress {
-    width: 9rem;
-    height: 0.65rem;
-    accent-color: var(--ao3-red);
-}
-.reader-status form.save {
-    margin: 0;
+    max-width: 20em;
 }
 
 /* AO3 work metadata box */
@@ -1705,17 +1733,18 @@ dl.work.meta.group dd.stats dl.stats {
     font-size: 1em;
 }
 
-/* #workskin & preface */
+/* #workskin, preface & inline AO3 userstuff (otwarchive 14-group-preface & 21-userstuff) */
 
 #workskin {
-    font-size: 1.04em;
-    max-width: 68em;
+    font-size: 1.08em;
+    max-width: 72em;
     margin: 0 auto;
     padding: 0 0.25em;
+    position: relative;
 }
 #workskin .preface.group {
-    margin: 1.25em 2.5em 0.9em;
-    padding: 0.4em 0.4em 0;
+    margin: 1.5em 3em 1em;
+    padding: 0.643em 0.643em 0;
 }
 #workskin h2.title.heading {
     display: block;
@@ -1734,7 +1763,7 @@ dl.work.meta.group dd.stats dl.stats {
 #workskin .summary.module,
 #workskin .notes.module {
     margin: 0.75em 0 1.1em;
-    padding: 0;
+    padding: 0 0 0.643em;
     border: 0;
     background: transparent;
     text-align: left;
@@ -1746,30 +1775,110 @@ dl.work.meta.group dd.stats dl.stats {
     border-bottom: 1px solid var(--ao3-text);
     font-size: 1.15em;
 }
-#workskin .summary.module blockquote.userstuff {
+#workskin .preface blockquote.userstuff {
     margin: 0.55em 0.65em;
     padding: 0;
     border: 0;
     line-height: 1.5;
 }
 
+#chapters .chapter {
+    margin-bottom: 2em;
+}
+#chapters .chapter:last-child {
+    margin-bottom: 0;
+}
 .chapter .chapter.preface.group {
-    margin: 1.6em 2.5em 0.6em;
-    padding-top: 0.8em;
-    border-top: 1px solid var(--ao3-border-strong);
-    text-align: center;
+    margin: 1.5em 3em 0.85em;
+    padding-top: 0.75em;
+    border-top: 1px solid var(--ao3-text);
 }
 .chapter .chapter.preface.group h3.title {
     margin: 0;
     border: 0;
     font-size: 1.35em;
+    text-align: center;
 }
-iframe.chapter {
-    width: 100%;
-    min-height: 70vh;
+.chapter .chapter.preface.group h3.title a {
     border: 0;
-    background: transparent;
+}
+.chapter .chapter.preface.group.afterword-notes {
+    border-top: 0;
+    margin-top: 1.75em;
+}
+
+#workskin .userstuff {
+    word-wrap: break-word;
+    overflow-wrap: break-word;
+    line-height: 1.5;
+}
+#workskin #chapters > .chapter > .userstuff,
+#workskin #chapters > .userstuff {
+    margin: 0 1.5em;
+}
+#workskin .userstuff p,
+#workskin .userstuff details {
+    margin: 1.286em auto;
+    padding: 0;
+}
+#workskin .userstuff h1 { text-align: center; }
+#workskin .userstuff h2 {
+    margin: 1.5em 0;
     display: block;
+}
+#workskin .userstuff h3 {
+    font-weight: 500;
+    padding: 0.125em;
+    border-bottom: 0.25em double var(--ao3-text);
+}
+#workskin .userstuff h4 { font-weight: 700; }
+#workskin .userstuff h5 { font-weight: 600; font-size: 1em; }
+#workskin .userstuff h6 { font-size: 0.975em; border-bottom: 1px solid; }
+#workskin .userstuff ul {
+    margin: 1.125em auto;
+    padding: 0 1em;
+}
+#workskin .userstuff ol {
+    margin: 0.75em auto;
+    padding: 0 1.5em;
+}
+#workskin .userstuff ul li {
+    list-style-type: disc;
+    margin: 0.75em 0 0.75em 1.75em;
+}
+#workskin .userstuff ol li {
+    list-style-type: decimal;
+    margin: 0.75em 0 0.75em 1.75em;
+}
+#workskin .userstuff dl { margin: 1.5em 0; border: 0; }
+#workskin .userstuff dt { display: block; font-weight: 700; }
+#workskin .userstuff dd { display: block; margin: 1.25em 0 1.25em 3em; }
+#workskin .userstuff blockquote,
+#workskin .userstuff address {
+    line-height: 1.5;
+    margin-inline-start: 1.5em;
+    padding: 0.75em;
+    border-inline-start: 2px solid var(--ao3-muted);
+}
+#workskin .userstuff blockquote blockquote {
+    padding: 0.25em;
+    border: 0;
+}
+#workskin .userstuff hr {
+    width: 33%;
+    margin: 0.875em auto 1.2525em auto;
+    border: 0;
+    border-top: 1px solid var(--ao3-muted);
+}
+#workskin .userstuff img {
+    max-width: 100%;
+    height: auto;
+}
+#workskin .userstuff table,
+#workskin .userstuff td,
+#workskin .userstuff th {
+    background: transparent;
+    border: 0;
 }
 
 #feedback {
@@ -2085,9 +2194,116 @@ form.filter-bar select {
     outline-offset: 1px;
 }
 
-#work-filters details.filter-group > input[type="text"] {
+#work-filters details.filter-group > input[type="text"],
+#work-filters .facet-extra {
     margin: 0.35em 0 0.4em;
 }
+#work-filters .filter-autocomplete {
+    display: grid;
+    gap: 0.25em;
+    margin: 0.45em 0 0.55em;
+    font-size: 0.9em;
+}
+#work-filters .filter-autocomplete > label {
+    color: var(--ao3-text);
+}
+
+/* AO3-style tag autocomplete field, removable tag chips & dropdown */
+.autocomplete-field {
+    position: relative;
+    width: 100%;
+}
+.autocomplete-tags {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.3em;
+    list-style: none;
+    margin: 0 0 0.35em;
+    padding: 0;
+}
+.autocomplete-tags[hidden] {
+    display: none;
+}
+.autocomplete-tags li.added.tag {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.3em;
+    max-width: 100%;
+    padding: 0.15em 0.4em 0.15em 0.5em;
+    background: var(--ao3-surface-mid);
+    border: 1px solid var(--ao3-border-strong);
+    border-radius: 0.25em;
+    font-size: 0.86em;
+    line-height: 1.3;
+    color: var(--ao3-text);
+    overflow-wrap: anywhere;
+}
+.autocomplete-tags li.added.tag button.delete {
+    appearance: none;
+    background: transparent;
+    border: 0;
+    box-shadow: none;
+    color: var(--ao3-muted);
+    cursor: pointer;
+    font: inherit;
+    font-weight: 700;
+    line-height: 1;
+    padding: 0 0.15em;
+    margin: 0;
+    min-width: 0;
+    width: auto;
+}
+.autocomplete-tags li.added.tag button.delete:hover,
+.autocomplete-tags li.added.tag button.delete:focus {
+    color: var(--ao3-red);
+    background: transparent;
+}
+.autocomplete-field .autocomplete-input {
+    width: 100%;
+    box-sizing: border-box;
+}
+.autocomplete-dropdown {
+    position: absolute;
+    left: 0;
+    right: 0;
+    top: calc(100% + 1px);
+    z-index: 120;
+    background: var(--ao3-bg);
+    color: var(--ao3-text);
+    border: 1px solid var(--ao3-border-strong);
+    box-shadow: 0 4px 14px rgba(0, 0, 0, 0.35);
+    max-height: 20em;
+    overflow-y: auto;
+}
+.autocomplete-dropdown[hidden] {
+    display: none;
+}
+.autocomplete-dropdown ul {
+    list-style: none;
+    margin: 0;
+    padding: 0.2em 0;
+}
+.autocomplete-dropdown li.autocomplete-option {
+    padding: 0.4em 0.55em;
+    font-size: 0.9em;
+    line-height: 1.35;
+    cursor: pointer;
+    overflow-wrap: anywhere;
+}
+.autocomplete-dropdown li.autocomplete-option strong {
+    font-weight: 700;
+}
+.autocomplete-dropdown li.autocomplete-option.active,
+.autocomplete-dropdown li.autocomplete-option:hover {
+    background: var(--ao3-accent);
+    color: #fff;
+}
+.autocomplete-dropdown li.autocomplete-status {
+    padding: 0.45em 0.55em;
+    font-size: 0.85em;
+    color: var(--ao3-muted);
+}
+
 #work-filters .range {
     display: flex;
     gap: 0.45em;
@@ -2394,42 +2610,66 @@ pre.preview {
 
 @media (max-width: 42em) {
     #header .header-top {
+        position: relative;
         padding: 0.35rem 0.75rem 0.25rem;
         gap: 0.4rem;
     }
     #header h1.heading { font-size: 1.25rem; }
-    #greeting, #login { font-size: 0.82rem; }
+    #greeting, #login {
+        font-size: 0.82rem;
+        position: static;
+    }
+    #greeting ul.user > li,
+    #login details.login-toggle {
+        position: static;
+    }
     #small_login,
     #greeting .menu {
-        position: fixed;
-        top: 3.25rem;
+        position: absolute;
+        top: 100%;
         left: 0.5rem;
         right: 0.5rem;
         width: auto;
-        max-height: calc(100vh - 4rem);
-        overflow: auto;
+        max-height: calc(100vh - 5rem);
+        overflow-y: auto;
         z-index: 200;
+    }
+    #greeting .menu a {
+        padding: 0.75em 0.75em;
     }
     ul.primary.navigation {
         padding: 0.15rem 0.65rem;
     }
     ul.primary.navigation > li > a {
-        padding: 0.42em 0.55em;
-        font-size: 0.84rem;
+        padding: 0.45em 0.6em;
+        font-size: 0.86rem;
     }
-    ul.primary.navigation li.dropdown:hover,
-    ul.primary.navigation li.dropdown:focus-within {
-        flex: 1 0 100%;
+    ul.primary.navigation > li.dropdown {
+        position: static;
     }
     ul.primary.navigation li.dropdown > .menu {
-        position: static;
+        position: absolute;
+        top: 100%;
+        left: 0;
+        right: 0;
         width: 100%;
         min-width: 0;
-        box-shadow: none;
+        max-height: 70vh;
+        overflow-y: auto;
+        z-index: 200;
     }
     ul.primary.navigation li.dropdown > .menu li a {
         white-space: normal;
-        padding-left: 1rem;
+        padding: 0.75em 1rem;
+    }
+    ul.work.navigation.actions ul.expandable.secondary.menu {
+        left: 0;
+        right: 0;
+        min-width: 0;
+        width: 100%;
+    }
+    ul.work.navigation.actions li.chapter.dropdown {
+        position: static;
     }
     #inner.wrapper { padding: 0.5rem 0.75rem 2rem; }
     .blurb .header.module h4.heading,
@@ -2451,10 +2691,18 @@ pre.preview {
         border-bottom: 0;
         font-weight: 700;
     }
+    #workskin {
+        font-size: 1.02em;
+        padding: 0;
+    }
     #workskin .preface.group,
     .chapter .chapter.preface.group {
-        margin-left: 0.5em;
-        margin-right: 0.5em;
+        margin-left: 0.4em;
+        margin-right: 0.4em;
+    }
+    #workskin #chapters > .chapter > .userstuff,
+    #workskin #chapters > .userstuff {
+        margin: 0 0.25em;
     }
     #workskin h2.title.heading { font-size: 1.55em; }
     .alphabet.fandom.index.group ul.tags.index.group,

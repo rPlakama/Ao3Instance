@@ -36,13 +36,13 @@ pub(super) async fn session_page(
     Query(query): Query<SessionQuery>,
 ) -> Handled<Html<String>> {
     let page = super::page_context(&state, "Session — AO3Instance", NavSection::Session).await;
-    let session = state.session.lock().await;
+    let snap = state.session_snapshot.read().await.clone();
     Ok(Html(render::session_page(
         &page,
-        session.account(),
-        &session.state().to_string(),
-        session.jar().is_complete(),
-        session.jar().contains("view_adult"),
+        &snap.account,
+        &snap.state,
+        snap.jar_complete,
+        snap.adult_enabled,
         query.ok.as_deref(),
         query.error.as_deref(),
     )))
@@ -159,7 +159,7 @@ pub(super) async fn session_import(
         let _solver_guard = state.solver_lock.lock().await;
         let mut session = state.session.lock().await;
         session.reset_solver_session().await;
-        match session.import(&account, jar).await {
+        let res = match session.import(&account, jar).await {
             Ok(SessionState::Active) => {
                 persist_session(&state, &session)
                     .await
@@ -174,7 +174,9 @@ pub(super) async fn session_import(
                 "error",
                 &format!("Session import failed: {error}"),
             )),
-        }
+        };
+        super::sync_session_snapshot(&state, &session).await;
+        res
     };
     super::solver::sync_solver_state(&state).await;
     outcome
@@ -267,6 +269,7 @@ pub(super) async fn session_import_file(
                 &format!("Cookie file import failed: {error}"),
             )),
         };
+        super::sync_session_snapshot(&state, &session).await;
         (session.account().to_string(), result)
     };
     if !resolved_account.is_empty()
@@ -303,7 +306,7 @@ pub(super) async fn session_login(
         let result = session
             .login(&account, SecretString::new(form.password))
             .await;
-        match result {
+        let res = match result {
             Ok(SessionState::Active) => {
                 adult_cookie_jar(session.client_mut().jar_mut(), form.adult.is_some());
                 persist_session(&state, &session)
@@ -316,7 +319,9 @@ pub(super) async fn session_login(
                 &format!("Signed in, but the session is not active: {other}."),
             )),
             Err(error) => Ok(redirect_session("error", &format!("Login failed: {error}"))),
-        }
+        };
+        super::sync_session_snapshot(&state, &session).await;
+        res
     };
     super::solver::sync_solver_state(&state).await;
     outcome
@@ -326,7 +331,7 @@ pub(super) async fn session_probe(State(state): State<Arc<AppState>>) -> Handled
     let outcome = {
         let _solver_guard = state.solver_lock.lock().await;
         let mut session = state.session.lock().await;
-        match session.verify_and_refresh().await {
+        let res = match session.verify_and_refresh().await {
             Ok(SessionState::Active) => {
                 persist_session(&state, &session)
                     .await
@@ -341,7 +346,9 @@ pub(super) async fn session_probe(State(state): State<Arc<AppState>>) -> Handled
                 "error",
                 &format!("Session check failed: {error}"),
             )),
-        }
+        };
+        super::sync_session_snapshot(&state, &session).await;
+        res
     };
     super::solver::sync_solver_state(&state).await;
     outcome
@@ -356,6 +363,7 @@ pub(super) async fn session_adult(State(state): State<Arc<AppState>>) -> Handled
         ));
     }
     adult_cookie_jar(session.client_mut().jar_mut(), true);
+    super::sync_session_snapshot(&state, &session).await;
     if let Err(error) = persist_session(&state, &session).await {
         return Err(AppError::from(error));
     }
@@ -371,6 +379,7 @@ pub(super) async fn session_logout(State(state): State<Arc<AppState>>) -> Handle
         let prev = session.account().to_string();
         session.clear_local();
         session.reset_solver_session().await;
+        super::sync_session_snapshot(&state, &session).await;
         prev
     };
     if !prev_account.is_empty()
@@ -566,6 +575,6 @@ pub(super) async fn skin(
 
 pub(super) async fn logout_confirm(State(state): State<Arc<AppState>>) -> Handled<Html<String>> {
     let page = super::page_context(&state, "Log out — AO3Instance", NavSection::Session).await;
-    let account = state.session.lock().await.account().to_string();
+    let account = state.session_snapshot.read().await.account.clone();
     Ok(Html(render::logout_confirm_page(&page, &account)))
 }

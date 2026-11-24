@@ -1,9 +1,9 @@
 //! Server-rendered HTML: pages, escaping and sanitization.
 //!
-//! Author content is untrusted. It is sanitized with `ammonia` (tag/attribute
-//! allowlist, http/https URLs, forced `noopener noreferrer`) and served inside a
-//! sandboxed iframe with its own CSP — never injected into the app document
-//! (`docs/security-standards.md` §8, T1).
+//! Author content is untrusted. It is sanitized with `ammonia` (strict
+//! tag/attribute allowlist, http/https URLs, forced `noopener noreferrer`)
+//! before being rendered into the reader's `#chapters` container, matching
+//! AO3's own `sanitize_field` model.
 //!
 //! Segment renderers live in submodules; the shared skeleton and date helpers
 //! live in `chrome`. `escape` and `sanitize` stay here because every renderer
@@ -13,8 +13,9 @@ use std::collections::HashSet;
 
 use crate::ao3::parse::{SpaceMode, percent_encode};
 
-/// Embedded stylesheet: `nix build` stays a self-contained single binary.
+/// Embedded static assets: `nix build` stays a self-contained single binary.
 pub const AO3_CSS: &str = include_str!("assets/ao3.css");
+pub const UI_JS: &str = include_str!("assets/ui.js");
 pub const READER_JS: &str = include_str!("assets/reader.js");
 
 /// Stable FNV-1a content fingerprint used for `?v=` cache-busting on static assets.
@@ -30,6 +31,7 @@ const fn fnv1a_64(bytes: &[u8]) -> u64 {
 }
 
 pub(crate) const AO3_CSS_HASH: u64 = fnv1a_64(AO3_CSS.as_bytes());
+pub(crate) const UI_JS_HASH: u64 = fnv1a_64(UI_JS.as_bytes());
 pub(crate) const READER_JS_HASH: u64 = fnv1a_64(READER_JS.as_bytes());
 
 mod about;

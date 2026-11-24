@@ -70,7 +70,7 @@ impl Store {
         .bind(page.comment_count.map(|v| v as i64))
         .bind(page.hits.map(|v| v as i64))
         .bind(page.bookmarks.map(|v| v as i64))
-        .bind(page.chapters.len() as i64)
+        .bind(page.chapter_count.max(page.chapters.len()) as i64)
         .bind(content_hash)
         .bind(fetched_at)
         .execute(&mut *tx)
@@ -244,13 +244,19 @@ impl Store {
 
     /// The recent works list with full rows, for the shared blurb card.
     pub async fn list_works_detailed(&self, limit: i64) -> Result<Vec<StoredWork>> {
-        let mut works = Vec::new();
-        for summary in self.list_works(limit).await? {
-            if let Some(work) = self.get_work(&summary.ao3_id).await? {
-                works.push(work);
-            }
-        }
-        Ok(works)
+        let rows = sqlx::query(
+            "SELECT ao3_id, title, authors_json, summary, tags_json, rating, language,
+                    published_at, complete, word_count, kudos, comment_count, hits,
+                    bookmarks, chapter_count, content_hash, fetched_at
+             FROM works
+             ORDER BY fetched_at DESC, ao3_id DESC
+             LIMIT ?1",
+        )
+        .bind(limit)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| Error::Store(format!("list works detailed: {e}")))?;
+        rows.iter().map(stored_work_from_row).collect()
     }
 
     /// One page of plain FTS hits (no extra filters), kept for callers that only
@@ -293,21 +299,23 @@ impl Store {
         }
 
         let mut candidates: Vec<StoredWork> = if let Some(fts) = fts {
-            let ids: Vec<String> = sqlx::query_scalar(
-                "SELECT work_id FROM work_search WHERE work_search MATCH ?1
+            let rows = sqlx::query(
+                "SELECT w.ao3_id, w.title, w.authors_json, w.summary, w.tags_json, w.rating,
+                        w.language, w.published_at, w.complete, w.word_count, w.kudos,
+                        w.comment_count, w.hits, w.bookmarks, w.chapter_count, w.content_hash,
+                        w.fetched_at
+                 FROM work_search
+                 JOIN works w ON w.ao3_id = work_search.work_id
+                 WHERE work_search MATCH ?1
                  ORDER BY rank LIMIT 1000",
             )
             .bind(&fts)
             .fetch_all(&self.pool)
             .await
             .map_err(|e| Error::Store(format!("search candidates: {e}")))?;
-            let mut works = Vec::new();
-            for id in ids {
-                if let Some(work) = self.get_work(&id).await? {
-                    works.push(work);
-                }
-            }
-            works
+            rows.iter()
+                .map(stored_work_from_row)
+                .collect::<Result<Vec<_>>>()?
         } else {
             self.all_works().await?
         };
@@ -352,15 +360,28 @@ impl Store {
     }
 
     /// Search hits with the full cached row, so the renderer can use the same
-    /// blurb card as browse. Reuses [`Self::search_works`] for ranking.
+    /// blurb card as browse.
     pub async fn search_works_detailed(&self, query: &str, limit: i64) -> Result<Vec<StoredWork>> {
-        let mut works = Vec::new();
-        for summary in self.search_works(query, limit).await? {
-            if let Some(work) = self.get_work(&summary.ao3_id).await? {
-                works.push(work);
-            }
-        }
-        Ok(works)
+        let Some(fts) = fts_query(query) else {
+            return Ok(Vec::new());
+        };
+        let rows = sqlx::query(
+            "SELECT w.ao3_id, w.title, w.authors_json, w.summary, w.tags_json, w.rating,
+                    w.language, w.published_at, w.complete, w.word_count, w.kudos,
+                    w.comment_count, w.hits, w.bookmarks, w.chapter_count, w.content_hash,
+                    w.fetched_at
+             FROM work_search
+             JOIN works w ON w.ao3_id = work_search.work_id
+             WHERE work_search MATCH ?1
+             ORDER BY rank
+             LIMIT ?2",
+        )
+        .bind(fts)
+        .bind(limit)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| Error::Store(format!("search works detailed: {e}")))?;
+        rows.iter().map(stored_work_from_row).collect()
     }
 
     /// Records that a work was checked upstream without changing its content.
@@ -377,7 +398,22 @@ impl Store {
     // ---- reading progress (chapter anchor) ----
 
     pub async fn save_progress(&self, work_id: &str, chapter_idx: i64, pct: i64) -> Result<()> {
-        let pct = pct.clamp(0, 100);
+        self.save_progress_exact(work_id, chapter_idx, pct.clamp(0, 100) as f64)
+            .await
+    }
+
+    /// Saves sub-percent scroll progress (0.0..=100.0) into the existing `REAL` column.
+    pub async fn save_progress_exact(
+        &self,
+        work_id: &str,
+        chapter_idx: i64,
+        pct: f64,
+    ) -> Result<()> {
+        let pct = if pct.is_finite() {
+            pct.clamp(0.0, 100.0)
+        } else {
+            0.0
+        };
         sqlx::query(
             "INSERT INTO progress (account_id, work_id, chapter_idx, pct, updated_at)
              VALUES ('local', ?1, ?2, ?3, ?4)
@@ -388,7 +424,7 @@ impl Store {
         )
         .bind(work_id)
         .bind(chapter_idx)
-        .bind(pct as f64)
+        .bind(pct)
         .bind(now_secs())
         .execute(&self.pool)
         .await
@@ -397,6 +433,17 @@ impl Store {
     }
 
     pub async fn get_progress(&self, work_id: &str) -> Result<Option<Progress>> {
+        Ok(self
+            .get_progress_exact(work_id)
+            .await?
+            .map(|(chapter_idx, pct)| Progress {
+                chapter_idx,
+                pct: pct.round().clamp(0.0, 100.0) as i64,
+            }))
+    }
+
+    /// Returns `(chapter_idx, exact_pct)` clamped to `0.0..=100.0`.
+    pub async fn get_progress_exact(&self, work_id: &str) -> Result<Option<(i64, f64)>> {
         let row = sqlx::query(
             "SELECT chapter_idx, pct FROM progress WHERE account_id = 'local' AND work_id = ?1",
         )
@@ -404,9 +451,14 @@ impl Store {
         .fetch_optional(&self.pool)
         .await
         .map_err(|e| Error::Store(format!("get progress: {e}")))?;
-        Ok(row.map(|row| Progress {
-            chapter_idx: row.get("chapter_idx"),
-            pct: row.get::<f64, _>("pct").round().clamp(0.0, 100.0) as i64,
+        Ok(row.map(|row| {
+            let pct = row.get::<f64, _>("pct");
+            let pct = if pct.is_finite() {
+                pct.clamp(0.0, 100.0)
+            } else {
+                0.0
+            };
+            (row.get("chapter_idx"), pct)
         }))
     }
 }

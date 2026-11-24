@@ -267,3 +267,183 @@ async fn tag_pages_are_live_and_work_entries_link_to_tags() {
     handle.abort();
     drop(std::fs::remove_dir_all(dir));
 }
+
+#[tokio::test]
+async fn tag_page_renders_ao3_popular_tag_facets_and_autocomplete() {
+    let facets_html = r#"
+        <form id="work-filters">
+          <dd id="include_rating_tags"><ul>
+            <li><label><input type="radio" value="11"><span class="indicator"></span><span>Teen And Up Audiences (1,234)</span></label></li>
+          </ul></dd>
+          <dd id="include_relationship_tags"><ul>
+            <li><label><input type="checkbox" value="21"><span class="indicator"></span><span>Emilia (Re:Zero)/Natsuki Subaru (987)</span></label></li>
+          </ul></dd>
+          <dd id="include_character_tags"><ul>
+            <li><label><input type="checkbox" value="31"><span class="indicator"></span><span>Natsuki Subaru (1,500)</span></label></li>
+          </ul></dd>
+          <dd id="include_freeform_tags"><ul>
+            <li><label><input type="checkbox" value="41"><span class="indicator"></span><span>Time Loop (650)</span></label></li>
+          </ul></dd>
+        </form>
+    "#;
+    let tag_page = fixture()
+        .replace(
+            "<h2 class=\"heading\">Search Results</h2>",
+            &format!("<h2 class=\"heading\">1 - 2 of 2 Works in Re:Zero</h2>{facets_html}"),
+        )
+        .replace("<h3 class=\"heading\">2 Found</h3>", "");
+
+    let filtered_query = LiveSearchQuery {
+        include_tags: vec!["Time Loop".into()],
+        sort: Some("kudos".into()),
+        ..LiveSearchQuery::default()
+    };
+    let filtered_path = filtered_query.tag_works_path("Re:Zero", None, None, 1);
+
+    let upstream = Server::start(vec![
+        (
+            "GET /tags/Re%3AZero/works".to_string(),
+            Response::ok(tag_page.clone()),
+        ),
+        (format!("GET {filtered_path}"), Response::ok(tag_page)),
+    ]);
+    let dir = support::temp_dir("live-tag-facets");
+    let (root, _store, handle) = serve(&dir, &upstream).await;
+
+    let body = http()
+        .get(format!("{root}/tags/Re%3AZero/works"))
+        .send()
+        .await
+        .expect("tag page")
+        .text()
+        .await
+        .expect("body");
+    assert!(
+        body.contains("Emilia (Re:Zero)/Natsuki Subaru (987)"),
+        "{body}"
+    );
+    assert!(body.contains("Natsuki Subaru (1,500)"), "{body}");
+    assert!(body.contains("Time Loop (650)"), "{body}");
+    assert!(body.contains("Other tags to include"), "{body}");
+    assert!(body.contains("Other tags to exclude"), "{body}");
+    assert!(body.contains("data-autocomplete=\"tag\""), "{body}");
+
+    let filtered = http()
+        .get(format!(
+            "{root}/tags/Re%3AZero/works?include_tag=Time%20Loop&sort=kudos"
+        ))
+        .send()
+        .await
+        .expect("filtered")
+        .text()
+        .await
+        .expect("body");
+    assert!(
+        filtered.contains("value=\"Time Loop\" checked"),
+        "{filtered}"
+    );
+    assert!(
+        upstream
+            .requests()
+            .iter()
+            .any(|req| req.path == filtered_path),
+        "{:?}",
+        upstream.requests()
+    );
+
+    handle.abort();
+    drop(std::fs::remove_dir_all(dir));
+}
+
+#[tokio::test]
+async fn autocomplete_proxies_ao3_and_falls_back_offline() {
+    let ao3_json = r#"[{"id":"Emilia (Re:Zero)","name":"Emilia (Re:Zero)"},{"id":"Emilia/Natsuki Subaru","name":"Emilia/Natsuki Subaru"}]"#;
+    let upstream = Server::start(vec![(
+        "GET /autocomplete/tag.json?term=emilia".to_string(),
+        Response::ok(ao3_json),
+    )]);
+    let dir = support::temp_dir("live-autocomplete");
+    let (root, store, handle) = serve(&dir, &upstream).await;
+
+    // Seed a cached work so offline autocomplete fallback can find its tags.
+    let page = ao3instance::ao3::work::WorkPage {
+        ao3_id: "9001".into(),
+        title: "Offline Tag Work".into(),
+        authors: vec!["tester".into()],
+        summary: None,
+        fandoms: vec![],
+        relationships: vec!["Local Ship/Test".into()],
+        characters: vec![],
+        additional_tags: vec![],
+        warnings: vec![],
+        categories: vec![],
+        rating: Some("General Audiences".into()),
+        language: Some("English".into()),
+        published_at: None,
+        complete: Some(true),
+        word_count: Some(1_000),
+        kudos: None,
+        comment_count: None,
+        hits: None,
+        bookmarks: None,
+        chapter_count: 1,
+        chapters: vec![ao3instance::ao3::work::Chapter {
+            index: 1,
+            title: Some("Ch 1".into()),
+            body_html: "<p>Hello</p>".into(),
+            notes_html: None,
+        }],
+        comment_form_present: false,
+    };
+    store.upsert_work(&page, "hash-9001").await.expect("upsert");
+
+    // Live proxy to AO3's `/autocomplete/tag.json`.
+    let resp = http()
+        .get(format!("{root}/autocomplete/tag?term=emilia"))
+        .send()
+        .await
+        .expect("autocomplete");
+    assert_eq!(resp.status(), 200);
+    let ct = resp
+        .headers()
+        .get("content-type")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("");
+    assert!(ct.contains("application/json"), "{ct}");
+    let body = resp.text().await.expect("body");
+    assert!(body.contains("Emilia (Re:Zero)"), "{body}");
+    assert!(body.contains("Emilia/Natsuki Subaru"), "{body}");
+
+    // Empty term returns `[]` without hitting upstream.
+    let empty = http()
+        .get(format!("{root}/autocomplete/tag?term=%20%20"))
+        .send()
+        .await
+        .expect("empty")
+        .text()
+        .await
+        .expect("body");
+    assert_eq!(empty, "[]");
+
+    // Unsupported kind is rejected with 400.
+    let bad = http()
+        .get(format!("{root}/autocomplete/bogus?term=a"))
+        .send()
+        .await
+        .expect("bad");
+    assert_eq!(bad.status(), 400);
+
+    // Offline fallback searches locally cached works' tags when upstream fails.
+    let offline = http()
+        .get(format!("{root}/autocomplete/relationship?term=local"))
+        .send()
+        .await
+        .expect("offline")
+        .text()
+        .await
+        .expect("body");
+    assert!(offline.contains("Local Ship/Test"), "{offline}");
+
+    handle.abort();
+    drop(std::fs::remove_dir_all(dir));
+}

@@ -163,10 +163,16 @@ pub struct CacheStats {
 impl Store {
     /// Fandoms present in the cache, most cached works first.
     pub async fn list_fandoms(&self) -> Result<Vec<(String, usize)>> {
+        let rows: Vec<String> = sqlx::query_scalar("SELECT tags_json FROM works")
+            .fetch_all(&self.pool)
+            .await
+            .map_err(|e| Error::Store(format!("list fandoms: {e}")))?;
         let mut counts: BTreeMap<String, usize> = BTreeMap::new();
-        for work in self.all_works().await? {
-            for fandom in work.tags.fandoms {
-                *counts.entry(fandom).or_insert(0) += 1;
+        for tags_json in rows {
+            if let Ok(tags) = serde_json::from_str::<super::TagGroups>(&tags_json) {
+                for fandom in tags.fandoms {
+                    *counts.entry(fandom).or_insert(0) += 1;
+                }
             }
         }
         let mut fandoms: Vec<(String, usize)> = counts.into_iter().collect();
@@ -370,18 +376,18 @@ impl Store {
         let progress = self.progress_map().await?;
         let mut entries: HashMap<String, ReadingEntry> = HashMap::new();
 
-        for (work_id, (chapter, pct, updated_at, chapter_count)) in progress {
+        for (work_id, row) in progress {
             entries.insert(
                 work_id.clone(),
                 ReadingEntry {
                     work_id,
-                    title: None,
-                    authors: Vec::new(),
-                    progress_chapter: Some(chapter),
-                    progress_pct: Some(pct),
-                    chapter_count,
+                    title: row.title,
+                    authors: row.authors,
+                    progress_chapter: Some(row.chapter_idx),
+                    progress_pct: Some(row.pct),
+                    chapter_count: row.chapter_count,
                     reading_state: None,
-                    updated_at,
+                    updated_at: row.updated_at,
                 },
             );
         }
@@ -413,9 +419,15 @@ impl Store {
                 });
             entry.reading_state = row.get("state");
             entry.updated_at = entry.updated_at.max(row.get("updated_at"));
-            entry.title = row.get("title");
-            entry.authors = authors_from_row(row);
-            entry.chapter_count = row.get("chapter_count");
+            if entry.title.is_none() {
+                entry.title = row.get("title");
+            }
+            if entry.authors.is_empty() {
+                entry.authors = authors_from_row(row);
+            }
+            if entry.chapter_count == 0 {
+                entry.chapter_count = row.get("chapter_count");
+            }
         }
 
         let mut entries: Vec<ReadingEntry> = entries.into_values().collect();
@@ -428,43 +440,32 @@ impl Store {
     }
 
     pub async fn cache_stats(&self) -> Result<CacheStats> {
-        let works = self.count_table("works").await?;
-        let chapters = self.count_table("chapters").await?;
-        let subscriptions = self.count_table("subscriptions").await?;
-        let bookmarks = self.count_table("bookmarks").await?;
-        let kudos = self.count_table("kudos_sent").await?;
-        let recent_http_errors = self.count_table("http_error_log").await?;
+        let row = sqlx::query(
+            "SELECT
+                (SELECT COUNT(*) FROM works) AS works,
+                (SELECT COUNT(*) FROM chapters) AS chapters,
+                (SELECT COUNT(*) FROM subscriptions) AS subscriptions,
+                (SELECT COUNT(*) FROM bookmarks) AS bookmarks,
+                (SELECT COUNT(*) FROM kudos_sent) AS kudos,
+                (SELECT COUNT(*) FROM http_error_log) AS recent_http_errors",
+        )
+        .fetch_one(&self.pool)
+        .await
+        .map_err(|e| Error::Store(format!("cache stats: {e}")))?;
         Ok(CacheStats {
-            works,
-            chapters,
-            subscriptions,
-            bookmarks,
-            kudos,
-            recent_http_errors,
+            works: row.get("works"),
+            chapters: row.get("chapters"),
+            subscriptions: row.get("subscriptions"),
+            bookmarks: row.get("bookmarks"),
+            kudos: row.get("kudos"),
+            recent_http_errors: row.get("recent_http_errors"),
         })
     }
 
-    async fn count_table(&self, table: &str) -> Result<i64> {
-        // Literal statements only: sqlx 0.9 requires `&'static str`, and the
-        // match keeps an accidental table name from ever reaching SQL.
-        let query = match table {
-            "works" => "SELECT COUNT(*) FROM works",
-            "chapters" => "SELECT COUNT(*) FROM chapters",
-            "subscriptions" => "SELECT COUNT(*) FROM subscriptions",
-            "bookmarks" => "SELECT COUNT(*) FROM bookmarks",
-            "kudos_sent" => "SELECT COUNT(*) FROM kudos_sent",
-            "http_error_log" => "SELECT COUNT(*) FROM http_error_log",
-            other => return Err(Error::Store(format!("unknown table {other}"))),
-        };
-        sqlx::query_scalar(query)
-            .fetch_one(&self.pool)
-            .await
-            .map_err(|e| Error::Store(format!("count {table}: {e}")))
-    }
-
-    async fn progress_map(&self) -> Result<HashMap<String, (i64, i64, i64, i64)>> {
+    async fn progress_map(&self) -> Result<HashMap<String, ProgressRow>> {
         let rows = sqlx::query(
             "SELECT p.work_id, p.chapter_idx, p.pct, p.updated_at,
+                    w.title, w.authors_json,
                     COALESCE(w.chapter_count, 0) AS chapter_count
              FROM progress p
              LEFT JOIN works w ON w.ao3_id = p.work_id
@@ -478,12 +479,14 @@ impl Store {
             .map(|row| {
                 (
                     row.get("work_id"),
-                    (
-                        row.get("chapter_idx"),
-                        row.get::<f64, _>("pct").round().clamp(0.0, 100.0) as i64,
-                        row.get("updated_at"),
-                        row.get("chapter_count"),
-                    ),
+                    ProgressRow {
+                        chapter_idx: row.get("chapter_idx"),
+                        pct: row.get::<f64, _>("pct").round().clamp(0.0, 100.0) as i64,
+                        updated_at: row.get("updated_at"),
+                        chapter_count: row.get("chapter_count"),
+                        title: row.get("title"),
+                        authors: authors_from_row(row),
+                    },
                 )
             })
             .collect())
@@ -509,6 +512,15 @@ impl Store {
             .map_err(|e| Error::Store(format!("bookmark ids: {e}")))?;
         Ok(rows.iter().map(|row| row.get("work_id")).collect())
     }
+}
+
+struct ProgressRow {
+    chapter_idx: i64,
+    pct: i64,
+    updated_at: i64,
+    chapter_count: i64,
+    title: Option<String>,
+    authors: Vec<String>,
 }
 
 fn authors_from_row(row: &sqlx::sqlite::SqliteRow) -> Vec<String> {

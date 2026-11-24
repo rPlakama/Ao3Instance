@@ -178,6 +178,7 @@ pub(super) async fn fetch_work_html(state: &AppState, id: &str) -> Handled<Strin
             .await
             .map_err(AppError::from)?;
         session.sync_csrf_from_response(&response);
+        super::sync_session_snapshot(state, &session).await;
         response
     };
     if response.jar_changed {
@@ -253,15 +254,19 @@ pub(super) async fn read_work(
         eprintln!("access history: {error}");
     }
     let chapters = state.store.get_chapters(&id).await?;
-    let progress = state.store.get_progress(&id).await?;
+    let progress_exact = state.store.get_progress_exact(&id).await?;
+    let progress = progress_exact.map(|(chapter_idx, pct)| crate::store::Progress {
+        chapter_idx,
+        pct: pct.round().clamp(0.0, 100.0) as i64,
+    });
     let current = query
         .chapter
         .or_else(|| progress.map(|saved| saved.chapter_idx))
         .unwrap_or_else(|| chapters.first().map(|chapter| chapter.idx).unwrap_or(1));
     let resume_pct = if query.chapter.is_none() {
-        progress
-            .filter(|saved| saved.chapter_idx == current)
-            .map(|saved| saved.pct)
+        progress_exact
+            .filter(|(chapter_idx, _)| *chapter_idx == current)
+            .map(|(_, pct)| pct)
     } else {
         None
     };
@@ -276,38 +281,26 @@ pub(super) async fn read_work(
     } else {
         query.notice.as_deref().and_then(notice_text)
     };
-    let (account, usable, jar_complete) = {
-        let session = state.session.lock().await;
-        (
-            session.account().to_string(),
-            session.state().is_usable(),
-            session.jar().is_complete(),
-        )
-    };
-    let signed_in = !account.is_empty() && (usable || jar_complete);
+    let snap = state.session_snapshot.read().await.clone();
+    let signed_in = !snap.account.is_empty() && (snap.usable || snap.jar_complete);
     let subscribed = if signed_in {
         state
             .store
-            .get_subscription(&account, actions::WORK, &id)
+            .get_subscription(&snap.account, actions::WORK, &id)
             .await?
             .is_some_and(|row| row.state == "active")
     } else {
         false
     };
     let can_write = signed_in && state.write_enabled;
-    let kudos_sent = can_write && state.store.has_kudos(&account, &id).await?;
-    let bookmarked = can_write && state.store.has_bookmark(&account, &id).await?;
+    let kudos_sent = can_write && state.store.has_kudos(&snap.account, &id).await?;
+    let bookmarked = can_write && state.store.has_bookmark(&snap.account, &id).await?;
     let reading_state = if can_write {
-        state.store.get_reading_state(&account, &id).await?
+        state.store.get_reading_state(&snap.account, &id).await?
     } else {
         None
     };
-    let comment_as = if can_write {
-        let session = state.session.lock().await;
-        session.pseud().map(|pseud| pseud.name.clone())
-    } else {
-        None
-    };
+    let comment_as = if can_write { snap.pseud_name } else { None };
     let page = super::page_context(
         &state,
         &format!("{} — AO3Instance", work.title),
@@ -350,10 +343,7 @@ pub(super) async fn read_chapter(
         .iter()
         .find(|chapter| chapter.idx == idx)
         .ok_or(AppError::NotFound)?;
-    let skin = match query.skin.as_deref() {
-        Some("reversi") => "reversi",
-        _ => "default",
-    };
+    let skin = query.skin.as_deref().unwrap_or("default");
     let mut response = Html(render::chapter_document(&work.title, chapter, skin)).into_response();
     let headers = response.headers_mut();
     headers.insert(
@@ -499,12 +489,9 @@ async fn perform_search(app: &AppState, query: SearchQuery) -> Handled<Html<Stri
             Ok(fetched) => {
                 let results = crate::ao3::search::parse_search_results(&fetched.body)
                     .map_err(AppError::from)?;
-                let page = super::page_context(
-                    app,
-                    "Search Results — AO3Instance",
-                    NavSection::Search,
-                )
-                .await;
+                let page =
+                    super::page_context(app, "Search Results — AO3Instance", NavSection::Search)
+                        .await;
                 return Ok(Html(render::live_search_results_page(
                     &page,
                     &live,
@@ -625,7 +612,7 @@ fn live_query_from(query: &SearchQuery, raw: &str) -> crate::ao3::search::LiveSe
 pub(super) struct AutoProgressForm {
     work_id: String,
     chapter: i64,
-    pct: i64,
+    pct: f64,
 }
 
 /// Fire-and-forget progress beacon from the reader. Returns no body.
@@ -636,12 +623,15 @@ pub(super) async fn auto_progress(
     if form.chapter < 1 {
         return Err(AppError::BadRequest("chapter must be positive".into()));
     }
+    if !form.pct.is_finite() {
+        return Err(AppError::BadRequest("pct must be finite".into()));
+    }
     if state.store.get_work(&form.work_id).await?.is_none() {
         return Err(AppError::NotFound);
     }
     state
         .store
-        .save_progress(&form.work_id, form.chapter, form.pct)
+        .save_progress_exact(&form.work_id, form.chapter, form.pct)
         .await?;
     Ok(axum::http::StatusCode::NO_CONTENT)
 }
@@ -658,19 +648,23 @@ async fn live_home_html(state: &AppState, account: &str, refresh: bool) -> Optio
 pub(super) struct ProgressForm {
     work_id: String,
     chapter: i64,
-    pct: Option<i64>,
+    pct: Option<f64>,
 }
 
 pub(super) async fn save_progress(
     State(state): State<Arc<AppState>>,
     Form(form): Form<ProgressForm>,
 ) -> Handled<Redirect> {
+    if form.chapter < 1 {
+        return Err(AppError::BadRequest("chapter must be positive".into()));
+    }
     if state.store.get_work(&form.work_id).await?.is_none() {
         return Err(AppError::NotFound);
     }
+    let pct = form.pct.filter(|v| v.is_finite()).unwrap_or(0.0);
     state
         .store
-        .save_progress(&form.work_id, form.chapter, form.pct.unwrap_or(0))
+        .save_progress_exact(&form.work_id, form.chapter, pct)
         .await?;
     Ok(Redirect::to(&format!(
         "/read/{}?chapter={}",

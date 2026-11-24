@@ -55,11 +55,13 @@ pub(super) async fn apply(
         ));
     }
     let path = format!("/skins/{rest}");
-    let html = fetch_public_page(&state, &path, false).await.ok_or_else(|| {
-        AppError::BadRequest(
-            "AO3 did not return the public skin; check Diagnostics and try again.".into(),
-        )
-    })?;
+    let html = fetch_public_page(&state, &path, false)
+        .await
+        .ok_or_else(|| {
+            AppError::BadRequest(
+                "AO3 did not return the public skin; check Diagnostics and try again.".into(),
+            )
+        })?;
     let css = crate::ao3::skins::parse_skin_css(&html).ok_or_else(|| {
         AppError::BadRequest(
             "That public skin has no custom CSS to import (wizard-only skins are not supported yet)."

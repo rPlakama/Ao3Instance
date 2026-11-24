@@ -20,6 +20,7 @@ use serde::{Deserialize, Serialize};
 use crate::consts::{CREDENTIALS_COOKIE, SESSION_COOKIE};
 use crate::crypto::{AAD_JAR, SecretKey, wipe_string};
 use crate::error::{Error, Result};
+use crate::time::now_secs;
 
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct Cookie {
@@ -262,11 +263,7 @@ fn unquote(value: &str) -> String {
 }
 
 fn now_unix() -> i64 {
-    use std::time::{SystemTime, UNIX_EPOCH};
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_secs() as i64)
-        .unwrap_or(0)
+    now_secs()
 }
 
 /// Parses an RFC 1123 (IMF-fixdate) timestamp: `Sun, 22 Nov 2026 12:00:00 GMT`.

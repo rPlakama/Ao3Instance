@@ -152,7 +152,8 @@ fn greeting(ctx: &PageContext) -> String {
     }
     format!(
         "<nav id=\"greeting\" aria-label=\"User\"><ul class=\"user navigation actions\">\
-         <li class=\"dropdown\"><a href=\"/dashboard\">Hi, {account}!</a>\
+         <li class=\"dropdown\"><a href=\"/dashboard\" data-dropdown-toggle \
+         aria-haspopup=\"true\" aria-expanded=\"false\">Hi, {account}!</a>\
          <ul class=\"menu\">\
          <li class=\"account-status\"><strong>{account}</strong> \
          <span class=\"state {state_class}\">{state}</span></li>\
@@ -196,7 +197,8 @@ fn dropdown(section: NavSection, active: NavSection, items: &[(&str, &str, bool)
     }
     menu.push_str("</ul>");
     format!(
-        "<li class=\"dropdown{}\"><a href=\"{}\">{}</a>{menu}</li>",
+        "<li class=\"dropdown{}\"><a href=\"{}\" data-dropdown-toggle \
+         aria-haspopup=\"true\" aria-expanded=\"false\">{}</a>{menu}</li>",
         if section == active { " active" } else { "" },
         section.href(),
         section.label()
@@ -309,7 +311,11 @@ fn dashboard_nav(active: NavSection) -> String {
     };
     let choices = [
         nav_item(Some(NavSection::Dashboard), "Dashboard", "/dashboard"),
-        nav_item(Some(NavSection::Session), "Session &amp; preferences", "/session"),
+        nav_item(
+            Some(NavSection::Session),
+            "Session &amp; preferences",
+            "/session",
+        ),
         nav_item(None, "Public AO3 skins", "/themes"),
     ]
     .concat();
@@ -423,14 +429,51 @@ pub(super) fn layout(ctx: &PageContext, body: &str) -> String {
     layout_with_class(ctx, main_class, body)
 }
 
+/// Case-insensitively neutralises `</style` breakouts and `@import` rules in
+/// imported public AO3 site-skin CSS before embedding inside `<style>`.
+pub(crate) fn sanitize_public_skin_css(css: &str) -> String {
+    let without_close = replace_ascii_case_insensitive(css, "</style", "");
+    replace_ascii_case_insensitive(&without_close, "@import", "/* import removed */")
+}
+
+fn replace_ascii_case_insensitive(input: &str, needle: &str, replacement: &str) -> String {
+    let needle_lower = needle.to_ascii_lowercase();
+    let needle_bytes = needle_lower.as_bytes();
+    if needle_bytes.is_empty() || input.len() < needle_bytes.len() {
+        return input.to_string();
+    }
+    let bytes = input.as_bytes();
+    let mut out = String::with_capacity(input.len());
+    let mut idx = 0;
+    let mut last = 0;
+    while idx + needle_bytes.len() <= bytes.len() {
+        let matched = bytes[idx..idx + needle_bytes.len()]
+            .iter()
+            .zip(needle_bytes.iter())
+            .all(|(a, b)| a.to_ascii_lowercase() == *b);
+        if matched
+            && input.is_char_boundary(idx)
+            && input.is_char_boundary(idx + needle_bytes.len())
+        {
+            out.push_str(&input[last..idx]);
+            out.push_str(replacement);
+            idx += needle_bytes.len();
+            last = idx;
+        } else {
+            idx += 1;
+        }
+    }
+    out.push_str(&input[last..]);
+    out
+}
+
 /// Document skeleton with an explicit `#main` zone class list (matching AO3's
 /// `classes_for_main`, e.g. `"home"`, `"works-show"`, `"works-index filtered"`).
 pub(super) fn layout_with_class(ctx: &PageContext, main_class: &str, body: &str) -> String {
     let public_css = ctx.skin_css.as_deref().map_or_else(String::new, |css| {
         format!(
             "<style id=\"public-skin\">{}</style>",
-            css.replace("</style", "")
-                .replace("@import", "/* @import removed */")
+            sanitize_public_skin_css(css)
         )
     });
     let body_class = if ctx.account.is_empty() {
@@ -462,10 +505,12 @@ pub(super) fn layout_with_class(ctx: &PageContext, main_class: &str, body: &str)
          {greeting}</div>{nav}<div class=\"clear\"></div></header>\
          <div id=\"inner\" class=\"wrapper\">{sidebar}\
          <main id=\"main\" class=\"{main_classes} region\" role=\"main\">{body}\
-         <div class=\"clear\"></div></main></div>{footer}</div></body></html>",
+         <div class=\"clear\"></div></main></div>{footer}</div>\
+         <script src=\"/assets/ui.js?v={ui_v:016x}\" defer></script></body></html>",
         title = escape(&ctx.title),
         skin = escape(&ctx.skin),
         css_v = super::AO3_CSS_HASH,
+        ui_v = super::UI_JS_HASH,
         greeting = greeting(ctx),
         nav = navigation(ctx),
         sidebar = if has_sidebar {
@@ -512,10 +557,26 @@ mod tests {
         let html = layout(&ctx, "<p>body</p>");
         assert!(html.contains("<title>A &lt;title&gt;</title>"), "{html}");
         assert!(html.contains("class=\"dropdown active\""), "{html}");
-        assert!(html.contains("<a href=\"/about\">About</a>"), "{html}");
+        assert!(
+            html.contains(
+                "<a href=\"/about\" data-dropdown-toggle aria-haspopup=\"true\" aria-expanded=\"false\">About</a>"
+            ),
+            "{html}"
+        );
         assert!(html.contains("Hi, reader&lt;b&gt;!"), "{html}");
         assert!(html.contains("/assets/ao3.css"), "{html}");
+        assert!(html.contains("/assets/ui.js?v="), "{html}");
         assert!(html.contains("<p>body</p>"), "{html}");
+    }
+
+    #[test]
+    fn public_skin_css_strips_style_breakouts_and_imports_case_insensitively() {
+        let hostile = "body{color:red}</STYLE><script>alert(1)</script>@IMPORT url('https://evil.test/x.css');";
+        let clean = sanitize_public_skin_css(hostile);
+        assert!(!clean.to_ascii_lowercase().contains("</style"), "{clean}");
+        assert!(!clean.to_ascii_lowercase().contains("@import"), "{clean}");
+        assert!(clean.contains("/* import removed */"), "{clean}");
+        assert!(clean.contains("body{color:red}"), "{clean}");
     }
 
     #[test]

@@ -39,9 +39,9 @@ pub fn live_media_page(
             escape(&medium.name)
         ));
         for fandom in &medium.fandoms {
-            let count = fandom.count.map_or_else(String::new, |n| {
-                format!(" ({})", format_count(n))
-            });
+            let count = fandom
+                .count
+                .map_or_else(String::new, |n| format!(" ({})", format_count(n)));
             body.push_str(&format!(
                 "<li><a class=\"tag\" href=\"{}\">{}</a>{count}</li>",
                 super::tag_href(&fandom.name),
@@ -105,9 +105,9 @@ pub fn live_medium_fandoms_page(
             l = escape(letter)
         ));
         for fandom in entries {
-            let count = fandom.count.map_or_else(String::new, |n| {
-                format!(" ({})", format_count(n))
-            });
+            let count = fandom
+                .count
+                .map_or_else(String::new, |n| format!(" ({})", format_count(n)));
             body.push_str(&format!(
                 "<li><a class=\"tag\" href=\"{}\">{}</a>{count}</li>",
                 super::tag_href(&fandom.name),

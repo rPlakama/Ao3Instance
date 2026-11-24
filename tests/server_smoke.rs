@@ -116,13 +116,24 @@ async fn app_opens_a_work_from_a_mock_upstream() {
         assert!(reader.contains(author), "reader shows the byline");
     }
     assert!(
-        reader.contains("<iframe"),
-        "chapter is sandboxed in an iframe"
+        !reader.contains("<iframe"),
+        "chapter renders inline inside #chapters like AO3"
     );
-    assert!(reader.contains("/read/12345/chapter/1"));
+    assert!(reader.contains("id=\"chapters\""), "{reader}");
+    assert!(reader.contains("class=\"userstuff module\""), "{reader}");
+    assert!(!reader.contains("bad()"), "author scripts stripped");
     assert!(reader.contains("class=\"reading-progress\""), "{reader}");
+    assert!(reader.contains("/assets/ui.js"), "{reader}");
     assert!(reader.contains("/assets/reader.js"), "{reader}");
-    assert!(reader.contains("sandbox=\"allow-same-origin\""), "{reader}");
+
+    let ui_js = http
+        .get(format!("{root}/assets/ui.js"))
+        .send()
+        .await
+        .expect("ui js");
+    assert_eq!(ui_js.status(), 200);
+    let ui_body = ui_js.text().await.expect("ui js body");
+    assert!(ui_body.contains("data-dropdown-toggle"), "{ui_body}");
 
     let reader_js = http
         .get(format!("{root}/assets/reader.js"))

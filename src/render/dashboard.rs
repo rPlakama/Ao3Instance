@@ -121,9 +121,7 @@ pub fn dashboard_page(
                             .to_string(),
                     ),
                     "Tag" => (
-                        crate::render::tag_href(
-                            entry.title.as_deref().unwrap_or(&entry.target_id),
-                        ),
+                        crate::render::tag_href(entry.title.as_deref().unwrap_or(&entry.target_id)),
                         entry
                             .title
                             .as_deref()
@@ -245,7 +243,9 @@ pub fn dashboard_page(
 
 fn listbox(id: &str, heading: &str, content: String, more: Option<(&str, &str)>) -> String {
     let footer = more.map_or_else(String::new, |(href, label)| {
-        format!("<ul class=\"actions\" role=\"navigation\"><li><a href=\"{href}\">{label}</a></li></ul>")
+        format!(
+            "<ul class=\"actions\" role=\"navigation\"><li><a href=\"{href}\">{label}</a></li></ul>"
+        )
     });
     format!(
         "<div class=\"listbox group\" id=\"{id}\">\

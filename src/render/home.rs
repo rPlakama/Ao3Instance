@@ -290,7 +290,9 @@ fn reading_blurb(reading: &crate::ao3::home::HomeReading) -> String {
     let tags_block = if tags_html.is_empty() {
         String::new()
     } else {
-        format!("<h6 class=\"landmark heading\">Tags</h6><ul class=\"tags commas\">{tags_html}</ul>")
+        format!(
+            "<h6 class=\"landmark heading\">Tags</h6><ul class=\"tags commas\">{tags_html}</ul>"
+        )
     };
     let summary = work
         .summary_html

@@ -139,6 +139,7 @@ pub(super) async fn solver_available(state: &AppState) -> bool {
 pub(super) async fn sync_solver_state(state: &AppState) {
     let status = {
         let session = state.session.lock().await;
+        super::sync_session_snapshot(state, &session).await;
         session.solver_status().clone()
     };
     *state.solver_status.write().await = status;
@@ -160,6 +161,7 @@ pub(super) async fn fetch_via_solver(
     let (result, status) = {
         let mut session = state.session.lock().await;
         let result = session.solve_get(path, send_cookies).await;
+        super::sync_session_snapshot(state, &session).await;
         (result, session.solver_status().clone())
     };
     *state.solver_status.write().await = status;
@@ -326,6 +328,7 @@ pub(super) async fn clear_clearance(State(state): State<Arc<AppState>>) -> Handl
     {
         let mut session = state.session.lock().await;
         session.clear_clearance();
+        super::sync_session_snapshot(&state, &session).await;
     }
     state.store.clear_solver_clearance().await?;
     Ok(Redirect::to("/diagnostics"))

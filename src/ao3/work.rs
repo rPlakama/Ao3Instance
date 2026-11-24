@@ -27,6 +27,8 @@
 //!   AO3's `userstuff` blocks. Sanitization belongs to the render layer; this
 //!   parser must not silently drop what the creator wrote.
 
+use std::sync::OnceLock;
+
 use scraper::{ElementRef, Html, Selector};
 
 use crate::error::{Error, Result};
@@ -98,17 +100,17 @@ pub fn parse_work_page(html: &str) -> Result<WorkPage> {
     let document = Html::parse_document(html);
     let selectors = selectors()?;
 
-    let title = extract_title(&document, &selectors)?;
+    let title = extract_title(&document, selectors)?;
     let meta = first_in_document(&document, &selectors.meta);
-    let chapters = extract_chapters(&document, &selectors);
-    let chapter_count = extract_chapter_count(&document, &selectors, &chapters);
+    let chapters = extract_chapters(&document, selectors);
+    let chapter_count = extract_chapter_count(&document, selectors, &chapters);
     let comment_form_present = first_in_document(&document, &selectors.comment_form).is_some();
 
     Ok(WorkPage {
-        ao3_id: extract_ao3_id(&document, &selectors),
+        ao3_id: extract_ao3_id(&document, selectors),
         title,
-        authors: extract_authors(&document, &selectors),
-        summary: extract_summary(&document, &selectors),
+        authors: extract_authors(&document, selectors),
+        summary: extract_summary(&document, selectors),
         fandoms: tag_names(meta, &selectors.fandom_tags),
         relationships: tag_names(meta, &selectors.relationship_tags),
         characters: tag_names(meta, &selectors.character_tags),
@@ -175,7 +177,15 @@ struct Selectors {
     work_paths: Selector,
 }
 
-fn selectors() -> Result<Selectors> {
+fn selectors() -> Result<&'static Selectors> {
+    static CACHE: OnceLock<std::result::Result<Selectors, String>> = OnceLock::new();
+    let compiled = CACHE.get_or_init(|| build_selectors().map_err(|err| err.to_string()));
+    compiled
+        .as_ref()
+        .map_err(|msg| Error::UpstreamChanged(msg.clone()))
+}
+
+fn build_selectors() -> Result<Selectors> {
     Ok(Selectors {
         title: css("h2.title")?,
         byline: css("h3.byline")?,
@@ -521,7 +531,7 @@ mod tests {
         let selectors = selectors().expect("selectors");
         let unit = first_in_document(&document, &selectors.chapter_units).expect("chapter");
 
-        let chapter = parse_chapter(unit, 0, &selectors);
+        let chapter = parse_chapter(unit, 0, selectors);
         assert_eq!(chapter.index, 2);
         assert_eq!(chapter.title.as_deref(), Some("A Map of Small Things"));
         assert_eq!(chapter.body_html, "<p>Body.</p>");
@@ -552,7 +562,7 @@ mod tests {
         let selectors = selectors().expect("selectors");
         let unit = first_in_document(&document, &selectors.chapter_units).expect("chapter");
 
-        let chapter = parse_chapter(unit, 0, &selectors);
+        let chapter = parse_chapter(unit, 0, selectors);
         assert_eq!(
             chapter.notes_html.as_deref(),
             Some("<p>End notes only.</p>")

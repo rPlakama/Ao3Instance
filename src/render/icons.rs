@@ -25,26 +25,24 @@ pub fn required_tags_from(
     linked: bool,
 ) -> String {
     let rating_title = rating.unwrap_or("Not Rated");
-    let (rating_class, rating_label) = match rating
-        .unwrap_or_default()
-        .to_ascii_lowercase()
-        .as_str()
-    {
-        value if value.contains("general") => ("rating-g rating-general-audience", "G"),
-        value if value.contains("teen") => ("rating-t rating-teen", "T"),
-        value if value.contains("mature") => ("rating-m rating-mature", "M"),
-        value if value.contains("explicit") => ("rating-e rating-explicit", "E"),
-        _ => ("rating-nr rating-notrated", "—"),
-    };
-    let rating_href = linked.then(|| {
-        rating.map(|value| {
-            format!(
-                "/works?rating={}",
-                percent_encode(value, SpaceMode::Percent20)
-            )
+    let (rating_class, rating_label) =
+        match rating.unwrap_or_default().to_ascii_lowercase().as_str() {
+            value if value.contains("general") => ("rating-g rating-general-audience", "G"),
+            value if value.contains("teen") => ("rating-t rating-teen", "T"),
+            value if value.contains("mature") => ("rating-m rating-mature", "M"),
+            value if value.contains("explicit") => ("rating-e rating-explicit", "E"),
+            _ => ("rating-nr rating-notrated", "—"),
+        };
+    let rating_href = linked
+        .then(|| {
+            rating.map(|value| {
+                format!(
+                    "/works?rating={}",
+                    percent_encode(value, SpaceMode::Percent20)
+                )
+            })
         })
-    })
-    .flatten();
+        .flatten();
 
     let has_choose_not = warnings
         .iter()
@@ -94,7 +92,12 @@ pub fn required_tags_from(
          {rating_cell}{warning_cell}{category_cell}\
          <li class=\"{status_class}\" title=\"{status_title}\"><span>{}</span></li></ul>",
         escape(status_label),
-        rating_cell = badge_cell(rating_class, rating_href.as_deref(), rating_label, rating_title),
+        rating_cell = badge_cell(
+            rating_class,
+            rating_href.as_deref(),
+            rating_label,
+            rating_title
+        ),
         warning_cell = badge_cell(
             warning_class,
             warning_href.as_deref(),
@@ -163,9 +166,9 @@ fn badge_cell(class: &str, href: Option<&str>, label: &str, title: &str) -> Stri
     let title = escape(title);
     let label = escape(label);
     match href {
-        Some(href) => format!(
-            "<li class=\"{class}\" title=\"{title}\"><a href=\"{href}\">{label}</a></li>"
-        ),
+        Some(href) => {
+            format!("<li class=\"{class}\" title=\"{title}\"><a href=\"{href}\">{label}</a></li>")
+        }
         None => format!("<li class=\"{class}\" title=\"{title}\"><span>{label}</span></li>"),
     }
 }

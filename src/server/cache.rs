@@ -101,9 +101,9 @@ pub(super) async fn fetch_cached_optional(
 /// Returns the signed-in AO3 account name when a complete cookie jar is held,
 /// or an empty string when signed out.
 pub(super) async fn cache_account(state: &AppState) -> String {
-    let session = state.session.lock().await;
-    if !session.account().is_empty() && session.jar().is_complete() {
-        session.account().to_string()
+    let snap = state.session_snapshot.read().await;
+    if !snap.account.is_empty() && snap.jar_complete {
+        snap.account.clone()
     } else {
         String::new()
     }
@@ -136,6 +136,7 @@ async fn fetch_live(
             .await
             .map_err(PageFetchError::Error)?;
         session.sync_csrf_from_response(&response);
+        super::sync_session_snapshot(state, &session).await;
         response
     };
     if response.jar_changed {

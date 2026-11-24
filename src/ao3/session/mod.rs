@@ -308,9 +308,16 @@ impl AccountSession {
                 return Err(err);
             }
         };
-        self.classify_pre_login(&login_page)?;
-        let token = crate::ao3::parse::csrf_token_from_html(&login_page.body)
-            .ok_or(Error::CsrfMissing)?;
+        if let Err(err) = self.classify_pre_login(&login_page) {
+            if !matches!(err, Error::BlockedByEdge { .. }) {
+                self.wipe();
+            }
+            return Err(err);
+        }
+        let Some(token) = crate::ao3::parse::csrf_token_from_html(&login_page.body) else {
+            self.wipe();
+            return Err(Error::CsrfMissing);
+        };
 
         let response = match self
             .upstream_post_form(

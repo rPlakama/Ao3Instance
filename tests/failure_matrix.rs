@@ -54,7 +54,10 @@ async fn cached_work_survives_an_unreachable_upstream() {
         "cached work must read without upstream"
     );
     let body = reader.text().await.expect("body");
-    assert!(body.contains("iframe"), "chapter content expected");
+    assert!(
+        body.contains("class=\"userstuff module\""),
+        "chapter content expected"
+    );
 
     let search = client
         .get(format!("{root}/search?local=1&q=PLACEHOLDER"))

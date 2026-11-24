@@ -89,7 +89,11 @@ impl AccountSession {
 
     /// Runs an upstream `GET` through FlareSolverr when available, falling back
     /// to the direct HTTP client only when the solver is absent or unreachable.
-    pub async fn upstream_get(&mut self, path: &str, timeout: Option<Duration>) -> Result<Response> {
+    pub async fn upstream_get(
+        &mut self,
+        path: &str,
+        timeout: Option<Duration>,
+    ) -> Result<Response> {
         if self.solver_available().await {
             match self.solve_request("GET", path, None, true).await {
                 Ok(response) => return Ok(response),
@@ -115,7 +119,9 @@ impl AccountSession {
         if self.solver_available().await {
             let body = form_urlencode(fields);
             match self.solve_request("POST", path, Some(&body), true).await {
-                Ok(response) if response.is_redirect() && response.location_contains("/auth_error") => {
+                Ok(response)
+                    if response.is_redirect() && response.location_contains("/auth_error") =>
+                {
                     if let Ok(direct) = self.client.post_form(path, fields).await
                         && !matches!(direct.status, 403 | 503)
                     {
@@ -145,7 +151,9 @@ impl AccountSession {
             all.extend_from_slice(fields);
             let body = form_urlencode(&all);
             match self.solve_request("PATCH", path, Some(&body), true).await {
-                Ok(response) if response.is_redirect() && response.location_contains("/auth_error") => {
+                Ok(response)
+                    if response.is_redirect() && response.location_contains("/auth_error") =>
+                {
                     if let Ok(direct) = self.client.patch_form(path, fields).await
                         && !matches!(direct.status, 403 | 503)
                     {
@@ -168,7 +176,9 @@ impl AccountSession {
         if self.solver_available().await {
             let body = form_urlencode(&[("_method", "delete"), ("authenticity_token", token)]);
             match self.solve_request("DELETE", path, Some(&body), true).await {
-                Ok(response) if response.is_redirect() && response.location_contains("/auth_error") => {
+                Ok(response)
+                    if response.is_redirect() && response.location_contains("/auth_error") =>
+                {
                     if let Ok(direct) = self.client.delete_with_csrf(path, token).await
                         && !matches!(direct.status, 403 | 503)
                     {

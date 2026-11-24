@@ -180,7 +180,67 @@ async fn progress_is_saved_listed_and_offered_as_resume() {
     assert!(reader.contains("71% read"), "{reader}");
     assert!(reader.contains("data-resume=\"42\""), "{reader}");
 
-    // The iframe beacon endpoint accepts a clamped automatic update.
+    // The progress beacon endpoint accepts sub-percent float updates and restores them.
+    let precise = client
+        .post(format!("{root}/progress/auto"))
+        .header("content-type", "application/x-www-form-urlencoded")
+        .body("work_id=12345&chapter=2&pct=42.75")
+        .send()
+        .await
+        .expect("precise beacon");
+    assert_eq!(precise.status(), 204);
+    let reader_exact = client
+        .get(format!("{root}/read/12345"))
+        .send()
+        .await
+        .expect("reader exact")
+        .text()
+        .await
+        .expect("reader exact body");
+    assert!(
+        reader_exact.contains("data-resume-exact=\"42.75\""),
+        "{reader_exact}"
+    );
+
+    // Offline reading history preserves work title and authors for progress-only works.
+    let history = store
+        .list_reading_history("")
+        .await
+        .expect("reading history");
+    assert_eq!(history.len(), 1);
+    assert!(
+        history[0].title.is_some(),
+        "title preserved: {:?}",
+        history[0]
+    );
+    assert!(
+        !history[0].authors.is_empty(),
+        "authors preserved: {:?}",
+        history[0]
+    );
+
+    // Cross-site mutating requests are blocked by the same-origin CSRF guard.
+    let cross_site = client
+        .post(format!("{root}/progress/auto"))
+        .header("content-type", "application/x-www-form-urlencoded")
+        .header("sec-fetch-site", "cross-site")
+        .body("work_id=12345&chapter=2&pct=10")
+        .send()
+        .await
+        .expect("cross site");
+    assert_eq!(cross_site.status(), 403);
+
+    let bad_origin = client
+        .post(format!("{root}/progress/auto"))
+        .header("content-type", "application/x-www-form-urlencoded")
+        .header("origin", "https://evil.example")
+        .body("work_id=12345&chapter=2&pct=10")
+        .send()
+        .await
+        .expect("bad origin");
+    assert_eq!(bad_origin.status(), 403);
+
+    // The beacon endpoint clamps out-of-range automatic updates.
     let beacon = client
         .post(format!("{root}/progress/auto"))
         .header("content-type", "application/x-www-form-urlencoded")

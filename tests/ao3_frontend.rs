@@ -217,8 +217,12 @@ async fn seeded_cache_renders_browse_fandoms_and_dashboard() {
     let full = full.text().await.expect("body");
     assert!(full.contains("Chapter by Chapter"), "{full}");
     assert!(
-        full.matches("iframe class=\"chapter\"").count() >= 2,
-        "every cached chapter is stacked: {full}"
+        full.matches("class=\"chapter\" id=\"chapter-").count() >= 2,
+        "every cached chapter is stacked inline: {full}"
+    );
+    assert!(
+        !full.contains("<iframe"),
+        "entire work renders chapters inline without iframes: {full}"
     );
 
     let cached_alias = client
@@ -245,7 +249,15 @@ async fn seeded_cache_renders_browse_fandoms_and_dashboard() {
         200,
         "redirect followed by the client"
     );
-    assert!(chapter_alias.text().await.expect("body").contains("iframe"));
+    let chapter_alias_body = chapter_alias.text().await.expect("body");
+    assert!(
+        chapter_alias_body.contains("id=\"chapter-2\""),
+        "{chapter_alias_body}"
+    );
+    assert!(
+        chapter_alias_body.contains("class=\"userstuff module\""),
+        "{chapter_alias_body}"
+    );
 
     let search = client
         .get(format!("{root}/search?local=1&q=Mirror"))
@@ -460,18 +472,22 @@ async fn skin_toggle_persists_and_required_tags_render() {
         .expect("reader in reversi");
     let reader = reader.text().await.expect("body");
     assert!(
-        reader.contains("&skin=reversi"),
-        "iframe carries the skin: {reader}"
+        reader.contains("data-skin=\"reversi\""),
+        "reader page carries active skin natively for inline chapters: {reader}"
     );
 
-    let chapter = client
-        .get(format!("{root}/read/12345/chapter/1?skin=reversi"))
-        .send()
-        .await
-        .expect("chapter");
-    let chapter = chapter.text().await.expect("body");
-    assert!(chapter.contains("data-skin=\"reversi\""), "{chapter}");
-    assert!(chapter.contains("color:#eee"), "light text for dark iframe");
+    for skin in ["reversi", "auto", "sepia", "midnight"] {
+        let chapter = client
+            .get(format!("{root}/read/12345/chapter/1?skin={skin}"))
+            .send()
+            .await
+            .expect("chapter");
+        let chapter = chapter.text().await.expect("body");
+        assert!(
+            chapter.contains(&format!("data-skin=\"{skin}\"")),
+            "chapter endpoint preserves skin {skin}: {chapter}"
+        );
+    }
 
     let auto = client
         .post(format!("{root}/skin"))
@@ -542,7 +558,10 @@ async fn ao3_html_structure_matches_otwarchive_regions_and_patterns() {
         .await
         .expect("body");
     assert!(home.contains("id=\"outer\" class=\"wrapper\""), "{home}");
-    assert!(home.contains("/assets/ao3.css?v="), "cache-busted stylesheet: {home}");
+    assert!(
+        home.contains("/assets/ao3.css?v="),
+        "cache-busted stylesheet: {home}"
+    );
     assert!(home.contains("id=\"skiplinks\""), "{home}");
     assert!(home.contains("id=\"inner\" class=\"wrapper\""), "{home}");
     assert!(home.contains("class=\"splash\""), "{home}");
@@ -550,7 +569,10 @@ async fn ao3_html_structure_matches_otwarchive_regions_and_patterns() {
     assert!(home.contains("random readings module"), "{home}");
     assert!(home.contains("latest messages module"), "{home}");
     assert!(home.contains("Customize"), "AO3 footer customize column");
-    assert!(!home.contains("id=\"dashboard\""), "home omits dashboard sidebar");
+    assert!(
+        !home.contains("id=\"dashboard\""),
+        "home omits dashboard sidebar"
+    );
 
     // Work reader: AO3 show layout (work navigation actions, meta wrapper, workskin, chapters, feedback).
     let reader = client
@@ -561,11 +583,17 @@ async fn ao3_html_structure_matches_otwarchive_regions_and_patterns() {
         .text()
         .await
         .expect("body");
-    assert!(reader.contains("class=\"work navigation actions\""), "{reader}");
+    assert!(
+        reader.contains("class=\"work navigation actions\""),
+        "{reader}"
+    );
     assert!(reader.contains("class=\"work meta group\""), "{reader}");
     assert!(reader.contains("id=\"workskin\""), "{reader}");
     assert!(reader.contains("id=\"chapters\""), "{reader}");
-    assert!(reader.contains("id=\"feedback\" class=\"feedback\""), "{reader}");
+    assert!(
+        reader.contains("id=\"feedback\" class=\"feedback\""),
+        "{reader}"
+    );
 
     // Fandoms directory: alphabet jump bar + AO3 letter listbox panels.
     let fandoms = client
@@ -588,7 +616,10 @@ async fn ao3_html_structure_matches_otwarchive_regions_and_patterns() {
         .text()
         .await
         .expect("body");
-    assert!(dashboard.contains("id=\"dashboard\" class=\"region own\""), "{dashboard}");
+    assert!(
+        dashboard.contains("id=\"dashboard\" class=\"region own\""),
+        "{dashboard}"
+    );
     assert!(dashboard.contains("class=\"user home\""), "{dashboard}");
     assert!(dashboard.contains("class=\"listbox group\""), "{dashboard}");
 

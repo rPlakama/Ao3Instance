@@ -18,8 +18,9 @@ pub fn pagination(page: i64, per_page: i64, total: i64, path: &str, extra: &str)
         format!("{path}?{query}")
     };
 
-    let mut out =
-        String::from("<ol class=\"pagination actions\" role=\"navigation\" aria-label=\"Pagination\">");
+    let mut out = String::from(
+        "<ol class=\"pagination actions\" role=\"navigation\" aria-label=\"Pagination\">",
+    );
     if page > 1 {
         out.push_str(&format!(
             "<li class=\"previous\"><a href=\"{}\" rel=\"prev\">← Previous</a></li>",

@@ -734,7 +734,11 @@ async fn page_cache_round_trip_freshness_and_invalidation() {
         .await
         .unwrap();
     store
-        .put_cached_page("someone", "/users/someone/subscriptions", "<html>sub</html>")
+        .put_cached_page(
+            "someone",
+            "/users/someone/subscriptions",
+            "<html>sub</html>",
+        )
         .await
         .unwrap();
     store
@@ -787,13 +791,33 @@ async fn page_cache_round_trip_freshness_and_invalidation() {
             .unwrap()
             .is_none()
     );
-    assert!(
-        store
-            .get_cached_page("", "/media")
-            .await
-            .unwrap()
-            .is_some()
-    );
+    assert!(store.get_cached_page("", "/media").await.unwrap().is_some());
+
+    drop(std::fs::remove_dir_all(&dir));
+}
+
+#[tokio::test]
+async fn upsert_preserves_chapter_count_and_progress_history_includes_title() {
+    let (store, dir) = test_store("chapter-count-and-history").await;
+    let mut work = page();
+    work.ao3_id = "777".into();
+    work.title = "Partial Chapter Work".into();
+    work.chapter_count = 5;
+    work.chapters.truncate(1);
+    store.upsert_work(&work, "h1").await.unwrap();
+
+    let stored = store.get_work("777").await.unwrap().unwrap();
+    assert_eq!(stored.chapter_count, 5);
+
+    store.save_progress_exact("777", 1, 33.25).await.unwrap();
+    let exact = store.get_progress_exact("777").await.unwrap().unwrap();
+    assert_eq!(exact.0, 1);
+    assert!((exact.1 - 33.25).abs() < 0.001);
+
+    let history = store.list_reading_history("").await.unwrap();
+    assert_eq!(history.len(), 1);
+    assert_eq!(history[0].title.as_deref(), Some("Partial Chapter Work"));
+    assert_eq!(history[0].authors, work.authors);
 
     drop(std::fs::remove_dir_all(&dir));
 }
