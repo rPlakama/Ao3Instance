@@ -89,6 +89,12 @@ Limits and behaviour:
 `/fandoms` live AO3 `/media` directory and `/media/<slug>/fandoms` A–Z lists (30-min cached, offline fallback) ·
 `/dashboard` live AO3 subscriptions, bookmarks, reading history and local cache stats ·
 `/subscriptions`, `/bookmarks`, `/reading` (`?show=to-read` for Marked for Later) live AO3 account lists (30-min cached, offline fallback) ·
+`/my/works`, `/my/works/drafts` the signed-in author's works and drafts, read from AO3's
+own `/users/<login>/works[/drafts]` (30-min cached, offline notice, `?page=N`,
+`?refresh=1`; drafts warn that AO3 deletes unposted drafts after ~29 days) ·
+`GET /write/preview?kind=work-publish|work-delete&id=<id>` local confirmation ·
+`POST /write/work/publish` one confirmed `PUT /works/<id>/post_draft` ·
+`POST /write/work/delete` one confirmed `DELETE /works/<id>` ·
 `/read/<id>` reader (chapter jump, Entire Work; `?show_comments=1` shows the cached comment
 thread; the Comments action (when nothing is cached) or the "Refresh comments" button under
 a cached thread POSTs to `/read/<id>/comments`, which fetches it once from AO3) ·
@@ -148,7 +154,9 @@ and verifies that `ao3i.db` and `key` are created.
      AO3 session expires you sign in again.
 4. Writes stay disabled until `AO3I_WRITE_ENABLED=true`. Kudos and work
    subscriptions post straight from the reader; comments and bookmarks show a
-   confirmation page first. Every write is recorded in **Audit**.
+   confirmation page first. The signed-in menu and the dashboard sidebar gain
+   Writing entries (My Works, My Drafts, and — with writes enabled — Post a new
+   work). Every write is recorded in **Audit**.
 
 ## Data on disk
 
@@ -189,9 +197,22 @@ re-importing the session; cached works and progress are unaffected.
   it, `save_button` saves it as an AO3 draft. It is never retried — a timeout is
   recorded as ambiguous and the composer tells you to check your works list on
   AO3 before trying again.
+- Managing works: `/my/works` and `/my/works/drafts` (linked from the signed-in
+  header menu and from the dashboard sidebar's **Writing** section) show AO3's
+  own works and drafts lists. **Post Draft** and
+  **Delete This Work**/**Delete Draft** go through the confirmation page
+  (`/write/preview?kind=work-publish|work-delete&id=<id>`) and send exactly one
+  `PUT /works/<id>/post_draft` or `DELETE /works/<id>` carrying the CSRF token.
+  Publishing opens the freshly cached work; a refusal (already posted or
+  invalid) returns to My Drafts with a notice. Deletion is permanent: AO3
+  removes the work, the app drops its local cached copy and the cached account
+  lists, then returns to My Works with a notice. Neither action auto-retries; a
+  timeout is treated as unknown, so verify the list on AO3 before trying again.
+  The **Post a new work** link appears only with writes enabled; My Works and My
+  Drafts need only a signed-in AO3 session.
 - Client budgets: comments 3/15 min (AO3's own limit), kudos 10/min,
-  subscriptions 20/h, bookmarks 10/min, new works 3/h. `Retry-After` parks the
-  action.
+  subscriptions 20/h, bookmarks 10/min, new works 3/h, draft publishing 10/h,
+  work deletes 5/h. `Retry-After` parks the action.
 - The audit log (`/audit`) is append-only and stores targets and outcomes — never
   payloads, cookies or passwords.
 - To stop all writes immediately: restart with `AO3I_WRITE_ENABLED=false` (default).
@@ -230,10 +251,14 @@ shows exactly what was done.
 
 - Chapter-level reading progress only; no scroll/block anchor yet (I7 refinement).
 - Bookmarks and comments are created, not edited or deleted from the app.
-- New-work posting creates a work plus its first chapter only: adding chapters,
-  editing or deleting a posted work, and a My Works management page are not
-  implemented. Drafts live on AO3, not locally, and AO3 deletes them after about
-  29 days. Nothing is scheduled or posted in the background.
+- New-work posting creates a work plus its first chapter only: there is no "add
+  chapter" flow and a work cannot be edited from the app, so chapter management
+  and metadata/tag editing stay on AO3. **My Works**/**My Drafts** can publish a
+  draft and delete a work or draft, and deletion is permanent — AO3 cannot undo
+  it. Drafts live on AO3, not locally, and AO3 deletes unposted drafts after
+  about 29 days. Management requires a signed-in AO3 session, and its actions
+  additionally require `AO3I_WRITE_ENABLED=true`; nothing is scheduled or posted
+  in the background.
 - Cached comment threads are a read-only copy of AO3's rendered comments: there
   is no reply, edit or delete from the cached thread, and only AO3's first page
   is stored (further pages link out). The copy is keyed to the commentable the

@@ -48,6 +48,7 @@ mod history;
 mod home;
 mod icons;
 mod lists;
+mod my_works;
 mod not_cached;
 mod pagination;
 mod search;
@@ -70,6 +71,7 @@ pub use lists::{
     bookmarks_page, live_bookmarks_page, live_readings_page, live_subscriptions_page, reading_page,
     subscriptions_page,
 };
+pub use my_works::my_works_page;
 pub use not_cached::not_cached_page;
 pub use pagination::pagination;
 pub use search::{TagFilter, live_tag_page, search_challenge_page};

@@ -164,6 +164,8 @@ fn greeting(ctx: &PageContext) -> String {
          <li class=\"account-status\"><strong>{account}</strong> \
          <span class=\"state {state_class}\">{state}</span></li>\
          <li><a href=\"/dashboard\">My Dashboard</a></li>\
+         <li><a href=\"/my/works\">My Works</a></li>\
+         <li><a href=\"/my/works/drafts\">My Drafts</a></li>\
          <li><a href=\"/subscriptions\">My Subscriptions</a></li>\
          <li><a href=\"/bookmarks\">My Bookmarks</a></li>\
          <li><a href=\"/reading\">My History</a></li>\
@@ -308,7 +310,7 @@ fn show_dashboard_sidebar(active: NavSection) -> bool {
     )
 }
 
-fn dashboard_nav(active: NavSection) -> String {
+fn dashboard_nav(active: NavSection, ctx: &PageContext) -> String {
     let nav_item = |section: Option<NavSection>, label: &str, href: &str| {
         if section == Some(active) {
             format!("<li><span class=\"current\">{label}</span></li>")
@@ -332,6 +334,31 @@ fn dashboard_nav(active: NavSection) -> String {
         nav_item(None, "Bookmarks", "/bookmarks"),
     ]
     .concat();
+    // Writing entries only make sense for a signed-in account; the Post link
+    // additionally needs the operator write switch (the page explains otherwise).
+    let writing = if ctx.account.is_empty() {
+        String::new()
+    } else {
+        let post = if ctx.write_enabled {
+            nav_item(None, "Post a new work", "/works/new")
+        } else {
+            String::new()
+        };
+        [
+            nav_item(None, "My Works", "/my/works"),
+            nav_item(None, "My Drafts", "/my/works/drafts"),
+            post,
+        ]
+        .concat()
+    };
+    let writing_section = if writing.is_empty() {
+        String::new()
+    } else {
+        format!(
+            "<h4 class=\"landmark heading\">Writing</h4>\
+             <ul class=\"navigation actions\">{writing}</ul>"
+        )
+    };
     let reading = [
         nav_item(None, "Subscriptions", "/subscriptions"),
         nav_item(None, "Marked for later", "/reading"),
@@ -353,6 +380,7 @@ fn dashboard_nav(active: NavSection) -> String {
          <ul class=\"navigation actions\">{choices}</ul>\
          <h4 class=\"landmark heading\">Library</h4>\
          <ul class=\"navigation actions\">{library}</ul>\
+         {writing_section}\
          <h4 class=\"landmark heading\">Reading</h4>\
          <ul class=\"navigation actions\">{reading}</ul>\
          <h4 class=\"landmark heading\">Operator</h4>\
@@ -522,7 +550,7 @@ pub(super) fn layout_with_class(ctx: &PageContext, main_class: &str, body: &str)
         nav = navigation(ctx),
         session_flash = session_state_flash(ctx),
         sidebar = if has_sidebar {
-            dashboard_nav(ctx.active)
+            dashboard_nav(ctx.active, ctx)
         } else {
             String::new()
         },

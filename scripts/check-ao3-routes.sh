@@ -73,6 +73,11 @@ need app/controllers/works_controller.rb 'def create' 'POST /works (create work)
 need app/controllers/works_controller.rb 'params.require(:work).permit(' 'work params'
 need app/controllers/works_controller.rb 'params[:post_button]' 'post_button publish switch'
 need app/controllers/works_controller.rb 'def post_draft' 'post_draft publish path'
+need config/routes.rb 'get :drafts' 'user works drafts route'
+need app/controllers/works_controller.rb 'def drafts' 'drafts list action'
+need app/controllers/works_controller.rb 'def destroy' 'work delete action'
+need app/views/works/drafts.html.erb 'unposted_drafts_get_deleted' 'draft deletion caution'
+need app/views/works/_work_blurb.html.erb 'Post Draft' 'draft blurb action'
 echo
 
 echo "-- access model"

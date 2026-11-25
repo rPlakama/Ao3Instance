@@ -59,6 +59,8 @@ async fn every_rendered_local_link_resolves() {
         "/audit",
         "/diagnostics",
         "/history",
+        "/my/works",
+        "/my/works/drafts",
         "/users/login",
         "/users/logout/confirm",
     ];

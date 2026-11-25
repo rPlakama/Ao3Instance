@@ -170,6 +170,38 @@ impl AccountSession {
         self.client.patch_form(path, fields).await
     }
 
+    /// Runs an upstream form `PUT` through FlareSolverr (using Rails'
+    /// `_method=put` override) when available, falling back to direct `PUT` if
+    /// unreachable or if the browser form POST triggers `/auth_error`.
+    pub async fn upstream_put_form(
+        &mut self,
+        path: &str,
+        fields: &[(&str, &str)],
+    ) -> Result<Response> {
+        if self.solver_available().await {
+            let mut all = Vec::with_capacity(fields.len() + 1);
+            all.push(("_method", "put"));
+            all.extend_from_slice(fields);
+            let body = form_urlencode(&all);
+            match self.solve_request("PUT", path, Some(&body), true).await {
+                Ok(response)
+                    if response.is_redirect() && response.location_contains("/auth_error") =>
+                {
+                    if let Ok(direct) = self.client.put_form(path, fields).await
+                        && !matches!(direct.status, 403 | 503)
+                    {
+                        return Ok(direct);
+                    }
+                    return Ok(response);
+                }
+                Ok(response) => return Ok(response),
+                Err(Error::SolverUnavailable(_)) => {}
+                Err(error) => return Err(error),
+            }
+        }
+        self.client.put_form(path, fields).await
+    }
+
     /// Runs a CSRF-protected `DELETE` through FlareSolverr (using Rails'
     /// `_method=delete` override) when available, falling back to direct
     /// `DELETE` if unreachable or if the browser form POST triggers `/auth_error`.

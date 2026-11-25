@@ -29,7 +29,7 @@ pub(super) use actions::{
     write_bookmark, write_comment, write_kudos, write_reading, write_subscribe, write_unsubscribe,
 };
 pub(super) use preview::{write_comment_preview, write_preview};
-pub(super) use work::{compose, write_work, write_work_preview};
+pub(super) use work::{compose, delete_work, publish_draft, write_work, write_work_preview};
 
 pub(super) fn require_writes_enabled(state: &AppState) -> Handled<()> {
     if !state.write_enabled {
@@ -165,6 +165,16 @@ pub(super) fn notice_text(key: &str) -> Option<&'static str> {
         "bookmark_saved" => Some("Bookmarked on AO3."),
         "bookmark_already" => Some("Already bookmarked according to the local ledger."),
         "bookmark_failed" => Some("AO3 rejected the bookmark; see the audit log."),
+        "work_published" => Some("Draft published on AO3."),
+        "work_publish_failed" => Some("AO3 could not publish that draft; see the audit log."),
+        "work_publish_rate_limited" => {
+            Some("AO3 is rate limiting this instance; try publishing again later.")
+        }
+        "work_deleted" => Some("Work deleted on AO3."),
+        "work_delete_failed" => Some("AO3 could not delete that work; see the audit log."),
+        "work_delete_rate_limited" => {
+            Some("AO3 is rate limiting this instance; try deleting again later.")
+        }
         "comments_loaded" => Some("Comments loaded from AO3 into the offline cache."),
         "comments_failed" => {
             Some("Could not load comments from AO3; the cached copy is unchanged.")

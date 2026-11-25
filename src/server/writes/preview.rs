@@ -23,6 +23,9 @@ use super::{
 pub(in crate::server) struct PreviewQuery {
     kind: Option<String>,
     id: Option<String>,
+    /// `drafts` when the action was started from the drafts list.
+    #[serde(rename = "return")]
+    return_path: Option<String>,
 }
 
 pub(in crate::server) async fn write_preview(
@@ -54,6 +57,31 @@ pub(in crate::server) async fn write_preview(
             &description,
             "/write/kudos",
             &[("target_id", &target_id), ("confirm", "yes")],
+            None,
+        )));
+    }
+    if raw_kind.trim().eq_ignore_ascii_case("work-publish") {
+        let description = work_prompt(&state, &target_id, "Publish the draft work").await?;
+        return Ok(Html(render::confirm_page(
+            "Confirm draft publish",
+            &format!("{description} It will become public on AO3."),
+            "/write/work/publish",
+            &[("target_id", &target_id), ("confirm", "yes")],
+            None,
+        )));
+    }
+    if raw_kind.trim().eq_ignore_ascii_case("work-delete") {
+        let description = work_prompt(&state, &target_id, "Delete the work").await?;
+        let from_drafts = query.return_path.as_deref() == Some("drafts");
+        let mut hidden = vec![("target_id", target_id.as_str()), ("confirm", "yes")];
+        if from_drafts {
+            hidden.push(("return", "drafts"));
+        }
+        return Ok(Html(render::confirm_page(
+            "Confirm work delete",
+            &format!("{description} This removes it from AO3 permanently and cannot be undone."),
+            "/write/work/delete",
+            &hidden,
             None,
         )));
     }

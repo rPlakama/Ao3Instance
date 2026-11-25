@@ -50,6 +50,11 @@ This is an unofficial project, not affiliated with or endorsed by the OTW.
   text). Its options are read from AO3's own page, the work is checked against
   AO3's limits and previewed locally, then exactly one confirmed request
   publishes it or saves it as a draft on AO3.
+- **Author works manager (opt-in)** — **My Works** and **My Drafts** list what
+  AO3 reports for your own account (the lists are AO3's pages, cached for 30
+  minutes with an honest offline notice). A draft can be published, and a posted
+  work or draft deleted, from the app: each action goes through a confirmation
+  page, sends exactly one request and is never retried.
 - **Diagnostics** — `/diagnostics` shows upstream HTTP failures, the request
   governor and optional FlareSolverr state, without exposing cookies.
 - **Optional FlareSolverr** — if the host already runs FlareSolverr, blocked
@@ -165,13 +170,21 @@ diagnostics and FlareSolverr limits.
   in single-chapter view of a multi-chapter work — so switching views can show
   a different thread.
 - New-work posting creates the work and its first chapter in one request; there
-  is no "add chapter" flow yet, and works cannot be edited or deleted from the
-  app. Drafts are AO3 objects, not local ones, and AO3 deletes unposted drafts
-  after about 29 days. Nothing is scheduled or posted in the background.
-- Posting requires `AO3I_WRITE_ENABLED=true` and a signed-in AO3 session. A
-  timed-out create is reported as ambiguous — the work may already be live — so
-  check your works list on AO3 before retrying; the app never retries a create
-  itself.
+  is no "add chapter" flow yet, and a work cannot be edited from the app. The
+  author works manager can publish a draft and delete a work or draft, but
+  deletion is permanent — AO3 cannot undo it — and drafts are AO3 objects that
+  the archive deletes after about 29 days. Nothing is scheduled or posted in the
+  background.
+- Author works management lives at `/my/works` and `/my/works/drafts`. The lists
+  need a signed-in AO3 session (they are AO3's own pages, cached for 30 minutes),
+  and publishing a draft or deleting a work additionally needs
+  `AO3I_WRITE_ENABLED=true`. Each action is one confirmed request with no
+  auto-retry; a timed-out action is treated as unknown, so check My Works/My
+  Drafts on AO3 before trying again.
+- Posting a new work needs `AO3I_WRITE_ENABLED=true` and a signed-in AO3 session
+  too. A timed-out create is reported as ambiguous — the work may already be live
+  — so check your works list on AO3 before retrying; the app never retries a
+  create itself.
 
 ## Security and privacy
 

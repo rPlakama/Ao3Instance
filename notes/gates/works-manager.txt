@@ -1,0 +1,49 @@
+Author works manager (drafts, publish draft, delete work) — verification
+2026-11-25T16:48Z (America/Recife)
+
+== feature
+GET /my/works           AO3 /users/<login>/works list, 30-min page cache +
+                        offline/unreachable notice; blurb rows with local
+                        open/cache, "Open on AO3", "Delete This Work".
+GET /my/works/drafts    AO3 /users/<login>/works/drafts list, draft caution
+                        (AO3 deletes drafts after ~29 days), Post Draft /
+                        Delete Draft actions. Paragraph: docs/operator.md.
+POST /write/work/publish  confirmation -> one PUT /works/:id/post_draft; 302
+                        /works/<id> = published (audit work-published, then
+                        /open/<id> caches and opens it); 302 owner edit page =
+                        refusal shown on the drafts list + audit failed.
+POST /write/work/delete   confirmation (irreversible warning) -> one
+                        DELETE /works/:id; 302 /users/<login>/works[/drafts] =
+                        deleted (audit work-deleted, local cached work removed,
+                        user list cache invalidated).
+Governor: publish_draft 10/h, delete_work 5/h. Confirmation previews reuse
+GET /write/preview?kind=work-publish|work-delete&id=. Navigation: signed-in
+greeting menu + dashboard Writing group (My Works, My Drafts, Post a new work
+only when the write switch is on); actions hidden when writes are disabled.
+
+Parser: src/ao3/account_lists/works.rs (blurb markup traced to
+works/index.html.erb, works/drafts.html.erb, _work_blurb.html.erb; draft flag
+from Post Draft action / draft caution). Fixtures: ao3_my_works.html,
+ao3_my_drafts.html.
+
+== tests
+cargo test: 297 passed, 0 failed
+  new tests/account_works.rs (5): lists render AO3 data; publish confirms and
+  PUTs exactly once then opens/caches + audits work-published; AO3 refusal is
+  surfaced and audited failed without retry; delete confirms, DELETEs once,
+  removes the local cache row and audits work-deleted; destructive actions
+  require the write switch (403, zero network).
+  new parser unit tests (3): drafts flags/pagination, posted list fields,
+  login page rejected.
+  wiring crawl now includes /my/works and /my/works/drafts.
+cargo fmt --check: exit 0
+cargo clippy --all-targets -D warnings: exit 0
+nix build .#default: exit 0   store: /nix/store/pbaqbzd902k009m2fv3ylydfxm7lkigp-ao3instance-0.1.4
+scripts/check-ao3-routes.sh --require: 52 passed, 0 failed (adds drafts /
+  post_draft / destroy / draft caution / Post Draft claims)
+scripts/check-no-solver-build-dep.sh: ok
+
+== UI
+.run/screenshots-myworks/my-works-light.png and my-drafts-light.png:
+1100px light renders with dashboard Writing sidebar, tabs, drafts caution,
+pagination and Post Draft / Delete Draft buttons (mock AO3 lists).

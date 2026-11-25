@@ -216,6 +216,27 @@ text preserved. A timeout is audited `ambiguous` and never retried; the governor
 suite 288 green. ADR-0008 records the decision and supersedes the ADR-0003 deferral for
 new-work creation.
 
+**Author works manager (2026-11-25):** the signed-in header menu and the dashboard
+sidebar gained Writing entries (My Works, My Drafts, and Post a new work only with
+the write switch on), and `GET /my/works` / `GET /my/works/drafts` render AO3's own
+`/users/<login>/works[/drafts]` indexes through the 30-minute page cache: blurb rows
+with title, fandoms, summary and stats, the draft marker, numbered pagination, a
+"Refresh from AO3" link, the ~29-day draft caution, and an honest notice when AO3 is
+unreachable or the page is not the expected list (the cached library is unaffected).
+A draft can be published from the drafts list (`POST /write/work/publish` → one
+`PUT /works/<id>/post_draft`): a 302 to `/works/<id>` means published (audit
+`work-published`, then `/open/<id>` caches and opens the work), while a 302 to the
+owner edit page is AO3's refusal (audit `failed`, notice on My Drafts). Any work or
+draft can be deleted (`POST /write/work/delete` → one `DELETE /works/<id>`): a 302 to
+`/users/<login>/works[/drafts]` means deleted (audit `work-deleted`, the local cached
+copy and the cached account lists are dropped, and the browser returns to
+`/my/works?notice=work_deleted`). Both actions confirm first, are one request and are
+never retried; a timeout is treated as unknown. Governor budgets: publishing 10/h,
+deleting 5/h. `tests/account_works.rs` (5 tests) plus
+`ao3::account_lists::works` unit tests (3); full suite 297 green; the route-drift
+gate gained the drafts list, `post_draft` and `destroy` claims. Evidence:
+`notes/gates/works-manager.txt`.
+
 **Known deviations (documented, not blockers):** required-tag marks are
 styled text badges rather than SVG artwork; comment avatars are a CSS-drawn
 visitor silhouette rather than AO3's synced user images, and the kudos module

@@ -2,9 +2,9 @@
 
 - **Status:** Accepted (2026-11-25)
 - **Date:** 2026-11-25
-- **Supersedes:** the "works/chapters creation" deferral in ADR-0003, for new works only;
-  chapter addition and work editing/deletion remain deferred
-- **Related:** ADR-0003, ADR-0005, `docs/ao3-write-api.md` §3–§4.8,
+- **Supersedes:** the "works/chapters creation" deferral in ADR-0003, for new works and
+  managing existing ones; chapter addition and work editing remain deferred
+- **Related:** ADR-0003, ADR-0005, `docs/ao3-write-api.md` §3–§4.10,
   `docs/write-client-plan.md`
 
 ## Context
@@ -55,6 +55,16 @@ does not have to hardcode private database facts.
 6. **No scheduling, no background posting.** A create is always the immediate
    result of an explicit confirmed form submission; there is no queue, timer,
    draft autosave or automatic retry loop.
+7. **The app also manages the account's existing works.** `GET /my/works` and
+   `GET /my/works/drafts` render AO3's own `/users/<login>/works[/drafts]`
+   indexes (30-minute page cache, honest offline notice). Two destructive-ish
+   actions are offered: publishing a draft (`PUT /works/:id/post_draft`) and
+   deleting a work or draft (`DELETE /works/:id`). Both reuse the write spine —
+   a local confirmation page that names the target, a committed intent row, one
+   request, redirect classification, audit evidence and the governor — and
+   neither is ever retried. Deletion is irreversible and the confirmation page
+   says so; the local cached copy and the cached account lists are dropped after
+   a confirmed delete.
 
 ## Non-idempotent-create rules
 
@@ -80,18 +90,22 @@ the outcome must be read from the redirect path:
   double-post; it is the only retry a create may perform.
 - **Budget.** The `post_work` governor budget is 3 per hour — rare,
   consequential and one at a time — and the intent row plus audit outcomes make
-  every attempt traceable. A posted work cannot be withdrawn from the app.
+  every attempt traceable. Withdrawing a posted work is only possible through the
+  explicit delete action in the works manager (confirmation, one request, never a
+  retry side effect).
 
 ## Scope
 
 **Now:** new work plus first chapter; publish or save as draft; composer options
 read from AO3; local validation; local confirmation; audit and governor as above.
+Plus the author works manager: My Works/My Drafts lists read from AO3 and cached
+for 30 minutes, publishing a saved draft, and deleting a work or draft (each with
+a confirmation page, one request and no auto-retry). Draft publishing is budgeted
+10/hour and deletion 5/hour.
 
-**Later** (each needs its own contract, confirmation rules and tests): adding
-chapters (`POST /works/:id/chapters`), editing or deleting a work
-(`PATCH`/`DELETE /works/:id` with challenge and series edges), a My Works
-management page, and any scheduling or background posting. These remain
-deferred and are not implied by this ADR.
+**Later** (each needs its own contract, confirmation rules and tests): adding or
+editing chapters, editing work metadata/tags, and any scheduling or background
+posting. These remain deferred and are not implied by this ADR.
 
 ## Consequences
 
@@ -101,9 +115,10 @@ deferred and are not implied by this ADR.
 - A timed-out create leaves a real ambiguity that only the user can resolve on
   AO3; the app reports `ambiguous` instead of guessing, and the composed text
   stays in the composer so nothing is lost.
-- Drafts are AO3 objects, not local ones: they are not cached, they expire after
-  ~29 days, and publishing them for real happens on AO3 (or through a future
-  edit-and-post flow).
+- Drafts are AO3 objects, not local ones: they are not cached and expire after
+  ~29 days; the works manager publishes or deletes them explicitly on AO3. A
+  deleted work is gone permanently — the confirmation page is the guard, and the
+  audit row is the record.
 - The composer depends on AO3's new-work page shape; if the page loses
   `#work-form` the parser fails closed (`UpstreamChanged`) and the composer
   shows an honest error rather than a form that cannot post.
@@ -121,9 +136,16 @@ deferred and are not implied by this ADR.
   not retried; the composer refuses when `AO3I_WRITE_ENABLED` is off.
   `ao3::compose` unit tests cover option parsing from the checked-in
   `/works/new` fixture, the fail-closed non-form page, and the model limits.
-- The action is documented in `docs/ao3-write-api.md` §3–§4.8, and
-  `scripts/check-ao3-routes.sh` asserts the works new/create claims against the
-  pinned otwarchive clone (47 checks green).
+- `tests/account_works.rs` (5 tests): the works/drafts pages render AO3's lists;
+  publishing confirms, PUTs once, caches and opens the work and audits
+  `work-published`; an AO3 publish refusal is surfaced and audited `failed`; a
+  delete confirms, DELETEs once, removes the local cached copy and audits
+  `work-deleted`; both destructive actions refuse without the write switch.
+  `ao3::account_lists::works` unit tests (3) cover the list parser and its
+  fail-closed login page. Full suite 297 green at the time of writing.
+- The action is documented in `docs/ao3-write-api.md` §3–§4.10, and
+  `scripts/check-ao3-routes.sh` asserts the works new/create, drafts list,
+  post_draft and destroy claims against the pinned otwarchive clone.
 - Evidence from the clone (`452391b`): `works_controller.rb:289-319` (create,
   `post_button` publish switch, 302 to the work vs `/preview`, the 29-day draft
   notice), `works_controller.rb:911-934` (`work_params`; `posted` is not

@@ -1,0 +1,69 @@
+<!DOCTYPE html>
+<!--
+  Synthetic AO3 "My Drafts" page (`otwarchive/app/views/works/drafts.html.erb`)
+  for the account works parser tests. Blurbs are rendered with
+  `_work_blurb.html.erb`; unposted works get the draft caution notice and the
+  Post Draft / Delete Draft author actions.
+-->
+<html lang="en">
+  <body>
+    <div id="main" class="works-index region" role="main">
+      <h2 class="heading">tester's Drafts</h2>
+      <p class="caution notice">
+        <strong>Please note:</strong> Unposted drafts get deleted after 29 days.
+      </p>
+      <ul class="work index group">
+        <li id="work_8801" class="own work blurb group" role="article">
+          <div class="header module">
+            <h4 class="heading">
+              <a href="/works/8801">A Draft in the Cupboard</a> by
+              <a rel="author" href="/users/tester">tester</a>
+            </h4>
+            <h5 class="fandoms heading"><a class="tag" href="/tags/Test%20Fandom/works">Test Fandom</a></h5>
+            <p class="datetime">20 Nov 2026</p>
+          </div>
+          <p class="caution notice">This draft will be deleted on <time datetime="2026-12-19">19 Dec 2026</time>.</p>
+          <ul class="tags commas">
+            <li class="warnings"><a class="tag" href="/tags/No%20Archive%20Warnings%20Apply/works">No Archive Warnings Apply</a></li>
+          </ul>
+          <dl class="stats">
+            <dt class="words">Words:</dt><dd class="words">1,234</dd>
+            <dt class="chapters">Chapters:</dt><dd class="chapters">1/?</dd>
+          </dl>
+          <h6 class="landmark heading">Author Actions</h6>
+          <ul class="actions">
+            <li><a href="/works/8801/edit">Edit</a></li>
+            <li><a href="/works/8801/edit_tags">Edit Tags</a></li>
+            <li><a rel="nofollow" data-method="put" href="/works/8801/post_draft">Post Draft</a></li>
+            <li><a href="/works/8801/confirm_delete">Delete Draft</a></li>
+          </ul>
+        </li>
+        <li id="work_8802" class="own work blurb group" role="article">
+          <div class="header module">
+            <h4 class="heading">
+              <a href="/works/8802">Another Draft</a> by
+              <a rel="author" href="/users/tester">tester</a>
+            </h4>
+            <h5 class="fandoms heading"><a class="tag" href="/tags/Test%20Fandom/works">Test Fandom</a></h5>
+            <p class="datetime">19 Nov 2026</p>
+          </div>
+          <p class="caution notice">This draft will be deleted on <time datetime="2026-12-18">18 Dec 2026</time>.</p>
+          <dl class="stats">
+            <dt class="words">Words:</dt><dd class="words">42</dd>
+            <dt class="chapters">Chapters:</dt><dd class="chapters">1/?</dd>
+          </dl>
+          <h6 class="landmark heading">Author Actions</h6>
+          <ul class="actions">
+            <li><a href="/works/8802/edit">Edit</a></li>
+            <li><a rel="nofollow" data-method="put" href="/works/8802/post_draft">Post Draft</a></li>
+            <li><a href="/works/8802/confirm_delete">Delete Draft</a></li>
+          </ul>
+        </li>
+      </ul>
+      <ol class="pagination actions" role="navigation" aria-label="Pagination">
+        <li><span class="current">1</span></li>
+        <li><a href="/users/tester/works/drafts?page=2">2</a></li>
+      </ol>
+    </div>
+  </body>
+</html>

@@ -20,8 +20,8 @@ use serde::Deserialize;
 use super::super::AppState;
 use super::super::error::{AppError, Handled};
 use super::{
-    ensure_pseud, record_write_failure, require_confirmation, require_usable_session,
-    require_writes_enabled,
+    ensure_pseud, invalidate_user_list, record_write_failure, require_confirmation,
+    require_non_empty_target, require_usable_session, require_writes_enabled,
 };
 use crate::ao3::actions::{self, PostMode};
 use crate::ao3::compose::{self, NewWorkDefaults, NewWorkInput};
@@ -29,6 +29,7 @@ use crate::ao3::parse::{SpaceMode, percent_decode, percent_encode};
 use crate::error::Error;
 use crate::render;
 use crate::render::NavSection;
+use axum::extract::Form;
 
 /// How long a parsed `/works/new` page is reused (options change rarely).
 const DEFAULTS_TTL: Duration = Duration::from_secs(600);
@@ -227,6 +228,124 @@ async fn render_compose(
     Ok(Html(render::compose_page(
         &page, &defaults, input, errors, notice,
     )))
+}
+
+#[derive(Deserialize)]
+pub(in crate::server) struct TargetForm {
+    target_id: String,
+    confirm: Option<String>,
+    /// `drafts` when the action was started from the drafts list.
+    #[serde(rename = "return")]
+    return_path: Option<String>,
+}
+
+/// `POST /write/work/publish` — publish one draft (`PUT /works/:id/post_draft`).
+pub(in crate::server) async fn publish_draft(
+    State(state): State<Arc<AppState>>,
+    Form(form): Form<TargetForm>,
+) -> Handled<Redirect> {
+    require_writes_enabled(&state)?;
+    require_confirmation(form.confirm.as_deref())?;
+    let target_id = require_non_empty_target(&form.target_id, "missing work id")?;
+    let account =
+        require_usable_session(&state, "Sign in to AO3 on the Session page first.").await?;
+    state
+        .governor
+        .begin("publish_draft")
+        .await
+        .map_err(AppError::from)?;
+    let intent = state
+        .store
+        .record_intent(&account, "publish_draft", "Work", &target_id)
+        .await?;
+    let result = {
+        let mut session = state.session.lock().await;
+        actions::publish_draft(&mut session, &target_id).await
+    };
+    super::super::solver::sync_solver_state(&state).await;
+    match result {
+        Ok(()) => {
+            state
+                .store
+                .finish_intent(
+                    intent,
+                    "done",
+                    "work-published",
+                    Some(&format!("work {target_id}")),
+                )
+                .await?;
+            invalidate_user_list(&state, &account, "works").await;
+            // Opening the freshly published work caches it and proves it is live.
+            Ok(Redirect::to(&format!("/open/{target_id}")))
+        }
+        Err(error) => {
+            let retry_after = record_write_failure(&state, "publish_draft", intent, &error).await?;
+            let flag = if retry_after.is_some() {
+                "work_publish_rate_limited"
+            } else {
+                "work_publish_failed"
+            };
+            Ok(Redirect::to(&format!("/my/works/drafts?notice={flag}")))
+        }
+    }
+}
+
+/// `POST /write/work/delete` — delete one work (posted or draft) on AO3.
+pub(in crate::server) async fn delete_work(
+    State(state): State<Arc<AppState>>,
+    Form(form): Form<TargetForm>,
+) -> Handled<Redirect> {
+    require_writes_enabled(&state)?;
+    require_confirmation(form.confirm.as_deref())?;
+    let target_id = require_non_empty_target(&form.target_id, "missing work id")?;
+    let account =
+        require_usable_session(&state, "Sign in to AO3 on the Session page first.").await?;
+    state
+        .governor
+        .begin("delete_work")
+        .await
+        .map_err(AppError::from)?;
+    let intent = state
+        .store
+        .record_intent(&account, "delete_work", "Work", &target_id)
+        .await?;
+    let result = {
+        let mut session = state.session.lock().await;
+        actions::delete_work(&mut session, &target_id).await
+    };
+    super::super::solver::sync_solver_state(&state).await;
+    match result {
+        Ok(()) => {
+            state
+                .store
+                .finish_intent(
+                    intent,
+                    "done",
+                    "work-deleted",
+                    Some(&format!("work {target_id}")),
+                )
+                .await?;
+            if let Err(error) = state.store.delete_cached_work(&target_id).await {
+                eprintln!("delete cached work after AO3 delete: {error}");
+            }
+            invalidate_user_list(&state, &account, "works").await;
+            Ok(Redirect::to("/my/works?notice=work_deleted"))
+        }
+        Err(error) => {
+            let retry_after = record_write_failure(&state, "delete_work", intent, &error).await?;
+            let flag = if retry_after.is_some() {
+                "work_delete_rate_limited"
+            } else {
+                "work_delete_failed"
+            };
+            let base = if form.return_path.as_deref() == Some("drafts") {
+                "/my/works/drafts"
+            } else {
+                "/my/works"
+            };
+            Ok(Redirect::to(&format!("{base}?notice={flag}")))
+        }
+    }
 }
 
 /// `GET /works/new` (AO3's new-work page, re-rendered locally).

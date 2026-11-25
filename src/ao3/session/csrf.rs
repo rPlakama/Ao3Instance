@@ -20,6 +20,7 @@ struct TokenDispenser {
 enum WriteMethod {
     Post,
     Patch,
+    Put,
     Delete,
 }
 
@@ -61,6 +62,12 @@ impl AccountSession {
     /// CSRF-protected PATCH for a write action (reading flags).
     pub async fn patch_write(&mut self, path: &str, fields: &[(&str, &str)]) -> Result<Response> {
         self.send_write_with_csrf_retry(WriteMethod::Patch, path, fields)
+            .await
+    }
+
+    /// CSRF-protected PUT for a write action (e.g. publishing a drafted work).
+    pub async fn put_write(&mut self, path: &str, fields: &[(&str, &str)]) -> Result<Response> {
+        self.send_write_with_csrf_retry(WriteMethod::Put, path, fields)
             .await
     }
 
@@ -106,6 +113,11 @@ impl AccountSession {
                 let mut all: Vec<(&str, &str)> = fields.to_vec();
                 all.push(("authenticity_token", token));
                 self.upstream_patch_form(path, &all).await
+            }
+            WriteMethod::Put => {
+                let mut all: Vec<(&str, &str)> = fields.to_vec();
+                all.push(("authenticity_token", token));
+                self.upstream_put_form(path, &all).await
             }
             WriteMethod::Delete => self.upstream_delete_with_csrf(path, token).await,
         }

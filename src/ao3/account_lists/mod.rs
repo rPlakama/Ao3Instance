@@ -12,6 +12,7 @@ mod bookmarks;
 mod directory;
 mod readings;
 mod subscriptions;
+mod works;
 
 use scraper::{Html, Selector};
 
@@ -24,6 +25,7 @@ pub use directory::{
 };
 pub use readings::{LiveReadingItem, LiveReadingsPage, parse_readings};
 pub use subscriptions::{LiveSubscription, LiveSubscriptionsPage, parse_subscriptions};
+pub use works::{MyWorkEntry, MyWorksPage, parse_my_works};
 
 pub(super) fn trailing_paren_number(text: &str) -> Option<u64> {
     let open = text.rfind('(')?;

@@ -362,9 +362,53 @@ a 302 to `/works/:id/preview` means saved as a draft (audit `work-draft`, then a
 a timeout is audited `ambiguous` and never retried. The `post_work` governor budget is
 3 per hour.
 
-**Scope.** New work plus first chapter, publish or draft. Adding chapters, editing or
-deleting a work and a My Works page stay later work. Tests: `tests/writes_work.rs` (6)
-plus `ao3::compose` unit tests.
+**Scope.** New work plus first chapter, publish or draft. Adding chapters and editing
+a work stay later work; the works manager and its publish/delete actions are the next
+addendum. Tests: `tests/writes_work.rs` (6) plus `ao3::compose` unit tests.
+
+### Works management addendum — 2026-11-25
+
+**Lists.** `GET /my/works` and `GET /my/works/drafts` render AO3's own
+`/users/<login>/works` and `/users/<login>/works/drafts` pages for the signed-in
+account through the same 30-minute SQLite page cache as the other live lists
+(`?refresh=1` forces a fetch, `?page=N` pages). The parser
+(`src/ao3/account_lists/works.rs`) follows `works/_work_blurb.html.erb`,
+`works/index.html.erb` and `works/drafts.html.erb`: blurb title/fandoms/summary/stats,
+the draft marker (the `post_draft` action or the draft caution notice) and numbered
+pagination. The local cache is used only to choose "Open locally" versus the
+one-click `/open/<id>` — the list itself is an AO3 fact. A cache miss or parse failure
+renders an honest "could not load this list from AO3" notice and leaves the cached
+library untouched; drafts carry AO3's ~29-day deletion caution.
+
+**Publish a draft.** The drafts list offers **Post Draft**, which links to the
+existing confirmation page (`/write/preview?kind=work-publish&id=<id>`) and then
+`POST /write/work/publish`; the handler commits an intent row and sends exactly one
+`PUT /works/<id>/post_draft` carrying just the CSRF token. A 302 to `/works/<id>`
+means published: the audit row closes `work-published`, the cached account lists are
+invalidated, and the app redirects to `/open/<id>`, which caches and opens the freshly
+live work. A 302 to the owner edit page is AO3 refusing (already posted or invalid):
+the audit row closes `failed` and My Drafts shows a notice. A transport error is not
+retried — the outcome is unknown and the user verifies the list. The `publish_draft`
+governor budget is 10 per hour.
+
+**Delete a work.** Both lists offer **Delete This Work**/**Delete Draft**, which warn
+on the confirmation page (`kind=work-delete`) that deletion is permanent and cannot be
+undone; `POST /write/work/delete` then sends exactly one `DELETE /works/<id>` with the
+CSRF token (body field and header). A 302 to `/users/<login>/works` (posted) or
+`/users/<login>/works/drafts` (draft) means deleted: audit `work-deleted`, the work's
+local cache row is removed, the cached `/users/<login>/works*` pages are invalidated
+and the browser returns to `/my/works?notice=work_deleted`. Anything else is a typed
+failure with a notice and an audit row, and it is never retried. The `delete_work`
+governor budget is 5 per hour.
+
+**Navigation and gate.** The signed-in header menu and the dashboard sidebar gained
+Writing entries (My Works and My Drafts need a session; Post a new work and the
+publish/delete actions also need `AO3I_WRITE_ENABLED=true`). Tests:
+`tests/account_works.rs` (5: lists render AO3 data, publish confirms + PUTs once +
+opens + audits, AO3 publish refusal surfaced and audited, delete confirms + DELETEs
+once + removes the local cache + audits, destructive actions need the write switch)
+plus `ao3::account_lists::works` unit tests (3); full suite 297 green. Evidence:
+`notes/gates/works-manager.txt`.
 
 ### W5 status — partial (2026-11-22): kudos + reading flags
 

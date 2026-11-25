@@ -544,6 +544,100 @@ pub async fn post_work(
     }
 }
 
+/// `PUT /works/:id/post_draft` — publishes one draft.
+///
+/// AO3 answers a successful publish with a 302 to `/works/<id>`; a draft that
+/// cannot be posted (already posted, invalid, moderated collection problem)
+/// redirects to the owner's edit page instead, which is the typed failure here.
+pub async fn publish_draft(session: &mut AccountSession, work_id: &str) -> Result<()> {
+    let path = format!("/works/{}/post_draft", work_id.trim());
+    let response = session.put_write(&path, &[]).await?;
+    match response.status {
+        302 | 303 => {
+            if response.location_contains("/users/login") {
+                return Err(Error::LoggedOut);
+            }
+            if response.location_contains("/auth_error") {
+                return Err(Error::CsrfExpired);
+            }
+            if response.location_contains("/lost_cookie") {
+                return Err(Error::SessionIncomplete);
+            }
+            publish_draft_result(work_id, response.location.as_deref())
+        }
+        200 | 422 => Err(classify_work_failure(&response.body)),
+        429 => Err(Error::RateLimited {
+            retry_after: response.retry_after,
+        }),
+        403 | 503 => Err(Error::BlockedByEdge {
+            status: response.status,
+        }),
+        status => Err(Error::UpstreamChanged(format!(
+            "publish draft returned HTTP {status}"
+        ))),
+    }
+}
+
+fn publish_draft_result(work_id: &str, location: Option<&str>) -> Result<()> {
+    let location = location.unwrap_or_default();
+    if location.contains("/edit") {
+        return Err(Error::Validation(
+            "AO3 could not publish this draft — it may already be posted or invalid".to_string(),
+        ));
+    }
+    if work_id_from_location(Some(location)).as_deref() == Some(work_id.trim())
+        || location.contains("/works/")
+    {
+        return Ok(());
+    }
+    Err(Error::UpstreamChanged(format!(
+        "publish draft redirected to {location:?}"
+    )))
+}
+
+/// `DELETE /works/:id` — deletes one work (posted or draft).
+///
+/// AO3 redirects to `/users/<login>/works` (posted) or
+/// `/users/<login>/works/drafts` (draft) on success; both prove the delete.
+pub async fn delete_work(session: &mut AccountSession, work_id: &str) -> Result<()> {
+    let path = format!("/works/{}", work_id.trim());
+    let response = session.delete_write(&path).await?;
+    match response.status {
+        302 | 303 => {
+            if response.location_contains("/users/login") {
+                return Err(Error::LoggedOut);
+            }
+            if response.location_contains("/auth_error") {
+                return Err(Error::CsrfExpired);
+            }
+            if response.location_contains("/lost_cookie") {
+                return Err(Error::SessionIncomplete);
+            }
+            delete_work_result(response.location.as_deref())
+        }
+        200 | 422 => Err(classify_work_failure(&response.body)),
+        429 => Err(Error::RateLimited {
+            retry_after: response.retry_after,
+        }),
+        403 | 503 => Err(Error::BlockedByEdge {
+            status: response.status,
+        }),
+        status => Err(Error::UpstreamChanged(format!(
+            "work delete returned HTTP {status}"
+        ))),
+    }
+}
+
+fn delete_work_result(location: Option<&str>) -> Result<()> {
+    let location = location.unwrap_or_default();
+    if location.contains("/users/") && location.contains("/works") {
+        return Ok(());
+    }
+    Err(Error::UpstreamChanged(format!(
+        "work delete redirected to {location:?}"
+    )))
+}
+
 /// First `/works/<id>` in a redirect target (`/works/123` or `/works/123/preview`).
 fn work_id_from_location(location: Option<&str>) -> Option<String> {
     let rest = location?
@@ -654,6 +748,19 @@ mod tests {
             ]
         );
         assert!(error_messages("<html><body>no errors</body></html>").is_empty());
+    }
+
+    #[test]
+    fn draft_publish_and_delete_redirects_are_classified() {
+        assert!(publish_draft_result("777", Some("/works/777")).is_ok());
+        assert!(publish_draft_result("777", Some("https://archiveofourown.org/works/777")).is_ok());
+        let error = publish_draft_result("777", Some("/users/someone/works/777/edit"))
+            .expect_err("edit redirect is a refusal");
+        assert!(matches!(error, Error::Validation(_)), "{error:?}");
+        assert!(publish_draft_result("777", Some("/users/login")).is_err());
+        assert!(delete_work_result(Some("/users/someone/works")).is_ok());
+        assert!(delete_work_result(Some("/users/someone/works/drafts")).is_ok());
+        assert!(delete_work_result(Some("/")).is_err());
     }
 
     #[test]

@@ -241,6 +241,22 @@ impl Client {
         self.send(request, Method::PATCH, path).await
     }
 
+    pub async fn put_form(&mut self, path: &str, fields: &[(&str, &str)]) -> Result<Response> {
+        let body = form_urlencode(fields);
+        let origin = self.base_url.clone();
+        let referer = format!("{origin}/");
+        let mut request = self
+            .request(Method::PUT, path)
+            .header(CONTENT_TYPE, FORM_CONTENT_TYPE)
+            .header("origin", &origin)
+            .header("referer", &referer);
+        if let Some((_, token)) = fields.iter().find(|(k, _)| *k == "authenticity_token") {
+            request = request.header("x-csrf-token", *token);
+        }
+        let request = request.body(body);
+        self.send(request, Method::PUT, path).await
+    }
+
     pub async fn delete(&mut self, path: &str) -> Result<Response> {
         let request = self.request(Method::DELETE, path);
         self.send(request, Method::DELETE, path).await

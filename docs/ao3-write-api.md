@@ -134,10 +134,13 @@ triggers `/lost_cookie`. Import is validated by the §2.2 probe before being mar
 | mark as read | `PATCH /works/:id/mark_as_read` | HTML | — | 302 back; next read shows state | 302 → login |
 | favorite tag | `POST /users/:uid/favorite_tags` | **JSON** | `favorite_tag[tag_id]` | 201 `{item_id, item_success_message}` | 422 `{errors:[…]}` |
 | work create | `POST /works` | HTML | `work[title]`, `work[rating_string]`, `work[archive_warning_strings][]`, `work[fandom_string]`, `work[language_id]`, `work[chapter_attributes][content]`, `work[author_attributes][ids][]`, `post_button`/`save_button` | 302 → `/works/:id` (posted) or `/works/:id/preview` (draft) | 200 re-render with `#error` blocks; 429; 302 → `/auth_error` |
+| draft publish | `PUT /works/:id/post_draft` | HTML | `authenticity_token` only — the draft already exists | 302 → `/works/:id` (now posted) | 302 → `/users/:login/works/:id/edit` (already posted/invalid); 200/422 with `#error`; 302 → `/auth_error`; 429; 403/503 |
+| work delete | `DELETE /works/:id` | HTML | `authenticity_token` (body field **and** `X-CSRF-Token`) | 302 → `/users/:login/works` (posted work) or `/users/:login/works/drafts` (draft) | 302 → `/users/login`, `/lost_cookie`, `/auth_error`; 200/422; 429; 403/503 |
 
-Deferred (documented, not implemented): chapter addition, editing/deleting a work, a My
-Works management view, mute/block, collections, comment moderation
-(approve/reject/freeze/hide), admin version of any action.
+Deferred (documented, not implemented): chapter addition, editing a work or its
+tags/metadata, mute/block, collections, comment moderation
+(approve/reject/freeze/hide), admin version of any action. Draft publishing and work
+deletion are implemented — see §4.9 and §4.10.
 
 ---
 
@@ -293,6 +296,85 @@ Works management view, mute/block, collections, comment moderation
   - The create response is a redirect even for a draft; follow it with a `GET`, never a
     second `POST` (§1).
 
+### 4.9 Draft publish — `PUT /works/:id/post_draft`
+
+- **Preconditions:** signed-in usable session (both cookies, §2); CSRF token; writes
+  enabled client-side; `:id` is an unposted draft owned by the signed-in account. The
+  route is `put :post_draft` on the works resource (`routes.rb:392`); the action
+  (`works_controller.rb:596-628`) sets `posted = true` and increments the minor version.
+- **Request:** `PUT /works/:id/post_draft`. The body may carry **only
+  `authenticity_token`** — no work fields are needed, the draft already exists on AO3.
+  Send the token as the form field and as `X-CSRF-Token`, as for other writes (§2.3).
+- **Response classification** (redirect outcomes are `302`; validation failures can
+  re-render with 200/422):
+
+  | response | meaning |
+  | --- | --- |
+  | 302 → `/works/:id` | draft published; the work is live (a moderated-collection submit also lands here with a different flash) |
+  | 302 → `/users/:login/works/:id/edit` | refused: already posted, or invalid (`works_controller.rb:600-611`); nothing changed |
+  | 200 (or 422) re-render with `#error` | refusal; the messages are AO3's own user-facing text |
+  | 302 → `/auth_error` | CSRF expired; Rails aborts before the action, so one refresh-and-retry is safe |
+  | 302 → `/users/login` | logged out; re-authenticate |
+  | 302 → `/lost_cookie` | jar incomplete (`user_credentials` missing) |
+  | 429 | rate limited; honour `Retry-After` |
+  | 403/503 | edge block / challenge |
+  | transport error | **unknown**: the publish may have landed; verify the list before retrying |
+
+- **Idempotency:** publishing is a one-way state transition (draft → posted). A repeat
+  after success is refused by the "already posted" branch, so it cannot publish twice —
+  but the client still sends **one confirmed request and never retries**: the outcome is
+  read from the redirect, and a timeout is treated as unknown.
+- **Budget:** the client governor allows `publish_draft` 10 per hour. Publishing is rare,
+  consequential and briefly public, so one at a time and no automatic retry.
+- **Gotchas:**
+  - The redirect target is the proof. Follow the 302 to `/works/:id` with a `GET` (the
+    app then caches the freshly published work and opens it); never re-send the `PUT`.
+  - A 302 to the owner edit page is a refusal, not a network error — surface AO3's own
+    explanation rather than retrying. An already-posted draft needs no publish at all.
+  - After a successful publish the work is public on AO3 immediately; there is no
+    unpublish from the client (only the separate, permanent delete in §4.10).
+
+### 4.10 Work delete — `DELETE /works/:id`
+
+- **Preconditions:** signed-in usable session; CSRF token; writes enabled client-side;
+  the work or draft belongs to the signed-in account. `resources :works` gives the
+  destroy action (`routes.rb:384`); AO3's own browser flow goes through
+  `GET /works/:id/confirm_delete`, but the destructive request is the plain `DELETE`.
+- **Request:** `DELETE /works/:id` with `authenticity_token` in the body **and** as
+  `X-CSRF-Token` — a bare DELETE is answered with `/auth_error` while looking like a
+  redirect (§2.3). The app confirms locally first
+  (`GET /write/preview?kind=work-delete&id=<id>`), and that page states the delete is
+  permanent and cannot be undone.
+- **Response classification:**
+
+  | response | meaning |
+  | --- | --- |
+  | 302 → `/users/:login/works` | posted work deleted |
+  | 302 → `/users/:login/works/drafts` | draft deleted (the controller redirects to the list the work came from, `works_controller.rb:444-448`) |
+  | 200 (or 422) re-render with `#error` | refusal; AO3's messages are user-facing |
+  | 302 → `/auth_error` | CSRF expired; Rails aborts before the action |
+  | 302 → `/users/login` | logged out; re-authenticate |
+  | 302 → `/lost_cookie` | jar incomplete |
+  | 429 | rate limited; honour `Retry-After` |
+  | 403/503 | edge block / challenge |
+  | transport error | **unknown**: the delete may have landed; verify the list before retrying |
+
+- **Idempotency:** deleting is **irreversible** — AO3 has no restore for this action. A
+  repeat after success finds no work (`Work.find` raises, so the route answers 404); it
+  never deletes something else. The client sends one confirmed request and never retries:
+  a timeout is unconfirmed, so the user checks My Works/My Drafts (and AO3) before a
+  second attempt.
+- **Budget:** the client governor allows `delete_work` 5 per hour. Deletion is
+  destructive and rare, so it is budgeted and one at a time.
+- **Gotchas:**
+  - The drafts list vs works list redirect distinguishes a deleted draft from a deleted
+    posted work; accept **both** as success (do not require one path).
+  - Deletion is permanent and removes the work for every reader, not just this client;
+    the confirmation page must say so before the request.
+  - After a successful delete, drop the local cached copy of the work and invalidate the
+    30-minute cached `/users/<login>/works` pages — otherwise My Works keeps showing a
+    work that no longer exists.
+
 ---
 
 ## 5. Outcome detection
@@ -304,8 +386,12 @@ Ordered from strongest to weakest signal. Prefer the highest available for each 
    redirects by itself; a verification read is a separate explicit GET):
    - `/comments/:id` → comment created;
    - `/bookmarks/:id` → bookmark created;
-   - `/works/:id` → work created and posted;
+   - `/works/:id` → work created and posted, or (for `PUT /works/:id/post_draft`) a
+     draft published;
    - `/works/:id/preview` → work created as an unposted draft;
+   - `/users/:login/works` or `/users/:login/works/drafts` → work deleted (the drafts
+     list means the deleted work was a draft; both are success for `DELETE /works/:id`);
+   - `/users/:login/works/:id/edit` → draft publish refused (already posted or invalid);
    - `/auth_error` → CSRF expired;
    - `/users/:login/change_password` → `PasswordChangeRequired`;
    - `/429` → rate limited (the comment limiter's redirect is W5; W1 maps the HTTP 429 status);
@@ -359,6 +445,7 @@ Never use HTTP status alone: kudos success and failure are both `302`.
 | `ClientGuarded` | comments, bookmarks | **never auto-retry**; verify by re-read; require a new user confirmation for a second attempt |
 | `NoConstraint` | subscriptions | **never retry**; pre-check the index, post-check, show state |
 | `NonIdempotentCreate` | work create | **never retry**; read the 302 to classify; a timeout is ambiguous — the user verifies on AO3 before a second attempt |
+| `DestructiveStateChange` | draft publish, work delete | **never auto-retry**; one confirmed request; classify from the redirect; a timeout is unconfirmed — verify My Works/My Drafts before a second attempt (deletion is irreversible) |
 
 Ambiguity rule: a transport failure *after* the request was written is `Ambiguous`. The
 only acceptable follow-up is a read that proves the effect; if the read cannot prove
@@ -389,6 +476,8 @@ worse than a failed one.
 The client's own floor is stricter than the server's: ≥ 2 s between requests, one in
 flight, no parallelism, no background writes. Work creation is additionally budgeted at
 3 per hour by the write governor: posting is rare, consequential and non-idempotent.
+Draft publishing is budgeted at 10 per hour and work deletion at 5 per hour; both are one
+confirmed request and never retried.
 
 ---
 

@@ -130,6 +130,32 @@ impl Store {
         Ok(())
     }
 
+    /// Removes one cached work and its chapters (FTS rows follow the trigger).
+    ///
+    /// Returns whether a row was removed; deleting an uncached work is not an
+    /// error (the upstream delete is still what matters).
+    pub async fn delete_cached_work(&self, ao3_id: &str) -> Result<bool> {
+        let mut tx = self
+            .pool
+            .begin()
+            .await
+            .map_err(|e| Error::Store(format!("begin delete tx: {e}")))?;
+        sqlx::query("DELETE FROM chapters WHERE work_id = ?1")
+            .bind(ao3_id)
+            .execute(&mut *tx)
+            .await
+            .map_err(|e| Error::Store(format!("delete chapters: {e}")))?;
+        let result = sqlx::query("DELETE FROM works WHERE ao3_id = ?1")
+            .bind(ao3_id)
+            .execute(&mut *tx)
+            .await
+            .map_err(|e| Error::Store(format!("delete work: {e}")))?;
+        tx.commit()
+            .await
+            .map_err(|e| Error::Store(format!("commit delete work: {e}")))?;
+        Ok(result.rows_affected() > 0)
+    }
+
     /// Cached work ids, for deciding whether an audit target can link locally.
     pub async fn cached_work_ids(&self) -> Result<std::collections::HashSet<String>> {
         let rows: Vec<String> = sqlx::query_scalar("SELECT ao3_id FROM works")

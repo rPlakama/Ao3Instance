@@ -150,6 +150,102 @@ pub(in crate::server) async fn subscriptions(
 }
 
 #[derive(Deserialize)]
+pub(in crate::server) struct MyWorksQuery {
+    page: Option<i64>,
+    refresh: Option<String>,
+    notice: Option<String>,
+}
+
+pub(in crate::server) async fn my_works(
+    State(state): State<Arc<AppState>>,
+    Query(query): Query<MyWorksQuery>,
+) -> Handled<Html<String>> {
+    my_works_impl(state, query, false).await
+}
+
+pub(in crate::server) async fn my_drafts(
+    State(state): State<Arc<AppState>>,
+    Query(query): Query<MyWorksQuery>,
+) -> Handled<Html<String>> {
+    my_works_impl(state, query, true).await
+}
+
+/// The signed-in author's works manager: AO3's own works / drafts index, cached
+/// for 30 minutes like the other account lists, with the local cache used only
+/// for links (the lists themselves are AO3 facts).
+async fn my_works_impl(
+    state: Arc<AppState>,
+    query: MyWorksQuery,
+    drafts: bool,
+) -> Handled<Html<String>> {
+    let refresh = query.refresh.as_deref() == Some("1");
+    let page_num = query.page.unwrap_or(1).max(1);
+    let notice = query
+        .notice
+        .as_deref()
+        .and_then(crate::server::writes::notice_text);
+    let cached_works = state.store.cached_work_ids().await?;
+    let cache_acct = crate::server::cache::cache_account(&state).await;
+    let title = if drafts {
+        "My Drafts — AO3Instance"
+    } else {
+        "My Works — AO3Instance"
+    };
+    let page = crate::server::page_context(&state, title, NavSection::Dashboard).await;
+
+    if cache_acct.is_empty() {
+        return Ok(Html(render::my_works_page(
+            &page,
+            None,
+            drafts,
+            page_num,
+            &cached_works,
+            None,
+            None,
+            Some("Sign in to AO3 on the Session page to manage your works."),
+        )));
+    }
+
+    let user_seg = user_path_segment(&cache_acct);
+    let mut path = if drafts {
+        format!("/users/{user_seg}/works/drafts")
+    } else {
+        format!("/users/{user_seg}/works")
+    };
+    if page_num > 1 {
+        path.push_str(&format!("?page={page_num}"));
+    }
+    let fetched =
+        crate::server::cache::fetch_cached_optional(&state, &cache_acct, &path, true, refresh)
+            .await;
+    let parsed = fetched
+        .as_ref()
+        .and_then(|entry| crate::ao3::account_lists::parse_my_works(&entry.body));
+    let cache_meta = fetched
+        .as_ref()
+        .map(|entry| (entry.from_cache, entry.fetched_at));
+    let error = match (&fetched, &parsed) {
+        (None, _) => Some(
+            "Could not reach archiveofourown.org for this list. The cached library is unaffected.",
+        ),
+        (Some(_), None) => {
+            Some("AO3 returned an unexpected works page (session expired, or the layout changed).")
+        }
+        _ => None,
+    };
+    Ok(Html(render::my_works_page(
+        &page,
+        parsed.as_ref(),
+        drafts,
+        page_num,
+        &cached_works,
+        cache_meta,
+        notice,
+        error,
+    )))
+}
+
+#[derive(Deserialize)]
 pub(in crate::server) struct BookmarksQuery {
     page: Option<i64>,
     local: Option<String>,
