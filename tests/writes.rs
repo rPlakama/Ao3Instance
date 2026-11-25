@@ -41,7 +41,8 @@ async fn subscribe_is_confirmed_audited_and_ledgered_then_unsubscribed() {
     sign_in(&client, &root).await;
     seed_work(&store).await;
 
-    // The reader offers a subscribe link when signed in.
+    // The reader offers AO3's direct Subscribe button when signed in: the
+    // button click is the deliberate action and the form carries the token.
     let reader = client
         .get(format!("{root}/read/12345"))
         .send()
@@ -50,9 +51,14 @@ async fn subscribe_is_confirmed_audited_and_ledgered_then_unsubscribed() {
         .text()
         .await
         .expect("body");
-    assert!(reader.contains("Subscribe to work"), "{reader}");
+    assert!(
+        reader.contains("action=\"/write/subscribe\"")
+            && reader.contains("name=\"confirm\" value=\"yes\"")
+            && reader.contains("Subscribe</button>"),
+        "reader exposes the direct subscribe form: {reader}"
+    );
 
-    // Preview is a deliberate confirmation step.
+    // The confirmation page still exists for direct links and back-compat.
     let preview = client
         .get(format!("{root}/write/preview?kind=work&id=12345"))
         .send()
@@ -74,6 +80,10 @@ async fn subscribe_is_confirmed_audited_and_ledgered_then_unsubscribed() {
     assert_eq!(subscribed.status(), 200);
     let body = subscribed.text().await.expect("body");
     assert!(body.contains("Subscribed on AO3."), "{body}");
+    assert!(
+        body.contains("action=\"/write/unsubscribe\""),
+        "subscribed reader switches to the direct Unsubscribe form: {body}"
+    );
 
     let writes: Vec<_> = upstream
         .requests()

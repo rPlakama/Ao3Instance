@@ -166,10 +166,43 @@ injected after the base stylesheet as `data-skin="public"`); the catalog parser
 was validated against a real 92-skin AO3 page. `/themes/clear` and selecting a
 built-in theme remove the custom CSS.
 
+**Reader comments, AO3 posts and a compact filter menu (2026-11-25):** the cached
+reader now carries the AO3 commentable. A new `work_comments` cache (migration
+0014, keyed by `work` or `chapter:<ao3_chapter_id>`) is filled by exactly one
+explicit `POST /read/<id>/comments`, which fetches the commentable AO3 shows for
+the current view (the chapter page for multi-chapter works, the work page for
+one-chapter works and Entire Work), parses `comments/_commentable.html.erb`'s
+`ol.thread` with nested replies (deleted/hidden comments dropped, their replies
+hoisted), and redirects back to `?show_comments=1`. Plain GETs render SQLite
+only; the cached thread offers an explicit "Refresh comments" POST, keeps the
+old copy on failure, and links out to AO3 when the upstream thread is paginated.
+The `#feedback` section was rebuilt on `comments/_commentable.html.erb` order:
+actions with a `kudos/_kudos.html.erb` `Kudos ♥` form, the `#kudos` count
+module, AO3's comment fieldset, then the thread. Kudos and work
+subscriptions/unsubscriptions now post **directly** from the work page like
+AO3's own forms (the button click is the deliberate action; the forms still
+carry the `confirm=yes` token, and the write gate, session check, intent/audit
+ledger, governor, one-attempt rule and same-origin guard are unchanged);
+comments and bookmarks keep the confirmation page (ADR-0005 amendment). The
+Sort and Filter sidebar (`tag_page.rs`, local `/works`) is now a
+`details.filters-panel` that stays open on desktop and collapses behind an AO3
+"Sort and Filter" bar below 62em unless a filter is active; facet groups open
+automatically when they hold a value, and `ui.js` re-opens the panel when the
+viewport crosses back to desktop. New chatty test coverage:
+`tests/comments_cache.rs` (chapter vs work scope, one request per click, no
+request on GET, failed refresh keeps the cache, empty AO3 thread still
+refreshable, uncached 404), parser/store/renderer unit tests, and the updated
+write tests. Verified against the live archive from this environment: a real
+zero-comment work page parses to an empty thread, and a rate-limited comment
+fetch renders the typed `comments_rate_limited` notice.
+
 **Known deviations (documented, not blockers):** required-tag marks are
-styled text badges rather than SVG artwork; the skin is a single-operator
-global preference rather than a per-browser cookie; a release/version bump is
-left to an explicit operator request.
+styled text badges rather than SVG artwork; comment avatars are a CSS-drawn
+visitor silhouette rather than AO3's synced user images, and the kudos module
+reports the count instead of listing giver names; only AO3's first comment page
+is cached; the skin is a single-operator global preference rather than a
+per-browser cookie; a release/version bump is left to an explicit operator
+request.
 
 ---
 

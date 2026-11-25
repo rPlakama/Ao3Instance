@@ -2,6 +2,7 @@
 
 use super::blurb::work_blurb;
 use super::chrome::{PageContext, layout_with_class};
+use super::components::filter_panel;
 use super::escape;
 use crate::ao3::parse::{SpaceMode, percent_encode};
 use crate::store::{BrowseResult, BrowseSort, ReadingStatus, WorkFilter};
@@ -196,7 +197,7 @@ fn sidebar(result: &BrowseResult, filter: &WorkFilter) -> String {
          <dd class=\"submit actions\"><button type=\"submit\">Sort and Filter</button></dd></dl>\
          <p class=\"footnote\"><a href=\"/works\">Clear Filters</a></p></fieldset></form>",
     );
-    form
+    filter_panel(filter.has_active_filters(), &form)
 }
 
 fn option(value: &str, label: &str, selected: bool) -> String {

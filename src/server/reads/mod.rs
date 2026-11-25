@@ -1,6 +1,7 @@
 //! Offline reads, home splash, work reader, plus the one user-initiated
 //! upstream fetch behind `/open`.
 
+mod comments;
 mod progress;
 mod search;
 
@@ -24,6 +25,7 @@ use crate::render;
 use crate::render::NavSection;
 use crate::store::sha256_hex;
 
+pub(super) use comments::load_comments;
 pub(super) use progress::{auto_progress, save_progress};
 pub(super) use search::{search, search_post};
 
@@ -157,8 +159,19 @@ pub(super) async fn fetch_work_html(state: &AppState, id: &str) -> Handled<Strin
     // One request, user-initiated; `view_full_work` asks AO3 for all chapters in
     // a single page (ADR-0002: no crawling, no paging picks).
     let path = format!("/works/{id}?view_full_work=true");
+    fetch_page_html(state, &path, id).await
+}
+
+/// One user-initiated HTML fetch: the host-provided solver first (when present),
+/// then the direct session client. The caller owns the path and the action that
+/// triggered it; nothing here runs in the background or retries.
+pub(super) async fn fetch_page_html(
+    state: &AppState,
+    path: &str,
+    work_id: &str,
+) -> Handled<String> {
     if super::solver::solver_available(state).await {
-        match super::solver::fetch_via_solver(state, &path, true).await {
+        match super::solver::fetch_via_solver(state, path, true).await {
             Ok(response) => match response.status {
                 200 => return Ok(response.body),
                 404 => return Err(AppError::NotFound),
@@ -181,7 +194,7 @@ pub(super) async fn fetch_work_html(state: &AppState, id: &str) -> Handled<Strin
         let mut session = state.session.lock().await;
         let response = session
             .client_mut()
-            .get(&path)
+            .get(path)
             .await
             .map_err(AppError::from)?;
         session.sync_csrf_from_response(&response);
@@ -199,7 +212,7 @@ pub(super) async fn fetch_work_html(state: &AppState, id: &str) -> Handled<Strin
         )),
         403 | 503 => Err(AppError::Blocked {
             status: response.status,
-            work_id: id.to_string(),
+            work_id: work_id.to_string(),
             solver_reachable,
             send_cookies_allowed,
         }),
@@ -249,6 +262,42 @@ pub(super) struct ReadQuery {
     updated: Option<String>,
     /// Fixed-key notice from a write action (never raw user input).
     notice: Option<String>,
+    /// Render the cached AO3 comment thread (`?show_comments=1`).
+    show_comments: Option<String>,
+}
+
+/// AO3's boolean query params accept `true` (and the usual spellings).
+pub(super) fn is_truthy(raw: Option<&str>) -> bool {
+    raw.is_some_and(|value| matches!(value, "true" | "1" | "yes" | "on"))
+}
+
+/// The commentable AO3 renders for this reader position, plus the page that
+/// carries its comment thread.
+///
+/// AO3 comments attach to the work itself in Entire Work view (and for
+/// one-chapter works, whose `/works/<id>` URL is the work page), and to the
+/// chapter in single-chapter view of a multi-chapter work. The cached chapter
+/// AO3 id is what makes the chapter page reachable.
+pub(super) fn comment_scope(
+    work_id: &str,
+    chapters: &[crate::store::StoredChapter],
+    current: i64,
+    full_work: bool,
+) -> (String, String) {
+    if !full_work
+        && chapters.len() > 1
+        && let Some(chapter) = chapters.iter().find(|chapter| chapter.idx == current)
+        && let Some(ao3_chapter_id) = &chapter.ao3_chapter_id
+    {
+        return (
+            crate::store::chapter_scope(ao3_chapter_id),
+            format!("/works/{work_id}/chapters/{ao3_chapter_id}?show_comments=true"),
+        );
+    }
+    (
+        crate::store::WORK_SCOPE.to_string(),
+        format!("/works/{work_id}?view_full_work=true&show_comments=true"),
+    )
 }
 
 pub(super) async fn read_work(
@@ -273,16 +322,30 @@ pub(super) async fn read_work(
     let resume_pct = progress_exact
         .filter(|(chapter_idx, _)| *chapter_idx == current)
         .map(|(_, pct)| pct);
-    let full_work = query
-        .view_full_work
+    let full_work = is_truthy(query.view_full_work.as_deref());
+    let show_comments = is_truthy(query.show_comments.as_deref());
+    // Comment notices belong next to the thread (the redirect lands on
+    // `#comments`), not in the page-top flash.
+    let comment_notice = query
+        .notice
         .as_deref()
-        .is_some_and(|value| matches!(value, "true" | "1" | "yes" | "on"));
+        .filter(|key| key.starts_with("comments_"))
+        .and_then(notice_text);
     let notice = if query.checked.is_some() {
         Some("Checked AO3 — no changes since the cached copy.")
     } else if query.updated.is_some() {
         Some("Updated from AO3.")
+    } else if comment_notice.is_some() {
+        None
     } else {
         query.notice.as_deref().and_then(notice_text)
+    };
+    let (comment_scope_key, comment_page_path) = comment_scope(&id, &chapters, current, full_work);
+    let comment_set = state.store.get_comment_set(&id, &comment_scope_key).await?;
+    let comments = if show_comments {
+        state.store.get_comments(&id, &comment_scope_key).await?
+    } else {
+        Vec::new()
     };
     let snap = state.session_snapshot.read().await.clone();
     let signed_in = !snap.account.is_empty() && (snap.usable || snap.jar_complete);
@@ -326,6 +389,11 @@ pub(super) async fn read_work(
             reading_state: reading_state.as_deref(),
             full_work,
             comment_as: comment_as.as_deref(),
+            show_comments,
+            comments: &comments,
+            comment_set: comment_set.as_ref(),
+            comment_notice,
+            comment_page_path: Some(comment_page_path.as_str()),
         },
     )))
 }

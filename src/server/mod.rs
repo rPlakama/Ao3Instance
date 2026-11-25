@@ -202,6 +202,7 @@ pub async fn router(config: &Config, store: Store) -> Result<Router> {
         .route("/open", post(reads::open_work))
         .route("/open/{id}", get(reads::open_and_read))
         .route("/read/{id}", get(reads::read_work))
+        .route("/read/{id}/comments", post(reads::load_comments))
         .route("/read/{id}/chapter/{idx}", get(reads::read_chapter))
         .route("/search", get(reads::search).post(reads::search_post))
         .route("/progress", post(reads::save_progress))

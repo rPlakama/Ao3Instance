@@ -62,3 +62,39 @@ Fault injection for each class:
 | duplicate comment | `Validation` with the exact AO3 string |
 | duplicate subscription | prevented by pre-check; a blind second POST test must show the server would have duplicated it |
 | process killed between intent and response | on restart the intent is `Unconfirmed`, never replayed silently |
+
+## Amendment (2026-11-25) — AO3-parity direct posts for kudos and work subscriptions
+
+**What changed.** The work reader now posts kudos and work subscriptions directly from the
+work page, the way AO3's own page does: a `form.new_kudo` posts to `/write/kudos`, and the
+`form.ajax-create-destroy` subscription form posts to `/write/subscribe` or
+`/write/unsubscribe`. The reader renders those forms instead of links to `/write/preview`;
+kudos and subscribe carry the existing hidden `confirm=yes` token, while unsubscribe needs
+no token because it only removes a subscription with an active local-ledger row. Comments
+and bookmarks still go through the confirmation page, and the reader now renders AO3's
+`kudos/_kudos.html.erb`-shaped `#kudos` module from the cached count plus a "you left
+kudos" receipt.
+
+**Why.** The owner asked for AO3 design parity. AO3's work page leaves kudos and
+subscribe/unsubscribe to a direct button click, so routing them through a preview page made
+the two cheapest actions feel unlike the archive. A kudo is create-once (AO3 itself rejects
+a duplicate), and unsubscribing is the undo of an action the ledger already tracks, so the
+preview step added ceremony without adding safety.
+
+**What did not change.** Rule 1 is still enforced per action, with the button click now the
+confirmation: the server still refuses a kudos or subscribe request that lacks the hidden
+`confirm=yes` token. The write gate (`AO3I_WRITE_ENABLED`), the usable-session requirement,
+the `write_intent`/`write_audit` ledger written before and after the send, the governor (one
+write at a time, spacing floor, per-action budgets), one attempt with a typed outcome, and
+the same-origin guard on mutating routes all still apply. Comments and bookmarks keep both
+the confirmation page and their stricter duplicate handling.
+
+**Scope.** Reader kudos and work subscribe/unsubscribe only. No other action changes.
+
+**Trade-off.** These two actions lose the preview page that named the target before the
+request, so a mistaken click reaches AO3 directly; a mistaken kudo cannot be withdrawn
+(AO3's own button behaves the same way), while a mistaken unsubscribe can be undone with
+one subscribe click. Duplicate and abuse risk stays contained server-side: the local kudos
+receipt and subscription ledger are checked before the write, a duplicate kudos maps to
+`AlreadyDone`, unsubscribe refuses to act on an unknown subscription id, and every outcome
+is audited and surfaced as a reader notice.

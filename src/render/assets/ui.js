@@ -500,3 +500,45 @@
         enhanceField(fields[i]);
     }
 })();
+
+/* Narrow screens: collapse the AO3-style Sort & Filter sidebar unless the
+   server marked the current filter set as active. Desktop and no-JS readers
+   keep the server-rendered `open` attribute (the summary is styled away).
+   Crossing the breakpoint re-opens the panel so the desktop sidebar is always
+   usable. */
+(function () {
+    "use strict";
+
+    var panels = document.querySelectorAll("details.filters-panel");
+    if (!panels.length || !window.matchMedia) {
+        return;
+    }
+    var narrow = window.matchMedia("(max-width: 62em)");
+
+    function collapseInactive() {
+        for (var i = 0; i < panels.length; i++) {
+            if (panels[i].getAttribute("data-active") !== "true") {
+                panels[i].removeAttribute("open");
+            }
+        }
+    }
+
+    function openAll() {
+        for (var i = 0; i < panels.length; i++) {
+            panels[i].setAttribute("open", "");
+        }
+    }
+
+    if (narrow.matches) {
+        collapseInactive();
+    }
+    if (narrow.addEventListener) {
+        narrow.addEventListener("change", function (event) {
+            if (event.matches) {
+                collapseInactive();
+            } else {
+                openAll();
+            }
+        });
+    }
+})();

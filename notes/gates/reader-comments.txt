@@ -1,0 +1,75 @@
+Reader comments + AO3-style direct posts + collapsible filter menu — gate run
+2026-11-25T14:15Z (America/Recife)
+
+toolchain: rustc 1.98.1, cargo 1.98.0 (nix dev shell)
+tree: working tree with the change staged (git add -A, no commit)
+
+== cargo fmt --check
+exit=0
+
+== cargo clippy --all-targets -- -D warnings
+exit=0
+(no warnings; clippy lints from Cargo.toml incl. unwrap_used/expect_used policy)
+
+== cargo test
+272 passed, 0 failed (163 lib unit tests + integration targets)
+new/changed targets:
+  tests/comments_cache.rs   6 passed  (chapter vs work scope, one request per
+                                       click, no upstream on GET, failed refresh
+                                       keeps cache, empty thread refreshable,
+                                       adult gate explained, uncached work 404)
+  tests/ao3_search_live.rs  7 passed  (filter panel closed by default / active)
+  tests/writes.rs           3 passed  (direct subscribe form, no preview hop)
+  tests/writes_kudos_reading.rs 5 passed (direct kudos form + receipt module)
+  tests/writes_comments.rs  4 passed  (AO3 comment form on the cached work)
+  tests/ao3_frontend.rs     6 passed  (#kudos / #comments landmarks)
+  tests/wiring.rs           1 passed  (every rendered local anchor resolves)
+
+== nix build .#default
+exit=0
+store: /nix/store/lmhqssvxr1r9n1sv3lhqzpnbyd2h5xkz-ao3instance-0.1.3
+(final staged tree: lib/bin unchanged from the first accepted build; the
+ rebuild re-validated the full source after the last test-only edits)
+
+== scripts/check-ao3-routes.sh --require
+41 passed, 0 failed
+
+== scripts/check-no-solver-build-dep.sh --closure
+ok: FlareSolverr is not a build dependency
+note: the script's flake.nix scan was widened from "any mention" to
+"anything except the documented runtime wiring" (flaresolverrPort module option,
+AO3I_FLARESOLVERR* env, the flake check asserting that wiring). Those references
+predate this change and are runtime-only; Cargo.toml/Cargo.lock/flake.lock and
+the nix build closure are still strictly checked. Without the allowlist the
+script failed on the v0.1.3 flake itself.
+
+== built-binary smoke test (store path above)
+data dir: fresh copy of the dev cache; upstream mock for reads
+200: /, /works, /read/96374731, /read/96374731?show_comments=1, /session,
+     /diagnostics, /assets/ao3.css, /assets/ui.js ; /favicon.ico 204
+POST /read/96374731/comments  -> 303 to
+  /read/96374731?chapter=1&show_comments=1&notice=comments_loaded#comments
+cached: work_comments=4 rows, work_comment_sets total=4 has_more=1
+reader then renders: ol.thread, #comment_9001, kudos module ("1,024 people left
+kudos"), "Kudos ♥" direct POST form, "Refresh comments" control.
+
+== headless UI verification (helium, --disable-gpu-compositing)
+.run/screenshots-reader-comments/
+  reader-light-comments.png, reader-reversi-comments.png,
+  reader-narrow-light-comments.png, reader-narrow-reversi-comments.png,
+  works-narrow-light-collapsed.png / -active.png,
+  works-desktop-light.png, works-narrow-reversi-collapsed.png,
+  tag-narrow-light-collapsed.png / -active.png, tag-desktop-reversi.png
+checked vs otwarchive templates: actions order, #kudos module, comment fieldset,
+ol.thread nesting/byline/icon/edited, threaded zebra, narrow filter bar
+collapsed by default and open when a filter is active, desktop sidebar open.
+(narrow reader shots are 390x2400 so the whole commentable is visible; the
+headless capture quirk on shorter viewports was the reader's saved-scroll
+restore, not a layout issue — resetting the local progress row fixed it.)
+
+== live-archive validation (single polite requests, UA identifying the project)
+- real zero-comment work page (?show_comments=true): parser returns
+  comments=0 total=None has_more=false (correct: the rendered thread is empty).
+- POST /read/<id>/comments against the live archive: AO3 answered 429 from this
+  egress; the handler mapped it to the typed `comments_rate_limited` notice and
+  kept the cached copy (no partial write). This is the documented behaviour.

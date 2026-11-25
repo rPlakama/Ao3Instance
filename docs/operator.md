@@ -89,7 +89,10 @@ Limits and behaviour:
 `/fandoms` live AO3 `/media` directory and `/media/<slug>/fandoms` A–Z lists (30-min cached, offline fallback) ·
 `/dashboard` live AO3 subscriptions, bookmarks, reading history and local cache stats ·
 `/subscriptions`, `/bookmarks`, `/reading` (`?show=to-read` for Marked for Later) live AO3 account lists (30-min cached, offline fallback) ·
-`/read/<id>` reader (chapter jump, Entire Work) · `/session` AO3 login/import (logout is local-only) ·
+`/read/<id>` reader (chapter jump, Entire Work; `?show_comments=1` shows the cached comment
+thread; the Comments action (when nothing is cached) or the "Refresh comments" button under
+a cached thread POSTs to `/read/<id>/comments`, which fetches it once from AO3) ·
+`/session` AO3 login/import (logout is local-only) ·
 `/works/search` AO3 Work Search (30-min cached, `?refresh=1` to force refresh, `?local=1` searches cached works) ·
 `/tags/search` live AO3 tag search (30-min cached, offline fallback) ·
 `/tags/<tag>/works` live AO3 tag page (30-min cached, offline fallback) ·
@@ -139,8 +142,9 @@ and verifies that `ao3i.db` and `key` are created.
      Cookies, paste them, and import. Nothing else is stored but the encrypted jar.
    - **Password login** is available but the password is never persisted; after the
      AO3 session expires you sign in again.
-4. Writes stay disabled until `AO3I_WRITE_ENABLED=true`. Every write shows a
-   confirmation page and is recorded in **Audit**.
+4. Writes stay disabled until `AO3I_WRITE_ENABLED=true`. Kudos and work
+   subscriptions post straight from the reader; comments and bookmarks show a
+   confirmation page first. Every write is recorded in **Audit**.
 
 ## Data on disk
 
@@ -157,8 +161,13 @@ re-importing the session; cached works and progress are unaffected.
 
 ## Writes: what to expect
 
-- One action = one confirmation = one upstream request. No retries for comments,
-  bookmarks or subscriptions; kudos duplicates are detected from AO3's own message.
+- One action = one confirmation = one upstream request. Comments and bookmarks
+  confirm on a page that names the target; reader kudos and work
+  subscribe/unsubscribe post directly the way AO3's own buttons do — the click
+  is the deliberate action, and the kudos and subscribe forms carry the hidden
+  `confirm=yes` token (the same-origin guard applies to every mutating route).
+  No retries for comments, bookmarks or subscriptions; kudos duplicates are
+  detected from AO3's own message.
 - Client budgets: comments 3/15 min (AO3's own limit), kudos 10/min,
   subscriptions 20/h, bookmarks 10/min. `Retry-After` parks the action.
 - The audit log (`/audit`) is append-only and stores targets and outcomes — never
@@ -199,5 +208,14 @@ shows exactly what was done.
 
 - Chapter-level reading progress only; no scroll/block anchor yet (I7 refinement).
 - Bookmarks and comments are created, not edited or deleted from the app.
+- Cached comment threads are a read-only copy of AO3's rendered comments: there
+  is no reply, edit or delete from the cached thread, and only AO3's first page
+  is stored (further pages link out). The copy is keyed to the commentable the
+  reader position maps to — `work` for Entire Work view or a one-chapter work,
+  `chapter:<ao3_chapter_id>` for a single chapter of a multi-chapter work — so
+  the thread can differ between views. Refreshing is explicit: the "Refresh
+  comments" button under a cached thread does one `POST /read/<id>/comments`,
+  which replaces the cached copy; a failed refresh keeps the old copy with a
+  fixed notice, and nothing refreshes in the background.
 - No OPDS, no batch import, no collection management.
 - The local text is a cache for personal offline reading; do not redistribute it.

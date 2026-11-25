@@ -50,7 +50,16 @@ async fn kudos_and_reading_flags_are_confirmed_audited_and_remembered() {
         .text()
         .await
         .expect("body");
-    assert!(reader.contains("Give kudos"), "{reader}");
+    assert!(
+        reader.contains("action=\"/write/kudos\"")
+            && reader.contains("name=\"confirm\" value=\"yes\"")
+            && reader.contains("Kudos \u{2665}</button>"),
+        "reader exposes the direct kudos form: {reader}"
+    );
+    assert!(
+        reader.contains("1,024 people left kudos on this work!"),
+        "cached kudos count module: {reader}"
+    );
     assert!(reader.contains("Mark for later"), "{reader}");
     assert!(reader.contains("Mark as read"), "{reader}");
 
@@ -75,7 +84,15 @@ async fn kudos_and_reading_flags_are_confirmed_audited_and_remembered() {
     assert_eq!(given.status(), 200);
     let body = given.text().await.expect("body");
     assert!(body.contains("Kudos given."), "{body}");
-    assert!(!body.contains("Give kudos"), "button replaced by state");
+    assert!(
+        !body.contains("action=\"/write/kudos\""),
+        "kudos form replaced by the receipt state: {body}"
+    );
+    assert!(body.contains("kudos given"), "{body}");
+    assert!(
+        body.contains("You and 1,023 others left kudos on this work!"),
+        "receipt module for the current account: {body}"
+    );
 
     let kudos_request = upstream
         .requests()

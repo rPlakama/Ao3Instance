@@ -102,6 +102,22 @@ impl Default for WorkFilter {
     }
 }
 
+impl WorkFilter {
+    /// True when the request carried a non-default filter.
+    ///
+    /// `browse.rs` uses it to auto-open the narrow-viewport Sort & Filter
+    /// panel instead of leaving an in-use filter set collapsed.
+    pub fn has_active_filters(&self) -> bool {
+        self.rating.is_some()
+            || self.author.is_some()
+            || self.fandom.is_some()
+            || self.tag.is_some()
+            || self.language.is_some()
+            || self.reading_status != ReadingStatus::All
+            || self.sort != BrowseSort::FetchedDesc
+    }
+}
+
 /// One page of cached works plus the facet values for the sidebar.
 #[derive(Debug, Clone)]
 pub struct BrowseResult {
@@ -548,4 +564,39 @@ pub struct TagHit {
     pub name: String,
     pub kind: String,
     pub count: usize,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn work_filter_reports_active_filters_only_for_non_defaults() {
+        assert!(!WorkFilter::default().has_active_filters());
+
+        let single_fields: [fn(&mut WorkFilter); 5] = [
+            |filter| filter.rating = Some("Mature".into()),
+            |filter| filter.author = Some("tester".into()),
+            |filter| filter.fandom = Some("Fandom".into()),
+            |filter| filter.tag = Some("Tag".into()),
+            |filter| filter.language = Some("English".into()),
+        ];
+        for set_field in single_fields {
+            let mut filter = WorkFilter::default();
+            set_field(&mut filter);
+            assert!(filter.has_active_filters());
+        }
+
+        let status = WorkFilter {
+            reading_status: ReadingStatus::ForLater,
+            ..WorkFilter::default()
+        };
+        assert!(status.has_active_filters());
+
+        let sort = WorkFilter {
+            sort: BrowseSort::KudosDesc,
+            ..WorkFilter::default()
+        };
+        assert!(sort.has_active_filters());
+    }
 }

@@ -109,14 +109,16 @@ impl Store {
 
         for chapter in &page.chapters {
             sqlx::query(
-                "INSERT INTO chapters (work_id, idx, title, body_html, notes_html)
-                 VALUES (?1, ?2, ?3, ?4, ?5)",
+                "INSERT INTO chapters
+                   (work_id, idx, title, body_html, notes_html, ao3_chapter_id)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
             )
             .bind(&page.ao3_id)
             .bind(chapter.index as i64)
             .bind(chapter.title.as_deref())
             .bind(&chapter.body_html)
             .bind(chapter.notes_html.as_deref())
+            .bind(chapter.ao3_id.as_deref())
             .execute(&mut *tx)
             .await
             .map_err(|e| Error::Store(format!("insert chapter: {e}")))?;
@@ -173,7 +175,7 @@ impl Store {
 
     pub async fn get_chapters(&self, ao3_id: &str) -> Result<Vec<StoredChapter>> {
         let rows = sqlx::query(
-            "SELECT idx, title, body_html, notes_html FROM chapters
+            "SELECT idx, title, body_html, notes_html, ao3_chapter_id FROM chapters
              WHERE work_id = ?1 ORDER BY idx ASC",
         )
         .bind(ao3_id)
@@ -188,6 +190,7 @@ impl Store {
                 title: row.get("title"),
                 body_html: row.get("body_html"),
                 notes_html: row.get("notes_html"),
+                ao3_chapter_id: row.get("ao3_chapter_id"),
             })
             .collect())
     }

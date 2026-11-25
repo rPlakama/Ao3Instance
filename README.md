@@ -18,23 +18,30 @@ This is an unofficial project, not affiliated with or endorsed by the OTW.
   readable without a network connection; uncached works show a clear miss card
   instead of fetching silently.
 - **Reader** — AO3-shaped pages at `/works/<id>` and `/read/<id>`, chapter
-  jump, Entire Work mode, and per-chapter reading progress.
+  jump, Entire Work mode, per-chapter reading progress, and cached AO3 comment
+  threads: one click fetches AO3's rendered comments for the work or chapter
+  you are reading, and they stay readable offline afterwards.
 - **AO3 look and feel** — the familiar archive layout plus themes (Auto,
   Classic, Reversi, Snow, Frost, Cloud, Sepia, Midnight) and import of public
   AO3 site skins.
 - **Discovery** — AO3 Work Search and tag search (30-minute cached, with
   offline fallback), fandom directories, popular tags, autocomplete, and a
-  local full-text search over already-cached works.
+  local full-text search over already-cached works; the AO3 Sort & Filter
+  sidebar on tag pages and in the cached library becomes a collapsible "Sort
+  and Filter" panel on narrow screens (open when a filter is active), while
+  desktop keeps the sidebar open.
 - **Your AO3 account** — cookie import (recommended) or password login, with
   the session jar encrypted at rest. Restricted works and all writes require a
   session. Logout is local-only; it does not sign you out of AO3.
 - **Live AO3 lists** — subscriptions, bookmarks, reading history, Marked for
   Later, favorites and dashboard modules, cached for 30 minutes with offline
   fallback.
-- **Writes (opt-in, off by default)** — kudos, comments and replies,
-  subscribe/unsubscribe, bookmarks with notes, and mark for later/as read.
-  Each action requires an explicit confirmation, is attempted once, and is
-  recorded in an append-only audit ledger.
+- **Writes (opt-in, off by default)** — kudos, comments, subscribe/unsubscribe,
+  bookmarks with notes, and mark for later/as read.
+  Kudos and work subscriptions post directly from the reader the way AO3's own
+  buttons do (the click is the deliberate action); comments and bookmarks go
+  through a confirmation page that names the target. Every action is attempted
+  once and recorded in an append-only audit ledger.
 - **Diagnostics** — `/diagnostics` shows upstream HTTP failures, the request
   governor and optional FlareSolverr state, without exposing cookies.
 - **Optional FlareSolverr** — if the host already runs FlareSolverr, blocked
@@ -132,8 +139,22 @@ diagnostics and FlareSolverr limits.
    import is the recommended path (copy `_otwarchive_session` and
    `user_credentials` from your browser). Password login works, but the
    password is never persisted.
-4. Writes remain disabled until `AO3I_WRITE_ENABLED=true`. Every write shows a
-   confirmation page and appears in **Audit**.
+4. Writes remain disabled until `AO3I_WRITE_ENABLED=true`. Kudos and work
+   subscriptions post straight from the reader; comments and bookmarks confirm
+   first. Every write appears in **Audit**.
+
+## Limitations
+
+- Cached comment threads are a read-only copy of what AO3 rendered: the reader
+  can load and show them, but there is no reply, edit or delete control on the
+  cached comments — those stay on AO3. Only AO3's first page is cached;
+  further pages link out to the site. A "Refresh comments" button under the
+  thread replaces the copy on demand — one explicit request; nothing refreshes
+  in the background.
+- Cached comments follow AO3's commentable for the view you are reading: the
+  work itself in Entire Work mode (and for a one-chapter work), or one chapter
+  in single-chapter view of a multi-chapter work — so switching views can show
+  a different thread.
 
 ## Security and privacy
 

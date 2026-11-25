@@ -231,6 +231,16 @@ async fn tag_pages_are_live_and_work_entries_link_to_tags() {
     assert!(body.contains("2 Works in"), "{body}");
     assert!(body.contains("A Mirror of Small Things"), "{body}");
     assert!(body.contains("id=\"work-filters\""), "{body}");
+    assert!(
+        body.contains(
+            "<details id=\"work-filters-panel\" class=\"filters-panel\" open data-active=\"false\">"
+        ),
+        "{body}"
+    );
+    assert!(
+        body.contains("<summary class=\"filters-toggle\">Sort and Filter</summary>"),
+        "{body}"
+    );
     assert!(body.contains("Sort and Filter"), "{body}");
     assert!(body.contains("Ratings"), "{body}");
     assert!(body.contains("Include"), "{body}");
@@ -249,6 +259,12 @@ async fn tag_pages_are_live_and_work_entries_link_to_tags() {
         .expect("filtered body");
     assert!(
         filtered.contains("value=\"Explicit\" checked"),
+        "{filtered}"
+    );
+    assert!(
+        filtered.contains(
+            "<details id=\"work-filters-panel\" class=\"filters-panel\" open data-active=\"true\">"
+        ),
         "{filtered}"
     );
     assert!(
@@ -390,6 +406,7 @@ async fn autocomplete_proxies_ao3_and_falls_back_offline() {
         chapters: vec![ao3instance::ao3::work::Chapter {
             index: 1,
             title: Some("Ch 1".into()),
+            ao3_id: None,
             body_html: "<p>Hello</p>".into(),
             notes_html: None,
         }],

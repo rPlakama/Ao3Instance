@@ -1,11 +1,21 @@
-//! Work top navigation actions and bottom feedback/comment section.
+//! Work top navigation actions and the AO3 `#feedback` commentable.
+//!
+//! Markup follows `otwarchive/app/views/works/_work_header_navigation.html.erb`
+//! and `app/views/comments/_commentable.html.erb`: actions first, then the kudos
+//! module, then the comments section (form + cached thread).
+//!
+//! Kudos and work subscriptions post directly from the work page the way AO3's
+//! own forms do (button click = the deliberate action; the form carries the
+//! `confirm=yes` token the server requires). Comments and bookmarks keep the
+//! confirmation page (`docs/adr/0005-write-safety.md`).
 
 use crate::render::escape;
-use crate::store::StoredChapter;
+use crate::store::{StoredChapter, StoredWork};
 
 use super::ReadContext;
+use super::comments::comments_section;
 
-/// Top work action bar (`otwarchive/app/views/works/_work_header_navigation.html.erb`).
+/// Top work action bar (`_work_header_navigation.html.erb`).
 pub(super) fn top_navigation(
     id: &str,
     chapters: &[StoredChapter],
@@ -83,6 +93,12 @@ pub(super) fn top_navigation(
         out.push_str("<li><a href=\"/session\">Sign in to write</a></li>");
     }
 
+    // AO3 order: bookmark, mark, comments, subscribe (`_work_header_navigation`).
+    out.push_str("<li class=\"comments\"><a href=\"#comments\">Comments</a></li>");
+    if ctx.can_write {
+        out.push_str(&subscription_form(id, ctx));
+    }
+
     let save_pct = ctx.resume_pct.filter(|pct| pct.is_finite()).map_or_else(
         || inside_pct.to_string(),
         |pct| format!("{:.2}", pct.clamp(0.0, 100.0)),
@@ -145,40 +161,40 @@ fn write_controls(id: &str, ctx: &ReadContext<'_>) -> String {
             ));
         }
     }
-    out.push_str("<li class=\"comments\"><a href=\"#feedback\">Comments</a></li>");
+    out
+}
+
+/// Subscription form (`app/views/subscriptions/_form.html.erb`): the submit
+/// button is the whole affordance, and it posts directly like AO3's own form.
+fn subscription_form(id: &str, ctx: &ReadContext<'_>) -> String {
     if ctx.subscribed {
-        out.push_str(&format!(
-            "<li class=\"subscribe\"><span class=\"state active\">subscribed</span></li>\
-             <li class=\"subscribe\"><form class=\"inline\" method=\"post\" \
+        format!(
+            "<li class=\"subscribe\"><form class=\"ajax-create-destroy\" method=\"post\" \
              action=\"/write/unsubscribe\">\
              <input type=\"hidden\" name=\"kind\" value=\"Work\">\
              <input type=\"hidden\" name=\"target_id\" value=\"{id}\">\
              <button type=\"submit\">Unsubscribe</button></form></li>"
-        ));
+        )
     } else {
-        out.push_str(&format!(
-            "<li class=\"subscribe\">\
-             <a href=\"/write/preview?kind=work&id={id}\">Subscribe to work</a></li>"
-        ));
+        format!(
+            "<li class=\"subscribe\"><form class=\"ajax-create-destroy\" method=\"post\" \
+             action=\"/write/subscribe\">\
+             <input type=\"hidden\" name=\"kind\" value=\"Work\">\
+             <input type=\"hidden\" name=\"target_id\" value=\"{id}\">\
+             <input type=\"hidden\" name=\"confirm\" value=\"yes\">\
+             <button type=\"submit\">Subscribe</button></form></li>"
+        )
     }
-    if ctx.kudos_sent {
-        out.push_str("<li class=\"kudos\"><span class=\"state active\">kudos given</span></li>");
-    } else {
-        out.push_str(&format!(
-            "<li class=\"kudos\">\
-             <a href=\"/write/preview?kind=kudos&id={id}\">Give kudos</a></li>"
-        ));
-    }
-    out
 }
 
-/// Bottom navigation actions & comment box (`otwarchive/app/views/comments/_commentable.html.erb`).
+/// Bottom feedback/comment section (`comments/_commentable.html.erb`).
 pub(super) fn feedback_section(
-    id: &str,
+    work: &StoredWork,
     chapters: &[StoredChapter],
     position: usize,
     ctx: &ReadContext<'_>,
 ) -> String {
+    let id = escape(&work.ao3_id);
     let total = chapters.len();
     let mut out = String::from(
         "<div id=\"feedback\" class=\"feedback\">\
@@ -198,37 +214,116 @@ pub(super) fn feedback_section(
         ));
     }
     if ctx.can_write {
-        if !ctx.kudos_sent {
+        // Kudos (`kudos/_kudos.html.erb` + `_commentable.html.erb` action form).
+        if ctx.kudos_sent {
+            out.push_str(
+                "<li class=\"kudos\"><span class=\"state active\">kudos given</span></li>",
+            );
+        } else {
             out.push_str(&format!(
-                "<li><a href=\"/write/preview?kind=kudos&id={id}\">Give kudos</a></li>"
+                "<li class=\"kudos\"><form class=\"new_kudo\" id=\"new_kudo\" method=\"post\" \
+                 action=\"/write/kudos\">\
+                 <input type=\"hidden\" name=\"target_id\" value=\"{id}\">\
+                 <input type=\"hidden\" name=\"confirm\" value=\"yes\">\
+                 <button type=\"submit\" id=\"kudo_submit\">Kudos \u{2665}</button></form></li>"
             ));
         }
         if !ctx.bookmarked {
             out.push_str(&format!(
-                "<li><a href=\"/write/preview?kind=bookmark&id={id}\">Bookmark</a></li>"
+                "<li class=\"bookmark\">\
+                 <a href=\"/write/preview?kind=bookmark&id={id}\">Bookmark</a></li>"
+            ));
+        }
+        if ctx.reading_state == Some("for_later") {
+            out.push_str(&format!(
+                "<li class=\"mark\"><form class=\"inline\" method=\"post\" \
+                 action=\"/write/reading\">\
+                 <input type=\"hidden\" name=\"target_id\" value=\"{id}\">\
+                 <input type=\"hidden\" name=\"action\" value=\"read\">\
+                 <button type=\"submit\">Mark as read</button></form></li>"
             ));
         }
     }
+    out.push_str(&comments_action(work, ctx));
     out.push_str("</ul>");
-    if ctx.can_write {
-        let commenter = ctx
-            .comment_as
-            .map_or_else(|| "your AO3 pseud".to_string(), escape);
-        out.push_str(&format!(
-            "<div id=\"add_comment\"><details class=\"comment\">\
-             <summary class=\"action\">Comment on this work</summary>\
-             <form class=\"post comment\" method=\"post\" action=\"/write/comment/preview\">\
-             <fieldset><legend>Post Comment</legend>\
-             <input type=\"hidden\" name=\"target_id\" value=\"{id}\">\
-             <h4 class=\"heading\">Comment as <strong>{commenter}</strong></h4>\
-             <p class=\"footnote\">It will be public on AO3 (max 10,000 characters).</p>\
-             <p><label class=\"landmark\" for=\"comment_content\">Comment</label>\
-             <textarea id=\"comment_content\" name=\"content\" rows=\"6\" \
-             maxlength=\"10000\" required></textarea></p>\
-             <p class=\"submit actions\"><button type=\"submit\">Preview comment</button></p>\
-             </fieldset></form></details></div>"
-        ));
-    }
+    out.push_str(&kudos_module(work, ctx));
+    out.push_str(&comments_section(work, ctx));
     out.push_str("</div>");
     out
+}
+
+/// The `Comments` / `Hide Comments` action, or the one-click load form when the
+/// thread was never fetched for this commentable.
+fn comments_action(work: &StoredWork, ctx: &ReadContext<'_>) -> String {
+    let id = escape(&work.ao3_id);
+    let chapter = ctx.current;
+    let mut href = format!("/read/{id}?chapter={chapter}");
+    if ctx.full_work {
+        href.push_str("&view_full_work=true");
+    }
+    if ctx.show_comments {
+        format!("<li id=\"show_comments_link\"><a href=\"{href}#comments\">Hide Comments</a></li>")
+    } else if let Some(set) = ctx.comment_set {
+        let label = set.total.map_or_else(
+            || "Comments".to_string(),
+            |total| format!("Comments ({})", crate::time::format_count(total)),
+        );
+        format!(
+            "<li id=\"show_comments_link\"><a href=\"{href}&show_comments=1#comments\">{label}</a></li>"
+        )
+    } else {
+        format!(
+            "<li id=\"show_comments_link\">{}</li>",
+            load_comments_form(work, ctx, "Comments")
+        )
+    }
+}
+
+/// One-click comment fetch form shared by the action, the empty state and the
+/// refresh control. Posts the reader's position so the server can resolve the
+/// same commentable AO3 shows.
+pub(super) fn load_comments_form(work: &StoredWork, ctx: &ReadContext<'_>, button: &str) -> String {
+    let id = escape(&work.ao3_id);
+    let full_work = if ctx.full_work {
+        "<input type=\"hidden\" name=\"full_work\" value=\"true\">"
+    } else {
+        ""
+    };
+    format!(
+        "<form class=\"inline\" method=\"post\" action=\"/read/{id}/comments\">\
+         <input type=\"hidden\" name=\"chapter\" value=\"{}\">{full_work}\
+         <button type=\"submit\">{button}</button></form>",
+        ctx.current
+    )
+}
+
+/// Kudos receipt module (`kudos/_kudos.html.erb`): only rendered when there is
+/// something to report. Giver lists are not cached, so this is honest about the
+/// count rather than inventing names.
+fn kudos_module(work: &StoredWork, ctx: &ReadContext<'_>) -> String {
+    let count = work.kudos.unwrap_or(0);
+    if count == 0 && !ctx.kudos_sent {
+        return String::new();
+    }
+    let text = if ctx.kudos_sent {
+        if count > 1 {
+            format!(
+                "You and {} others left kudos on this work!",
+                crate::time::format_count(count - 1)
+            )
+        } else {
+            "You left kudos on this work!".to_string()
+        }
+    } else if count == 1 {
+        "1 person left kudos on this work!".to_string()
+    } else {
+        format!(
+            "{} people left kudos on this work!",
+            crate::time::format_count(count)
+        )
+    };
+    format!(
+        "<h3 class=\"landmark heading\">Kudos</h3>\
+         <div id=\"kudos\"><p class=\"kudos\">{text}</p></div>"
+    )
 }

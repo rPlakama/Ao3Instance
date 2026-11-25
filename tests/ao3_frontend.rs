@@ -594,6 +594,16 @@ async fn ao3_html_structure_matches_otwarchive_regions_and_patterns() {
         reader.contains("id=\"feedback\" class=\"feedback\""),
         "{reader}"
     );
+    // AO3 kudos module and commentable landmarks (design parity).
+    assert!(reader.contains("id=\"kudos\""), "{reader}");
+    assert!(
+        reader.contains("<a id=\"comments\">Comments</a>"),
+        "{reader}"
+    );
+    assert!(
+        reader.contains("1,024 people left kudos on this work!"),
+        "{reader}"
+    );
 
     // Fandoms directory: alphabet jump bar + AO3 letter listbox panels.
     let fandoms = client

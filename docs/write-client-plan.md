@@ -304,6 +304,35 @@ The fault matrix in ADR-0005 is the acceptance test for W6.
 **Remaining W6:** sandbox validation against a local otwarchive (operator step; heavy
 Docker stack), then final gates and the release skill.
 
+### W6 addendum — 2026-11-25: direct kudos/subscribe and cached comments
+
+**Direct posts.** Reader kudos and work subscribe/unsubscribe now post directly from the
+work page like AO3's own forms: `form.new_kudo` → `POST /write/kudos` in the bottom
+`#feedback` commentable actions, and `form.ajax-create-destroy` → `POST /write/subscribe`
+or `/write/unsubscribe` from AO3's top `ul.work.navigation.actions` bar next to Comments
+(its `_work_header_navigation` placement). The button click is the deliberate action; kudos
+and subscribe carry the hidden `confirm=yes` token (unsubscribe needs none — it only removes
+a ledger-known subscription), and the write gate, session requirement, intent/audit ledger,
+governor, single attempt and same-origin guard are unchanged. Comments and bookmarks keep
+the confirmation page. The decision and its trade-off (no preview page for those two
+actions) are recorded as the amendment in [ADR-0005](adr/0005-write-safety.md); duplicate
+safety rests on the pre-write local kudos receipt and subscription-ledger checks.
+
+**Cached comments.** Migration `0014_work_comments.sql` stores a copy of AO3's rendered
+comment thread. The cache is keyed by commentable: `work` for Entire Work view (and for a
+one-chapter work, whose `/works/<id>` URL is the work page), or `chapter:<ao3_chapter_id>`
+for a single chapter of a multi-chapter work (the id comes from the chapter header link, so
+a work cached before this migration falls back to the work scope until re-fetched).
+`POST /read/<id>/comments` is the only fetch path: one upstream GET per click, then a
+redirect back to `?show_comments=1`, which renders from SQLite and never contacts AO3; a
+plain reader GET never fetches. A cached thread carries an explicit "Refresh comments"
+button that submits the same POST and replaces the scope's copy; nothing refreshes in the
+background, and a failed fetch or parse keeps the previous copy with a fixed notice. Only
+AO3's first page is cached (`has_more` links out); deleted or hidden comments are dropped
+from the cache and their replies are hoisted to the omitted comment's parent rather than
+lost. Bodies are untrusted author HTML, stored raw like chapter text and sanitized at
+render. Tests: `tests/comments_cache.rs`.
+
 ### W5 status — partial (2026-11-22): kudos + reading flags
 
 **Landed:**

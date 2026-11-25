@@ -124,6 +124,17 @@ pub(super) fn stat_row(class: &str, label: &str, value_html: &str) -> String {
     format!("<dt class=\"{class}\">{label}:</dt><dd class=\"{class}\">{value_html}</dd>")
 }
 
+/// Wraps an AO3-style filter form in the collapsible "Sort and Filter" panel.
+///
+/// `open` is always rendered so desktop and no-JS readers see the filters;
+/// `ui.js` removes it on narrow viewports when no filter is active.
+pub(super) fn filter_panel(active: bool, form_markup: &str) -> String {
+    format!(
+        "<details id=\"work-filters-panel\" class=\"filters-panel\" open data-active=\"{active}\">\
+         <summary class=\"filters-toggle\">Sort and Filter</summary>{form_markup}</details>"
+    )
+}
+
 /// Renders `<option>` elements for a static `(value, label)` slice.
 pub(super) fn select_options(options: &[(&str, &str)], current: &str) -> String {
     let mut out = String::new();
@@ -150,6 +161,29 @@ mod tests {
 
         let cached = cache_banner(Some((true, 1_700_000_000)), "/x?refresh=1", "Live");
         assert!(cached.contains("30-min cache"), "{cached}");
+    }
+
+    #[test]
+    fn filter_panel_wraps_the_form_and_marks_the_active_state() {
+        let inactive = filter_panel(false, "<form id=\"work-filters\"></form>");
+        assert_eq!(
+            inactive,
+            "<details id=\"work-filters-panel\" class=\"filters-panel\" open data-active=\"false\">\
+             <summary class=\"filters-toggle\">Sort and Filter</summary>\
+             <form id=\"work-filters\"></form></details>"
+        );
+
+        let active = filter_panel(true, "");
+        assert!(
+            active.contains(
+                "<details id=\"work-filters-panel\" class=\"filters-panel\" open data-active=\"true\">"
+            ),
+            "{active}"
+        );
+        assert!(
+            active.contains("<summary class=\"filters-toggle\">Sort and Filter</summary>"),
+            "{active}"
+        );
     }
 
     #[test]

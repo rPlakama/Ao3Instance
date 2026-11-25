@@ -40,6 +40,7 @@ Rules for using it:
 | What URLs exist and which HTTP verbs? | `config/routes.rb` |
 | What does a controller require, permit, and redirect to? | `app/controllers/**` |
 | What form fields and hidden inputs does the real site post? | `app/views/**` |
+| What markup renders a comment thread (our read-side parser)? | `app/views/comments/_commentable.html.erb`, `_comment_thread.html.erb`, `_single_comment.html.erb`; selector table in `src/ao3/comments.rs` |
 | What validation, uniqueness, spam and moderation rules apply? | `app/models/**` |
 | What configuration constants (limits, TTLs, throttles) exist? | `config/config.yml` |
 | How is CSRF, session and authentication wired? | `app/controllers/application_controller.rb`, `config/initializers/{session_store,devise,rack_attack}.rb` |

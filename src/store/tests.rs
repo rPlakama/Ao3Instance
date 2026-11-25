@@ -1,5 +1,6 @@
 use super::works::fts_query;
 use super::*;
+use crate::ao3::comments::Comment;
 use crate::ao3::work::{Chapter, WorkPage};
 use crate::db;
 use crate::diag::{HttpDirection, HttpErrorEvent, Transport};
@@ -31,12 +32,14 @@ fn page() -> WorkPage {
             Chapter {
                 index: 1,
                 title: Some("One".into()),
+                ao3_id: Some("9001".into()),
                 body_html: "<p>one</p>".into(),
                 notes_html: None,
             },
             Chapter {
                 index: 2,
                 title: Some("Two".into()),
+                ao3_id: Some("9002".into()),
                 body_html: "<p>two</p>".into(),
                 notes_html: Some("<p>note</p>".into()),
             },
@@ -818,6 +821,111 @@ async fn upsert_preserves_chapter_count_and_progress_history_includes_title() {
     assert_eq!(history.len(), 1);
     assert_eq!(history[0].title.as_deref(), Some("Partial Chapter Work"));
     assert_eq!(history[0].authors, work.authors);
+
+    drop(std::fs::remove_dir_all(&dir));
+}
+
+fn comment(seq: i64, id: &str, parent_id: Option<&str>, depth: i64, body: &str) -> Comment {
+    Comment {
+        seq,
+        comment_id: id.to_string(),
+        parent_id: parent_id.map(str::to_string),
+        depth,
+        author: Some(format!("author_{id}")),
+        author_login: Some(format!("login_{id}")),
+        posted_at: Some(format!("0{seq} Nov 2026 10:00 UTC")),
+        edited_at: None,
+        body_html: body.to_string(),
+    }
+}
+
+#[tokio::test]
+async fn comment_threads_round_trip_replace_and_stay_scope_isolated() {
+    let (store, dir) = test_store("comments").await;
+    store.upsert_work(&page(), "hash1").await.unwrap();
+
+    let work_scope = WORK_SCOPE;
+    let chapter = chapter_scope("9001");
+    let thread = vec![
+        comment(0, "1", None, 0, "<p>top</p>"),
+        comment(1, "2", Some("1"), 1, "<p>reply</p>"),
+    ];
+    store
+        .replace_comments("123", work_scope, &thread, Some(2), false)
+        .await
+        .unwrap();
+    store
+        .replace_comments(
+            "123",
+            &chapter,
+            &[comment(0, "9", None, 0, "<p>chapter</p>")],
+            Some(1),
+            true,
+        )
+        .await
+        .unwrap();
+
+    let stored = store.get_comments("123", work_scope).await.unwrap();
+    assert_eq!(stored.len(), 2);
+    assert_eq!(stored[1].parent_id.as_deref(), Some("1"));
+    assert_eq!(stored[1].depth, 1);
+    assert_eq!(stored[1].body_html, "<p>reply</p>");
+
+    let info = store
+        .get_comment_set("123", work_scope)
+        .await
+        .unwrap()
+        .expect("comment set recorded");
+    assert_eq!(info.total, Some(2));
+    assert!(!info.has_more);
+    assert!(info.fetched_at > 0);
+
+    let chapter_info = store
+        .get_comment_set("123", &chapter)
+        .await
+        .unwrap()
+        .expect("chapter set recorded");
+    assert_eq!(chapter_info.total, Some(1));
+    assert!(chapter_info.has_more);
+    assert_eq!(
+        store.get_comments("123", &chapter).await.unwrap().len(),
+        1,
+        "scopes do not bleed into each other"
+    );
+
+    // A refresh replaces the scope wholesale; other scopes are untouched.
+    store
+        .replace_comments("123", work_scope, &[], Some(0), false)
+        .await
+        .unwrap();
+    assert!(
+        store
+            .get_comments("123", work_scope)
+            .await
+            .unwrap()
+            .is_empty()
+    );
+    assert_eq!(store.get_comments("123", &chapter).await.unwrap().len(), 1);
+    assert_eq!(
+        store
+            .get_comment_set("123", work_scope)
+            .await
+            .unwrap()
+            .map(|info| info.total),
+        Some(Some(0))
+    );
+
+    drop(std::fs::remove_dir_all(&dir));
+}
+
+#[tokio::test]
+async fn chapters_keep_their_ao3_ids_for_comment_fetches() {
+    let (store, dir) = test_store("chapter-ao3-ids").await;
+    store.upsert_work(&page(), "hash1").await.unwrap();
+
+    let chapters = store.get_chapters("123").await.unwrap();
+    assert_eq!(chapters[0].ao3_chapter_id.as_deref(), Some("9001"));
+    assert_eq!(chapters[1].ao3_chapter_id.as_deref(), Some("9002"));
 
     drop(std::fs::remove_dir_all(&dir));
 }

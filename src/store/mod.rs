@@ -5,6 +5,7 @@
 //! ([`session`]). This module owns the shared row types and the `Store` handle.
 
 mod access;
+mod comments;
 mod errors;
 mod lists;
 mod page_cache;
@@ -63,6 +64,9 @@ pub struct StoredChapter {
     pub title: Option<String>,
     pub body_html: String,
     pub notes_html: Option<String>,
+    /// AO3 chapter record id, when the work page carried it. Required to fetch
+    /// that chapter's comment thread (`works/:id/chapters/:chapter_id`).
+    pub ao3_chapter_id: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -192,6 +196,7 @@ pub(super) fn authors_from_row(row: &sqlx::sqlite::SqliteRow) -> Vec<String> {
 
 pub(super) use crate::time::now_secs;
 pub use access::AccessEntry;
+pub use comments::{CommentSetInfo, WORK_SCOPE, chapter_scope};
 pub use errors::HttpErrorRow;
 pub use lists::{
     BookmarkEntry, BrowseResult, BrowseSort, CacheStats, ReadingEntry, ReadingStatus,

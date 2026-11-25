@@ -8,14 +8,16 @@
 //! every built-in and imported public AO3 site skin styles prose seamlessly.
 
 mod chapter;
+mod comments;
 mod meta;
 mod nav;
 
+use crate::ao3::comments::Comment;
 use crate::render::blurb::author_links;
 use crate::render::chrome::{PageContext, layout_with_class};
 use crate::render::components::flash_notice;
 use crate::render::{escape, sanitize};
-use crate::store::{StoredChapter, StoredWork};
+use crate::store::{CommentSetInfo, StoredChapter, StoredWork};
 
 pub use chapter::chapter_document;
 
@@ -35,6 +37,17 @@ pub struct ReadContext<'a> {
     pub full_work: bool,
     /// Pseud name for the comment box, once this session discovered one.
     pub comment_as: Option<&'a str>,
+    /// Cached AO3 comment thread for this reader position (`show_comments`).
+    pub comments: &'a [Comment],
+    /// Whether this commentable was ever fetched, and when.
+    pub comment_set: Option<&'a CommentSetInfo>,
+    /// `?show_comments=1`: render the cached thread instead of the action link.
+    pub show_comments: bool,
+    /// Fixed notice belonging to the comments section (fetch outcome).
+    pub comment_notice: Option<&'a str>,
+    /// AO3 page that carries this commentable's thread (for the "more comments"
+    /// link when the cached copy is only the first page).
+    pub comment_page_path: Option<&'a str>,
 }
 
 pub fn read_page(
@@ -152,7 +165,7 @@ pub fn read_page(
     body.push_str("</div></div>"); // #workskin, #work-skin
     body.push_str("</div>"); // .work
 
-    body.push_str(&nav::feedback_section(&id, chapters, position, ctx));
+    body.push_str(&nav::feedback_section(work, chapters, position, ctx));
     body.push_str(&format!(
         "<script src=\"/assets/reader.js?v={:016x}\" defer></script>",
         crate::render::READER_JS_HASH
@@ -204,6 +217,7 @@ mod tests {
             title: None,
             body_html: "<p>Hello <em>world</em></p><script>bad()</script>".into(),
             notes_html: Some("<p>Author note.</p>".into()),
+            ao3_chapter_id: Some("78901".into()),
         }];
         let html = read_page(
             &page,
@@ -224,6 +238,11 @@ mod tests {
                 reading_state: None,
                 full_work: false,
                 comment_as: None,
+                comments: &[],
+                comment_set: None,
+                show_comments: false,
+                comment_notice: None,
+                comment_page_path: None,
             },
         );
         assert!(!html.contains("<iframe"), "chapters render inline: {html}");
@@ -261,12 +280,14 @@ mod tests {
                 title: Some("One".into()),
                 body_html: "<p>Chapter one.</p>".into(),
                 notes_html: None,
+                ao3_chapter_id: Some("78901".into()),
             },
             StoredChapter {
                 idx: 2,
                 title: Some("Two".into()),
                 body_html: "<p>Chapter two.</p>".into(),
                 notes_html: None,
+                ao3_chapter_id: Some("78902".into()),
             },
         ];
         let html = read_page(
@@ -288,6 +309,11 @@ mod tests {
                 reading_state: None,
                 full_work: true,
                 comment_as: None,
+                comments: &[],
+                comment_set: None,
+                show_comments: false,
+                comment_notice: None,
+                comment_page_path: None,
             },
         );
         assert!(
@@ -311,6 +337,7 @@ mod tests {
             title: Some("Chapter <One>".into()),
             body_html: "<p>body</p><script>bad()</script>".into(),
             notes_html: Some("<p>note</p>".into()),
+            ao3_chapter_id: Some("78901".into()),
         };
         let doc = chapter_document("Work <One>", &chapter, "default");
         assert!(doc.contains("Work &lt;One&gt;"));
@@ -334,5 +361,238 @@ mod tests {
             chapter_document("w", &chapter, "default"),
             "unknown skins fall back to the light document"
         );
+    }
+
+    fn ctx_with<'a>(comments: &'a [Comment]) -> ReadContext<'a> {
+        ReadContext {
+            current: 1,
+            progress: None,
+            resume_pct: None,
+            notice: None,
+            subscribed: false,
+            can_write: true,
+            kudos_sent: false,
+            bookmarked: false,
+            reading_state: None,
+            full_work: false,
+            comment_as: Some("Main Pseud"),
+            comments,
+            comment_set: None,
+            show_comments: false,
+            comment_notice: None,
+            comment_page_path: None,
+        }
+    }
+
+    #[test]
+    fn read_page_renders_ao3_kudos_and_direct_post_forms() {
+        let page = PageContext::new("Test", NavSection::Home);
+        let work = sample_work();
+        let chapters = vec![StoredChapter {
+            idx: 1,
+            title: None,
+            body_html: "<p>Hello</p>".into(),
+            notes_html: None,
+            ao3_chapter_id: None,
+        }];
+        let html = read_page(&page, &work, &chapters, &ctx_with(&[]));
+
+        // AO3's kudos action is a direct POST form carrying the confirmation
+        // token; there is no preview hop from the work page.
+        assert!(html.contains("action=\"/write/kudos\""), "{html}");
+        assert!(
+            html.contains("id=\"kudo_submit\">Kudos ♥</button>"),
+            "{html}"
+        );
+        assert!(
+            html.contains("<input type=\"hidden\" name=\"confirm\" value=\"yes\">"),
+            "{html}"
+        );
+        // Subscription and unsubscribe are direct POST forms too.
+        assert!(html.contains("action=\"/write/subscribe\""), "{html}");
+        assert!(html.contains(">Subscribe</button>"), "{html}");
+        assert!(!html.contains("/write/preview?kind=kudos"), "{html}");
+        assert!(!html.contains("/write/preview?kind=work"), "{html}");
+        // AO3's kudos receipt module.
+        assert!(
+            html.contains("12 people left kudos on this work!"),
+            "{html}"
+        );
+        // AO3's comment form (not a collapsible details box anymore).
+        assert!(html.contains("action=\"/write/comment/preview\""), "{html}");
+        assert!(
+            html.contains("Comment as <span class=\"byline\">Main Pseud</span>"),
+            "{html}"
+        );
+        assert!(html.contains("Preview Comment</button>"), "{html}");
+        assert!(!html.contains("<details class=\"comment\">"), "{html}");
+        // Uncached comments offer the one-click fetch form.
+        assert!(html.contains("action=\"/read/42/comments\""), "{html}");
+        assert!(
+            html.contains("Comments for this work are not cached yet."),
+            "{html}"
+        );
+    }
+
+    #[test]
+    fn read_page_renders_cached_comment_thread_sanitized_and_nested() {
+        let page = PageContext::new("Test", NavSection::Home);
+        let work = sample_work();
+        let chapters = vec![StoredChapter {
+            idx: 1,
+            title: None,
+            body_html: "<p>Hello</p>".into(),
+            notes_html: None,
+            ao3_chapter_id: None,
+        }];
+        let comments = vec![
+            Comment {
+                seq: 0,
+                comment_id: "9001".into(),
+                parent_id: None,
+                depth: 0,
+                author: Some("reader_one".into()),
+                author_login: Some("reader_one".into()),
+                posted_at: Some("01 Nov 2026 10:00 UTC".into()),
+                edited_at: None,
+                body_html: "<p>Nice <em>work</em>.</p><script>bad()</script>".into(),
+            },
+            Comment {
+                seq: 1,
+                comment_id: "9002".into(),
+                parent_id: Some("9001".into()),
+                depth: 1,
+                author: Some("guest_name".into()),
+                author_login: None,
+                posted_at: Some("02 Nov 2026 09:00 UTC".into()),
+                edited_at: Some("Last Edited 03 Nov 2026 08:00 UTC".into()),
+                body_html: "<p>A reply with <a href=\"javascript:bad()\">link</a>.</p>".into(),
+            },
+        ];
+        let mut ctx = ctx_with(&comments);
+        ctx.show_comments = true;
+        ctx.comment_set = Some(&CommentSetInfo {
+            total: Some(2),
+            fetched_at: 1_700_000_000,
+            has_more: true,
+        });
+        ctx.comment_page_path = Some("/works/12345/chapters/78901?show_comments=true");
+        let html = read_page(&page, &work, &chapters, &ctx);
+
+        assert!(html.contains("<ol class=\"thread\">"), "{html}");
+        assert!(html.contains("id=\"comment_9001\""), "{html}");
+        assert!(html.contains("id=\"comment_9002\""), "{html}");
+        assert!(
+            html.contains("href=\"/works?author=reader_one\""),
+            "registered pseuds link: {html}"
+        );
+        assert!(
+            !html.contains(">guest_name</a>"),
+            "guest names stay plain text: {html}"
+        );
+        assert!(
+            html.contains("Nice <em>work</em>."),
+            "creator markup survives: {html}"
+        );
+        assert!(!html.contains("bad()"), "scripts are stripped: {html}");
+        assert!(!html.contains("javascript:"), "{html}");
+        assert!(html.contains("Last Edited 03 Nov 2026 08:00 UTC"), "{html}");
+        assert!(html.contains("Hide Comments"), "{html}");
+        assert!(html.contains("2 cached comments"), "{html}");
+        assert!(
+            html.contains(">Refresh comments</button>"),
+            "cached threads offer an explicit refresh control: {html}"
+        );
+        assert!(
+            html.contains(
+                "https://archiveofourown.org/works/12345/chapters/78901?show_comments=true&page=2"
+            ),
+            "paginated thread links to AO3: {html}"
+        );
+    }
+
+    #[test]
+    fn read_page_offers_refresh_for_a_cached_empty_thread() {
+        let page = PageContext::new("Test", NavSection::Home);
+        let work = sample_work();
+        let chapters = vec![StoredChapter {
+            idx: 1,
+            title: None,
+            body_html: "<p>Hello</p>".into(),
+            notes_html: None,
+            ao3_chapter_id: None,
+        }];
+        let mut ctx = ctx_with(&[]);
+        ctx.show_comments = true;
+        ctx.comment_set = Some(&CommentSetInfo {
+            total: Some(0),
+            fetched_at: 1_700_000_000,
+            has_more: false,
+        });
+        let html = read_page(&page, &work, &chapters, &ctx);
+
+        assert!(
+            html.contains("No comments on AO3 for this work yet."),
+            "{html}"
+        );
+        assert!(
+            html.contains(">Refresh comments</button>"),
+            "a cached zero-comment thread stays refreshable: {html}"
+        );
+    }
+
+    #[test]
+    fn read_page_shows_kudos_receipt_and_unsubscribe_when_given() {
+        let page = PageContext::new("Test", NavSection::Home);
+        let work = sample_work();
+        let chapters = vec![StoredChapter {
+            idx: 1,
+            title: None,
+            body_html: "<p>Hello</p>".into(),
+            notes_html: None,
+            ao3_chapter_id: None,
+        }];
+        let mut ctx = ctx_with(&[]);
+        ctx.kudos_sent = true;
+        ctx.subscribed = true;
+        let html = read_page(&page, &work, &chapters, &ctx);
+
+        assert!(!html.contains("action=\"/write/kudos\""), "{html}");
+        assert!(html.contains("kudos given"), "{html}");
+        assert!(
+            html.contains("You and 11 others left kudos on this work!"),
+            "{html}"
+        );
+        assert!(html.contains("action=\"/write/unsubscribe\""), "{html}");
+        assert!(html.contains(">Unsubscribe</button>"), "{html}");
+    }
+
+    #[test]
+    fn read_page_explains_signed_out_commenting() {
+        let page = PageContext::new("Test", NavSection::Home);
+        let work = sample_work();
+        let chapters = vec![StoredChapter {
+            idx: 1,
+            title: None,
+            body_html: "<p>Hello</p>".into(),
+            notes_html: None,
+            ao3_chapter_id: None,
+        }];
+        let mut ctx = ctx_with(&[]);
+        ctx.can_write = false;
+        ctx.comment_as = None;
+        let html = read_page(&page, &work, &chapters, &ctx);
+
+        assert!(
+            html.contains(
+                "Sign in to AO3 on the <a href=\"/session\">Session page</a> to comment."
+            ),
+            "{html}"
+        );
+        assert!(
+            !html.contains("action=\"/write/comment/preview\""),
+            "{html}"
+        );
+        assert!(!html.contains("action=\"/write/kudos\""), "{html}");
     }
 }

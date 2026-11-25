@@ -69,7 +69,12 @@ async fn comment_is_discovered_confirmed_posted_and_audited() {
         .await
         .expect("body");
     assert!(reader.contains("Comment as"), "AO3 comment box label");
-    assert!(reader.contains("Comment on this work"), "{reader}");
+    assert!(
+        reader.contains("action=\"/write/comment/preview\"")
+            && reader.contains("Comment as <span class=\"byline\">")
+            && reader.contains("Preview Comment</button>"),
+        "AO3 comment form on the cached work page: {reader}"
+    );
 
     // Preview discovers the default pseud and shows the exact text.
     let preview = post_encoded(

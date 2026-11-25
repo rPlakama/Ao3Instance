@@ -15,6 +15,7 @@
 //! | chapter (single) | `app/views/works/show.html.erb:49-53` — `#chapters > div.userstuff` for a one-chapter work |
 //! | chapter title/body/notes | `app/views/chapters/_chapter.html.erb:24-27,66-69,46-60` |
 //! | chapter count | `app/views/works/_work_header_navigation.html.erb:29-35` — `#chapter_index select option`, one per chapter |
+//! | chapter AO3 id | `app/views/chapters/_chapter.html.erb:23` — `h3.title a` → `[chapter.work, chapter]` = `/works/<work>/chapters/<chapter_id>` |
 //! | comment form | `app/views/comments/_commentable.html.erb:131-137` wrapping `app/views/comments/_comment_form.html.erb:5` |
 //! | work id | `/works/<id>` links/forms; there is no canonical meta tag (`app/views/layouts/application.html.erb`) |
 //!
@@ -31,7 +32,9 @@ use std::sync::OnceLock;
 
 use scraper::{ElementRef, Html, Selector};
 
-use crate::ao3::html::{collapse_whitespace, parse_number, parse_selector as css};
+use crate::ao3::html::{
+    collapse_whitespace, extract_digits_after, parse_number, parse_selector as css,
+};
 use crate::error::{Error, Result};
 
 /// One parsed AO3 work page.
@@ -83,6 +86,10 @@ pub struct Chapter {
     pub index: usize,
     /// Text after the `Chapter N:` header, when the creator supplied a title.
     pub title: Option<String>,
+    /// AO3 chapter record id from the chapter header link
+    /// (`/works/<work_id>/chapters/<chapter_id>`). `None` for the bare
+    /// single-chapter layout, which has no chapter wrapper at all.
+    pub ao3_id: Option<String>,
     /// Inner HTML of the chapter's `div.userstuff` block (unsanitized), with
     /// AO3's landmark heading removed.
     pub body_html: String,
@@ -343,6 +350,7 @@ fn extract_chapters(document: &Html, selectors: &Selectors) -> Vec<Chapter> {
             .map(|body| Chapter {
                 index: 1,
                 title: None,
+                ao3_id: None,
                 body_html: body_inner_html(body, selectors),
                 notes_html: None,
             })
@@ -360,6 +368,7 @@ fn parse_chapter(unit: ElementRef<'_>, position: usize, selectors: &Selectors) -
     Chapter {
         index: chapter_index(unit, position, selectors),
         title: chapter_title(unit, selectors),
+        ao3_id: chapter_ao3_id(unit, selectors),
         body_html: first(unit, &selectors.chapter_body)
             .map(|body| body_inner_html(body, selectors))
             .unwrap_or_default(),
@@ -407,6 +416,19 @@ fn chapter_title(unit: ElementRef<'_>, selectors: &Selectors) -> Option<String> 
     } else {
         Some(title.to_string())
     }
+}
+
+/// AO3 chapter record id from the chapter header link.
+///
+/// `chapters/_chapter.html.erb:23` renders
+/// `link_to chapter.chapter_header, [chapter.work, chapter]`, i.e.
+/// `/works/<work_id>/chapters/<chapter_id>`; the chapter index `<select>` also
+/// carries the same ids but only exists for multi-chapter works.
+fn chapter_ao3_id(unit: ElementRef<'_>, selectors: &Selectors) -> Option<String> {
+    let header = first(unit, &selectors.chapter_title)?;
+    let link = first(header, &selectors.chapter_title_link)?;
+    let href = link.value().attr("href")?;
+    extract_digits_after(href, "/chapters/").map(str::to_string)
 }
 
 /// Inner HTML of a `userstuff` block without AO3's screen-reader landmark

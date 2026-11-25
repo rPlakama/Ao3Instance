@@ -128,6 +128,9 @@ regenerate (that would strand every stored secret).
   `Response`) never `Debug`/`Serialize` that value and wipe it on drop.
 - No request bodies at `info`. A debug log of a write may include the action, target id
   and outcome — never the comment text, password, cookie or token.
+- Cached AO3 comment bodies are stored like chapter text — untrusted author HTML kept raw
+  in SQLite (migration 0014) and sanitized only at render — and must never appear in the
+  HTTP diagnostics logs (stored rows or stderr).
 - Error responses to the browser carry a stable code and a human message; never the
   upstream body, never headers.
 - Panic payloads must not contain secrets: no `unwrap` on a `Secret`-bearing `Result`.

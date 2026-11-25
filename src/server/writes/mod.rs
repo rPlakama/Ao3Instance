@@ -163,6 +163,18 @@ pub(super) fn notice_text(key: &str) -> Option<&'static str> {
         "bookmark_saved" => Some("Bookmarked on AO3."),
         "bookmark_already" => Some("Already bookmarked according to the local ledger."),
         "bookmark_failed" => Some("AO3 rejected the bookmark; see the audit log."),
+        "comments_loaded" => Some("Comments loaded from AO3 into the offline cache."),
+        "comments_failed" => {
+            Some("Could not load comments from AO3; the cached copy is unchanged.")
+        }
+        "comments_blocked" => {
+            Some("AO3's edge blocked the comments request; check Diagnostics and try later.")
+        }
+        "comments_rate_limited" => Some("AO3 is rate limiting this instance; wait a minute."),
+        "comments_gate" => Some(
+            "AO3 wants a signed-in session or enabled adult content for these comments; \
+             check the Session page.",
+        ),
         _ => None,
     }
 }
