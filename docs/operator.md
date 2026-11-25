@@ -161,6 +161,17 @@ re-importing the session; cached works and progress are unaffected.
 
 ## Writes: what to expect
 
+- The reader only offers write forms in one state: signed in **and** writes enabled
+  (`AO3I_WRITE_ENABLED=true`). When they are off it says "Writes are disabled"
+  instead of pretending you are signed out; when the saved cookie jar can no
+  longer authenticate it says so and links to the cookie import. Both states are
+  also shown on `/session`, together with the current write switch.
+- Enabling adult content from `/session` requires a working session. The toggle
+  no longer writes an empty/wiped jar: an unusable stored session is cleared at
+  startup (logged as `cannot authenticate ...; cleared, re-import required`) and
+  you re-import cookies instead. Copy **both** `_otwarchive_session` and
+  `user_credentials`; a jar missing either is rejected with an explicit message.
+
 - One action = one confirmation = one upstream request. Comments and bookmarks
   confirm on a page that names the target; reader kudos and work
   subscribe/unsubscribe post directly the way AO3's own buttons do — the click

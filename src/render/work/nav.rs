@@ -87,15 +87,15 @@ pub(super) fn top_navigation(
         ));
     }
 
-    if ctx.can_write {
+    if ctx.write_gate.can_write() {
         out.push_str(&write_controls(id, ctx));
     } else {
-        out.push_str("<li><a href=\"/session\">Sign in to write</a></li>");
+        out.push_str(&write_gate_item(ctx.write_gate));
     }
 
     // AO3 order: bookmark, mark, comments, subscribe (`_work_header_navigation`).
     out.push_str("<li class=\"comments\"><a href=\"#comments\">Comments</a></li>");
-    if ctx.can_write {
+    if ctx.write_gate.can_write() {
         out.push_str(&subscription_form(id, ctx));
     }
 
@@ -117,6 +117,24 @@ pub(super) fn top_navigation(
          rel=\"noopener noreferrer\">Open on AO3</a></li></ul>"
     ));
     out
+}
+
+/// Explains why the write actions are absent (AO3 has no such state, but
+/// hiding them silently is what made a signed-in session look like a sign-out).
+fn write_gate_item(gate: super::WriteGate) -> String {
+    match gate {
+        super::WriteGate::WritesDisabled => {
+            "<li class=\"writes\"><a href=\"/session\">Writes disabled</a></li>".to_string()
+        }
+        super::WriteGate::SessionUnusable => {
+            "<li class=\"writes\"><a href=\"/session#cookie-import\">Re-import AO3 session</a></li>"
+                .to_string()
+        }
+        super::WriteGate::SignedOut => {
+            "<li><a href=\"/session\">Sign in to write</a></li>".to_string()
+        }
+        super::WriteGate::Ready => String::new(),
+    }
 }
 
 fn write_controls(id: &str, ctx: &ReadContext<'_>) -> String {
@@ -213,7 +231,7 @@ pub(super) fn feedback_section(
             "<li><a href=\"/read/{id}?chapter={next}#workskin\">Next Chapter →</a></li>"
         ));
     }
-    if ctx.can_write {
+    if ctx.write_gate.can_write() {
         // Kudos (`kudos/_kudos.html.erb` + `_commentable.html.erb` action form).
         if ctx.kudos_sent {
             out.push_str(
@@ -245,6 +263,15 @@ pub(super) fn feedback_section(
         }
     }
     out.push_str(&comments_action(work, ctx));
+    if matches!(
+        ctx.write_gate,
+        super::WriteGate::WritesDisabled | super::WriteGate::SessionUnusable
+    ) {
+        out.push_str(&format!(
+            "<li class=\"writes\"><span class=\"state imported\">{}</span></li>",
+            ctx.write_gate.label()
+        ));
+    }
     out.push_str("</ul>");
     out.push_str(&kudos_module(work, ctx));
     out.push_str(&comments_section(work, ctx));

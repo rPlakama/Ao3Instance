@@ -21,6 +21,39 @@ use crate::store::{CommentSetInfo, StoredChapter, StoredWork};
 
 pub use chapter::chapter_document;
 
+/// Why the reader can (or cannot) show AO3 write affordances.
+///
+/// The old `can_write` boolean conflated three very different situations and
+/// produced a misleading "Sign in to AO3" notice for a signed-in account whose
+/// saved cookie jar could no longer authenticate.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WriteGate {
+    /// Signed in with a usable jar and writes enabled by the operator.
+    Ready,
+    /// Signed in, but the operator has not enabled writes (`AO3I_WRITE_ENABLED`).
+    WritesDisabled,
+    /// An account is remembered, but the saved cookie jar cannot authenticate.
+    SessionUnusable,
+    /// No AO3 account at all.
+    SignedOut,
+}
+
+impl WriteGate {
+    pub fn can_write(self) -> bool {
+        matches!(self, Self::Ready)
+    }
+
+    /// Fixed label for action bars and state chips.
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Ready => "ready",
+            Self::WritesDisabled => "writes disabled",
+            Self::SessionUnusable => "session incomplete",
+            Self::SignedOut => "signed out",
+        }
+    }
+}
+
 /// Everything the reader needs that is not the work itself.
 pub struct ReadContext<'a> {
     pub current: i64,
@@ -29,7 +62,8 @@ pub struct ReadContext<'a> {
     pub resume_pct: Option<f64>,
     pub notice: Option<&'a str>,
     pub subscribed: bool,
-    pub can_write: bool,
+    /// Whether/how the reader may write (see [`WriteGate`]).
+    pub write_gate: WriteGate,
     pub kudos_sent: bool,
     pub bookmarked: bool,
     pub reading_state: Option<&'a str>,
@@ -232,7 +266,7 @@ mod tests {
                 resume_pct: Some(42.75),
                 notice: None,
                 subscribed: false,
-                can_write: false,
+                write_gate: WriteGate::SignedOut,
                 kudos_sent: false,
                 bookmarked: false,
                 reading_state: None,
@@ -303,7 +337,7 @@ mod tests {
                 resume_pct: Some(0.0),
                 notice: None,
                 subscribed: false,
-                can_write: false,
+                write_gate: WriteGate::SignedOut,
                 kudos_sent: false,
                 bookmarked: false,
                 reading_state: None,
@@ -370,7 +404,7 @@ mod tests {
             resume_pct: None,
             notice: None,
             subscribed: false,
-            can_write: true,
+            write_gate: WriteGate::Ready,
             kudos_sent: false,
             bookmarked: false,
             reading_state: None,
@@ -542,6 +576,61 @@ mod tests {
     }
 
     #[test]
+    fn read_page_distinguishes_writes_disabled_from_signed_out() {
+        let page = PageContext::new("Test", NavSection::Home);
+        let work = sample_work();
+        let chapters = vec![StoredChapter {
+            idx: 1,
+            title: None,
+            body_html: "<p>Hello</p>".into(),
+            notes_html: None,
+            ao3_chapter_id: None,
+        }];
+        let mut ctx = ctx_with(&[]);
+        ctx.write_gate = WriteGate::WritesDisabled;
+        let html = read_page(&page, &work, &chapters, &ctx);
+
+        assert!(
+            html.contains("Writes are disabled on this AO3Instance"),
+            "signed-in readers see the operator switch, not a sign-in prompt: {html}"
+        );
+        assert!(html.contains("Writes disabled</a>"), "{html}");
+        assert!(!html.contains("Sign in to AO3 on the"), "{html}");
+        assert!(
+            !html.contains("action=\"/write/comment/preview\""),
+            "{html}"
+        );
+        assert!(!html.contains("action=\"/write/kudos\""), "{html}");
+    }
+
+    #[test]
+    fn read_page_offers_reimport_for_an_unusable_session() {
+        let page = PageContext::new("Test", NavSection::Home);
+        let work = sample_work();
+        let chapters = vec![StoredChapter {
+            idx: 1,
+            title: None,
+            body_html: "<p>Hello</p>".into(),
+            notes_html: None,
+            ao3_chapter_id: None,
+        }];
+        let mut ctx = ctx_with(&[]);
+        ctx.write_gate = WriteGate::SessionUnusable;
+        let html = read_page(&page, &work, &chapters, &ctx);
+
+        assert!(
+            html.contains("Your saved AO3 session is incomplete or expired"),
+            "{html}"
+        );
+        assert!(html.contains("Re-import AO3 session</a>"), "{html}");
+        assert!(
+            html.contains("/session#cookie-import"),
+            "recovery links straight at the cookie import: {html}"
+        );
+        assert!(!html.contains("Sign in to AO3 on the"), "{html}");
+    }
+
+    #[test]
     fn read_page_shows_kudos_receipt_and_unsubscribe_when_given() {
         let page = PageContext::new("Test", NavSection::Home);
         let work = sample_work();
@@ -579,7 +668,7 @@ mod tests {
             ao3_chapter_id: None,
         }];
         let mut ctx = ctx_with(&[]);
-        ctx.can_write = false;
+        ctx.write_gate = WriteGate::SignedOut;
         ctx.comment_as = None;
         let html = read_page(&page, &work, &chapters, &ctx);
 

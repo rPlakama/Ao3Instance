@@ -21,7 +21,7 @@ use crate::ao3::parse::{SpaceMode, percent_encode};
 use crate::ao3::session::{AccountSession, SessionState};
 use crate::consts::is_builtin_skin;
 use crate::crypto::SecretString;
-use crate::error::Result;
+use crate::error::{Error, Result};
 use crate::render;
 use crate::render::NavSection;
 
@@ -93,6 +93,12 @@ async fn invalidate_account_cache(state: &AppState, account: &str) {
 }
 
 pub(super) async fn persist_session(state: &AppState, session: &AccountSession) -> Result<()> {
+    // A jar without the AO3 session cookie cannot authenticate. Persisting it
+    // would clobber a previously good stored session with a useless one (this
+    // happened via the adult-content toggle before this guard existed).
+    if !session.jar().is_complete() {
+        return Err(Error::SessionIncomplete);
+    }
     let encrypted = session.jar().encrypt(&state.key)?;
     state
         .store
@@ -179,6 +185,12 @@ pub(super) async fn session_import(
                     .map_err(AppError::from)?;
                 Ok(redirect_session("ok", "Session imported and verified."))
             }
+            Ok(SessionState::SessionIncomplete) => Ok(redirect_session(
+                "error",
+                "AO3 says the cookie jar is incomplete. Copy both the \
+                 `_otwarchive_session` and `user_credentials` cookies from your browser, \
+                 then import again.",
+            )),
             Ok(other) => Ok(redirect_session(
                 "error",
                 &format!("Session imported but not active: {other}."),
@@ -368,6 +380,16 @@ pub(super) async fn session_adult(State(state): State<Arc<AppState>>) -> Handled
         return Ok(redirect_session(
             "error",
             "Import or sign in to a session before enabling adult content.",
+        ));
+    }
+    if !session.jar().is_complete() {
+        // Refuse instead of persisting a wiped jar: the account name can survive
+        // a session-incomplete transition, and saving now would overwrite the
+        // last good session on disk.
+        return Ok(redirect_session(
+            "error",
+            "Your AO3 session is incomplete or expired — re-import your cookies before \
+             enabling adult content.",
         ));
     }
     adult_cookie_jar(session.client_mut().jar_mut(), true);

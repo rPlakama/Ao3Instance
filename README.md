@@ -32,7 +32,9 @@ This is an unofficial project, not affiliated with or endorsed by the OTW.
   desktop keeps the sidebar open.
 - **Your AO3 account** — cookie import (recommended) or password login, with
   the session jar encrypted at rest. Restricted works and all writes require a
-  session. Logout is local-only; it does not sign you out of AO3.
+  session. Logout is local-only; it does not sign you out of AO3. An expired or
+  incomplete saved session is cleared on startup and every page says so, with a
+  link straight to the cookie import, instead of looking signed in and failing.
 - **Live AO3 lists** — subscriptions, bookmarks, reading history, Marked for
   Later, favorites and dashboard modules, cached for 30 minutes with offline
   fallback.

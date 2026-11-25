@@ -144,6 +144,10 @@ pub async fn router(config: &Config, store: Store) -> Result<Router> {
         .filter(|css| !css.trim().is_empty());
 
     let mut restored_imported = false;
+    // A stored jar that cannot authenticate is useless and must never shadow a
+    // future import: clear it instead of restoring it on every start. The account
+    // name is kept for this run so the session page can explain what happened.
+    let mut unusable_stored_session = false;
     if let Some(saved) = store.load_session().await? {
         match Jar::decrypt(&key, &saved.jar_enc) {
             Ok(jar) => match session.restore(&saved.account, jar) {
@@ -151,13 +155,36 @@ pub async fn router(config: &Config, store: Store) -> Result<Router> {
                     if let (Some(id), Some(name)) = (saved.pseud_id, saved.pseud_name) {
                         session.set_pseud(Pseud { id, name });
                     }
-                    restored_imported = state == crate::ao3::session::SessionState::Imported;
-                    eprintln!("session restored for {} ({state})", saved.account);
+                    if matches!(
+                        state,
+                        crate::ao3::session::SessionState::SessionIncomplete
+                            | crate::ao3::session::SessionState::LoggedOut
+                    ) {
+                        unusable_stored_session = true;
+                        eprintln!(
+                            "stored session for {} cannot authenticate ({state}); cleared, re-import required",
+                            saved.account
+                        );
+                    } else {
+                        restored_imported = state == crate::ao3::session::SessionState::Imported;
+                        eprintln!("session restored for {} ({state})", saved.account);
+                    }
                 }
-                Err(error) => eprintln!("stored session refused: {error}"),
+                Err(error) => {
+                    unusable_stored_session = true;
+                    eprintln!("stored session refused ({error}); cleared, re-import required");
+                }
             },
-            Err(error) => eprintln!("stored session could not be decrypted: {error}"),
+            Err(error) => {
+                unusable_stored_session = true;
+                eprintln!(
+                    "stored session could not be decrypted ({error}); cleared, re-import required"
+                );
+            }
         }
+    }
+    if unusable_stored_session && let Err(error) = store.delete_session().await {
+        eprintln!("could not clear unusable stored session: {error}");
     }
 
     let initial_snapshot = SessionSnapshot::from_session(&session);

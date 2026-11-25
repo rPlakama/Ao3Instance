@@ -358,7 +358,19 @@ pub(super) async fn read_work(
     } else {
         false
     };
-    let can_write = signed_in && state.write_enabled;
+    // Distinguish "signed out" from "signed in but writes off" and "the saved
+    // jar cannot authenticate": each needs a different notice and recovery path.
+    let session_ready = snap.usable || snap.jar_complete;
+    let write_gate = if snap.account.is_empty() {
+        crate::render::WriteGate::SignedOut
+    } else if !session_ready {
+        crate::render::WriteGate::SessionUnusable
+    } else if !state.write_enabled {
+        crate::render::WriteGate::WritesDisabled
+    } else {
+        crate::render::WriteGate::Ready
+    };
+    let can_write = write_gate.can_write();
     let kudos_sent = can_write && state.store.has_kudos(&snap.account, &id).await?;
     let bookmarked = can_write && state.store.has_bookmark(&snap.account, &id).await?;
     let reading_state = if can_write {
@@ -383,7 +395,7 @@ pub(super) async fn read_work(
             resume_pct,
             notice,
             subscribed,
-            can_write,
+            write_gate,
             kudos_sent,
             bookmarked,
             reading_state: reading_state.as_deref(),

@@ -78,7 +78,7 @@ pub use search::{
 pub use session::{logout_confirm_page, session_page};
 pub use tag_search::{live_tag_search_page, tag_search_page};
 pub use themes::themes_page;
-pub use work::{ReadContext, chapter_document, read_page};
+pub use work::{ReadContext, WriteGate, chapter_document, read_page};
 
 /// Overall percentage from a within-chapter position.
 pub(crate) fn overall_percent(chapter: i64, pct: i64, chapter_count: i64) -> i64 {

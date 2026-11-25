@@ -21,8 +21,8 @@ use crate::render::{escape, sanitize};
 use crate::store::StoredWork;
 use crate::time::{format_count, format_utc};
 
-use super::ReadContext;
 use super::nav::load_comments_form;
+use super::{ReadContext, WriteGate};
 
 /// Defensive cap: AO3 stops nesting at `COMMENT_THREAD_MAX_DEPTH` (5), so a
 /// deeper tree means drifted markup rather than real content.
@@ -33,13 +33,22 @@ pub(super) fn comments_section(work: &StoredWork, ctx: &ReadContext<'_>) -> Stri
         String::from("<h3 class=\"landmark heading\"><a id=\"comments\">Comments</a></h3>");
     out.push_str(&flash_notice(ctx.comment_notice));
 
-    if ctx.can_write {
-        out.push_str(&comment_form(work, ctx));
-    } else {
-        out.push_str(
+    match ctx.write_gate {
+        WriteGate::Ready => out.push_str(&comment_form(work, ctx)),
+        WriteGate::WritesDisabled => out.push_str(
+            "<p class=\"notice\">Writes are disabled on this AO3Instance, so commenting, \
+             kudos and subscriptions are unavailable here. Reading (including this work) \
+             still works; the operator enables writes with <code>AO3I_WRITE_ENABLED=true</code>.</p>",
+        ),
+        WriteGate::SessionUnusable => out.push_str(
+            "<p class=\"notice\">Your saved AO3 session is incomplete or expired, so this \
+             instance cannot comment as you. <a href=\"/session#cookie-import\">Re-import \
+             your AO3 cookies</a> on the Session page to use it again.</p>",
+        ),
+        WriteGate::SignedOut => out.push_str(
             "<p class=\"notice\">Sign in to AO3 on the <a href=\"/session\">Session page</a> \
              to comment.</p>",
-        );
+        ),
     }
 
     if ctx.show_comments {

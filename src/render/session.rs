@@ -36,6 +36,28 @@ pub fn session_page(
             format!("· signed in as <strong>{}</strong>", escape(account))
         },
     ));
+    // Writes are an operator switch, not a session property; say so where the
+    // session state is explained (the reader now links here when they are off).
+    body.push_str(&format!(
+        "<p class=\"meta\">Writes: {}.{}</p>",
+        if ctx.write_enabled {
+            "enabled"
+        } else {
+            "disabled (the operator sets AO3I_WRITE_ENABLED=true and restarts)"
+        },
+        if ctx.write_enabled {
+            ""
+        } else {
+            " Reading and caching are unaffected."
+        },
+    ));
+    if !account.is_empty() && matches!(state, "session-incomplete" | "logged-out") {
+        body.push_str(
+            "<div class=\"flash error\">The saved AO3 session can no longer authenticate. \
+             Re-import your cookies below — copy both <code>_otwarchive_session</code> and \
+             <code>user_credentials</code> from your browser; the old jar has been cleared.</div>",
+        );
+    }
     if !account.is_empty() {
         body.push_str(&format!(
             "<p class=\"meta\">Cookie jar: {}. Adult content: {}.</p>",

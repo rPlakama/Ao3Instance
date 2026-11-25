@@ -504,7 +504,7 @@ pub(super) fn layout_with_class(ctx: &PageContext, main_class: &str, body: &str)
          <span>AO3Instance</span><sup>local</sup></a></h1>\
          {greeting}</div>{nav}<div class=\"clear\"></div></header>\
          <div id=\"inner\" class=\"wrapper\">{sidebar}\
-         <main id=\"main\" class=\"{main_classes} region\" role=\"main\">{body}\
+         <main id=\"main\" class=\"{main_classes} region\" role=\"main\">{session_flash}{body}\
          <div class=\"clear\"></div></main></div>{footer}</div>\
          <script src=\"/assets/ui.js?v={ui_v:016x}\" defer></script></body></html>",
         title = escape(&ctx.title),
@@ -513,6 +513,7 @@ pub(super) fn layout_with_class(ctx: &PageContext, main_class: &str, body: &str)
         ui_v = super::UI_JS_HASH,
         greeting = greeting(ctx),
         nav = navigation(ctx),
+        session_flash = session_state_flash(ctx),
         sidebar = if has_sidebar {
             dashboard_nav(ctx.active)
         } else {
@@ -520,6 +521,26 @@ pub(super) fn layout_with_class(ctx: &PageContext, main_class: &str, body: &str)
         },
         footer = footer(ctx),
     )
+}
+
+/// Page-wide warning when a remembered AO3 session can no longer authenticate.
+///
+/// The account name survives such a transition (so the UA knows whose session it
+/// was), which is exactly why every page has to explain the state instead of
+/// looking half signed-in.
+fn session_state_flash(ctx: &PageContext) -> String {
+    if ctx.account.is_empty()
+        || !matches!(
+            ctx.session_state.as_str(),
+            "session-incomplete" | "logged-out"
+        )
+    {
+        return String::new();
+    }
+    "<div class=\"flash error\">Your saved AO3 session is incomplete or expired — \
+     <a href=\"/session#cookie-import\">re-import your cookies</a> on the Session page \
+     to use it again.</div>"
+        .to_string()
 }
 
 pub(super) fn checked_label(fetched_at: i64) -> String {

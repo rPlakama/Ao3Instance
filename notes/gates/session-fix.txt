@@ -1,0 +1,50 @@
+Reader session-state fix — verification
+2026-11-25T15:45Z (America/Recife)
+
+== what was wrong (reproduced with the owner's real data dir copy)
+Startup restored a stored jar that only held Cloudflare cookies + view_adult:
+  stored session for rPlakama@proton.me (session-incomplete)
+The account name survived, so the header said "Hi, ..." while every write
+surface said "Sign in to AO3 on the Session page to comment." — a signed-in
+account was reported as signed out. Root cause of the lost jar: the adult-content
+toggle persisted the current (wiped) jar unconditionally, overwriting the last
+complete session with a useless one; the stored row then failed restore forever.
+
+== fixes
+1. src/server/session/mod.rs::persist_session refuses to store a jar without the
+   AO3 session cookie (data-loss guard for every caller).
+2. session_adult refuses and explains when the jar is incomplete instead of
+   persisting it; the old good session can no longer be clobbered.
+3. Startup clears an unauthenticatable stored session (logged:
+   "cannot authenticate ...; cleared, re-import required") instead of restoring
+   it on every start; the account name is kept for this run so the UI explains.
+4. render/work WriteGate: Ready / WritesDisabled / SessionUnusable / SignedOut.
+   Reader action bars and the comment area now distinguish them:
+   - writes disabled -> "Writes are disabled on this AO3Instance ... AO3I_WRITE_ENABLED=true"
+   - unusable session -> "Re-import AO3 session" + a re-import notice, never "Sign in"
+   - signed out -> the existing sign-in prompt.
+5. Page-wide banner on any page for session-incomplete/logged-out remembered
+   sessions, and /session now shows the write switch plus the re-import warning.
+
+== reproduced-after check (owner's data dir copy)
+$ reader /read/7737400 (writes disabled default)
+  flash: "Your saved AO3 session is incomplete or expired — re-import your cookies ..."
+  action bar: "Re-import AO3 session"
+  comment: "Your saved AO3 session is incomplete or expired, so this instance cannot comment as you."
+  no "Sign in to AO3" text; sessions row deleted after startup
+$ POST /session/adult -> 303 error "re-import your cookies before enabling adult content";
+  sessions row remains absent.
+$ valid imported session + writes disabled -> "Writes are disabled on this AO3Instance ..."
+$ valid imported session + AO3I_WRITE_ENABLED=true -> comment + kudos forms render
+$ signed out -> sign-in prompt only
+
+== gates
+cargo fmt --check                     exit=0
+cargo clippy --all-targets -D warnings exit=0
+cargo test                            277 passed, 0 failed
+  new tests/session_recovery.rs (3): unusable stored session cleared/explained,
+  signed-in+writes-disabled wording, signed-out prompt; renderer unit tests for
+  both new gates; existing suite unaffected.
+nix build .#default                   exit=0   store: /nix/store/nlcgj303ajjvdsa9ag7bn10m5wwbcw4g-ao3instance-0.1.4
+scripts/check-ao3-routes.sh --require 41 passed, 0 failed
+scripts/check-no-solver-build-dep.sh  ok
