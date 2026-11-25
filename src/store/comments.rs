@@ -22,6 +22,13 @@ pub fn chapter_scope(ao3_chapter_id: &str) -> String {
     format!("chapter:{ao3_chapter_id}")
 }
 
+/// A cached comment plus the commentable scope it belongs to.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CommentWithScope {
+    pub scope: String,
+    pub comment: Comment,
+}
+
 /// Metadata for one cached commentable.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct CommentSetInfo {
@@ -111,6 +118,43 @@ impl Store {
     }
 
     /// Cached comments for one commentable, in AO3's document order.
+    /// Finds one cached comment (with its scope) for reply/edit/delete actions.
+    pub async fn find_comment(
+        &self,
+        work_id: &str,
+        comment_id: &str,
+    ) -> Result<Option<CommentWithScope>> {
+        let row = sqlx::query(
+            "SELECT scope, seq, comment_id, parent_id, depth, author, author_login,
+                    posted_at, edited_at, body_html
+             FROM work_comments
+             WHERE work_id = ?1 AND comment_id = ?2
+             LIMIT 1",
+        )
+        .bind(work_id)
+        .bind(comment_id)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(|e| Error::Store(format!("find comment: {e}")))?;
+        let Some(row) = row else {
+            return Ok(None);
+        };
+        Ok(Some(CommentWithScope {
+            scope: row.try_get("scope").map_err(store_err)?,
+            comment: Comment {
+                seq: row.try_get("seq").map_err(store_err)?,
+                comment_id: row.try_get("comment_id").map_err(store_err)?,
+                parent_id: row.try_get("parent_id").map_err(store_err)?,
+                depth: row.try_get("depth").map_err(store_err)?,
+                author: row.try_get("author").map_err(store_err)?,
+                author_login: row.try_get("author_login").map_err(store_err)?,
+                posted_at: row.try_get("posted_at").map_err(store_err)?,
+                edited_at: row.try_get("edited_at").map_err(store_err)?,
+                body_html: row.try_get("body_html").map_err(store_err)?,
+            },
+        }))
+    }
+
     pub async fn get_comments(&self, work_id: &str, scope: &str) -> Result<Vec<Comment>> {
         let rows = sqlx::query(
             "SELECT seq, comment_id, parent_id, depth, author, author_login,
@@ -165,4 +209,8 @@ impl Store {
             has_more: row.get::<i64, _>("has_more") != 0,
         }))
     }
+}
+
+fn store_err(error: sqlx::Error) -> Error {
+    Error::Store(format!("comment row: {error}"))
 }

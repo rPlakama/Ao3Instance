@@ -272,6 +272,20 @@ pub async fn router(config: &Config, store: Store) -> Result<Router> {
             post(writes::write_comment_preview),
         )
         .route("/write/comment", post(writes::write_comment))
+        .route("/write/comment/reply", get(writes::comment_reply_page))
+        .route("/write/comment/reply", post(writes::comment_reply_save))
+        .route(
+            "/write/comment/reply/preview",
+            post(writes::comment_reply_preview),
+        )
+        .route("/write/comment/edit", get(writes::comment_edit_page))
+        .route("/write/comment/edit", post(writes::comment_edit_save))
+        .route(
+            "/write/comment/edit/preview",
+            post(writes::comment_edit_preview),
+        )
+        .route("/write/comment/delete", get(writes::comment_delete_page))
+        .route("/write/comment/delete", post(writes::comment_delete_save))
         .route("/write/bookmark", post(writes::write_bookmark))
         .route("/audit", get(writes::audit))
         .route("/users/login", get(session::session_page))

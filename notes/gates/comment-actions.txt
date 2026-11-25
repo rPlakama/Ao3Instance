@@ -1,0 +1,52 @@
+Comment replies, edits and deletes — verification
+2026-11-25T18:20Z (America/Recife)
+
+== feature
+Reader (write gate ready): every cached comment shows Reply; the account's own
+comments show Edit (only while they have no replies, AO3's rule) and Delete.
+GET /write/comment/reply|edit|delete   editors / destructive confirmation
+POST /write/comment/reply/preview      local validation + confirmation
+POST /write/comment/edit/preview       local validation + confirmation
+
+Reply:   exactly one POST /comments/<parent_id>/comments with comment[pseud_id]
+         + comment[comment_content]; success 302 with #comment_<id> (audit
+         "replied"); refusal text typed; shares AO3's comment rate limit
+         (governor "comment"); cache thread refetched once, reader returns with
+         the comment_posted notice.
+Edit:    exactly one PATCH /comments/<id> with comment[comment_content] (audit
+         "comment-updated"); own comments only; replies to the comment make the
+         edit impossible (HTTP 400 before any request, mirroring AO3); AO3 may
+         still refuse frozen/hidden comments; governor comment_edit 10/h.
+Delete:  confirmation explains AO3's deleted-marker behaviour for commented-
+         with-replies; exactly one DELETE /comments/<id> (audit
+         "comment-deleted"); own comments only; governor comment_delete 10/h.
+         AO3's permission failure is also a 302 (flash only), so the audit
+         records the verified request rather than a guaranteed deletion.
+After success the affected comment scope is refetched best-effort so the reader
+shows the change; failures keep the cached thread. Links carry the cache scope
+in the read context (work vs chapter), and the store gained find_comment.
+
+== tests
+cargo test: 324 passed, 0 failed
+  new tests/comments_actions.rs (6): reply and only-safe action links; reply
+  confirms + exactly one POST + refresh + audit; edit prefilled + exactly one
+  PATCH + audit; delete warns + exactly one DELETE + audit; other people's
+  comments 403 and a replied-to own comment 400; write switch required.
+  Extended fixture tests/fixtures/work_comments_own.html (original fixture kept
+  for the cache tests); parser unit test still covers the original fixture.
+cargo fmt --check: exit 0
+cargo clippy --all-targets -D warnings: exit 0
+nix build .#default: exit 0   store: /nix/store/11rki6904iarjmyz1x5z8y6i75crb34k-ao3instance-0.1.4
+scripts/check-ao3-routes.sh --require: 65 passed, 0 failed (comment update /
+  destroy / edit-rule / nested-commentable claims)
+scripts/check-no-solver-build-dep.sh: ok
+
+== UI
+Reader HTML assertions cover the action row (Reply on others' comments; Edit and
+Delete on own; no Edit once replied to). No standalone screenshot: the pages
+need a cached thread to render.
+
+== known limitations left for later rounds
+Work-author moderation of comments (delete other people's, approve/reject,
+freeze/hide), inbox replies, comment pagination beyond the cached first page,
+bookmark editing/deleting, and favorite tags remain unimplemented.

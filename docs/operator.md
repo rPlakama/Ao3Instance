@@ -109,9 +109,17 @@ text is edited from the chapter manager, not here) ·
 `GET /write/preview?kind=work-publish|work-delete&id=<id>` local confirmation ·
 `POST /write/work/publish` one confirmed `PUT /works/<id>/post_draft` ·
 `POST /write/work/delete` one confirmed `DELETE /works/<id>` ·
+`/write/comment/reply|edit|delete?work_id=<id>&comment_id=<id>` the per-comment editors
+(signed in and writes enabled; Reply shows the parent comment's author and text, Edit is
+prefilled from the cached thread and refused once the comment has replies, Delete is a
+destructive confirmation explaining AO3's deleted-comment marker or the permanent removal) ·
+`POST /write/comment/reply/preview` and `POST /write/comment/edit/preview` local
+validation + confirmation (no upstream write) ·
+`POST /write/comment/reply|edit|delete` the one comment request each ·
 `/read/<id>` reader (chapter jump, Entire Work; `?show_comments=1` shows the cached comment
-thread; the Comments action (when nothing is cached) or the "Refresh comments" button under
-a cached thread POSTs to `/read/<id>/comments`, which fetches it once from AO3) ·
+thread with Reply on every comment and Edit/Delete on your own when writes are enabled; the
+Comments action (when nothing is cached) or the "Refresh comments" button under a cached
+thread POSTs to `/read/<id>/comments`, which fetches it once from AO3) ·
 `/session` AO3 login/import (logout is local-only) ·
 `/works/search` AO3 Work Search (30-min cached, `?refresh=1` to force refresh, `?local=1` searches cached works) ·
 `/tags/search` live AO3 tag search (30-min cached, offline fallback) ·
@@ -168,12 +176,13 @@ and verifies that `ao3i.db` and `key` are created.
      AO3 session expires you sign in again.
 4. Writes stay disabled until `AO3I_WRITE_ENABLED=true`. Kudos and work
    subscriptions post straight from the reader; comments and bookmarks show a
-   confirmation page first. The signed-in menu and the dashboard sidebar gain
-   Writing entries (My Works, My Drafts, and — with writes enabled — Post a new
-   work); My Works rows link to the chapter manager (**Chapters**, and
-   **Add Chapter** for a work still in progress once writes are enabled) and, once
-   writes are enabled, to a posted work's metadata editor (**Edit Work**). Every
-   write is recorded in **Audit**.
+   confirmation page first, and cached comment threads gain **Reply** (plus
+   **Edit**/**Delete** on your own comments) once writes are enabled. The signed-in
+   menu and the dashboard sidebar gain Writing entries (My Works, My Drafts, and — with
+   writes enabled — Post a new work); My Works rows link to the chapter manager
+   (**Chapters**, and **Add Chapter** for a work still in progress once writes are
+   enabled) and, once writes are enabled, to a posted work's metadata editor
+   (**Edit Work**). Every write is recorded in **Audit**.
 
 ## Data on disk
 
@@ -208,6 +217,28 @@ re-importing the session; cached works and progress are unaffected.
   `confirm=yes` token (the same-origin guard applies to every mutating route).
   No retries for comments, bookmarks or subscriptions; kudos duplicates are
   detected from AO3's own message.
+- Reader comment threads carry AO3's comment actions when writes are enabled: **Reply** on
+  any cached comment, and **Edit**/**Delete** on the signed-in account's own comments
+  (matched case-insensitively against the comment's `author_login`). Edit is offered only
+  while the cached thread shows no reply — AO3 refuses edits after a reply
+  (`comments_controller.rb:252-259`) — and `GET /write/comment/edit` returns HTTP 400 for a
+  replied-to comment before sending anything. Reply shows the parent comment's author and
+  sanitized text, previews and confirms locally, then sends exactly one
+  `POST /comments/<parent_id>/comments` with `comment[pseud_id]` + `comment[comment_content]`;
+  AO3's re-rendered refusal text is shown typed, a 302 to the new comment anchor is audited
+  `replied`. Edit sends exactly one `PATCH /comments/<id>` with `comment[comment_content]`
+  (audit `comment-updated`). Delete confirms with a warning that AO3 replaces a comment that
+  has replies with a deleted-comment marker, then sends exactly one `DELETE /comments/<id>`
+  (audit `comment-deleted`). After any success the affected cached thread is re-fetched once,
+  best effort, and the reader opens with a notice; a failed refresh keeps the old copy.
+  Budgets: replies share `comment` (3 per 15 minutes, AO3's own limit), edits and deletes are
+  10 per hour each. Caveat: AO3 answers some refusals with the same redirect as success —
+  a reply on a frozen/blocked/closed thread, and edit/delete permission or edit-rule
+  refusals, are flash-only redirects. Both edits and deletes are therefore offered only on
+  your own comments and the audit records the verified request, not a guaranteed effect; a
+  reply that never appears on AO3 was refused even though the audit says `replied`. The
+  cache also does not store AO3's frozen/moderation state, so a frozen comment can still
+  offer Edit and then be refused upstream. Deletion cannot be undone.
 - Posting a new work (`/works/new`, also the header **Post** link) composes AO3's
   own form, validates against AO3's limits, shows a confirmation page naming the
   work and pseud, then sends exactly one `POST /works`: `post_button` publishes
@@ -257,7 +288,8 @@ re-importing the session; cached works and progress are unaffected.
   Drafts need only a signed-in AO3 session.
 - Client budgets: comments 3/15 min (AO3's own limit), kudos 10/min,
   subscriptions 20/h, bookmarks 10/min, new works 3/h, chapter saves 10/h,
-  draft publishing 10/h, work deletes 5/h, work metadata edits 10/h.
+  draft publishing 10/h, work deletes 5/h, work metadata edits 10/h,
+  comment edits 10/h, comment deletes 10/h.
   `Retry-After` parks the action.
 - The audit log (`/audit`) is append-only and stores targets and outcomes — never
   payloads, cookies or passwords.
@@ -284,6 +316,8 @@ shows exactly what was done.
 | Adult-content gate message | no `view_adult` consent in the session | Session → Enable adult content (requires a session) |
 | Restricted work message | no signed-in session | Session → import cookies |
 | `Session is not usable; re-authenticate` | cookie expired or incomplete | re-import cookies |
+| `comments with replies cannot be edited on AO3` (400) | AO3's edit rule | the comment already has a reply; edit it on AO3 instead |
+| comment edit/delete reported done but AO3 shows no change | AO3 refused with a flash-only redirect | check the thread on AO3; the audit records the verified request, not a guaranteed effect |
 | writes 403 | kill switch off | set `AO3I_WRITE_ENABLED=true` and restart |
 | key permission error at startup | data dir/key mode changed | restore `0600` key and owner-only dir; never chmod shared dirs |
 | `AO3 did not show a pseud to comment with` | pseud page drift or wrong account | verify `GET /users/<you>/pseuds` in the browser |
@@ -296,7 +330,11 @@ shows exactly what was done.
   not a crawler and cannot be enabled for writes.
 
 - Chapter-level reading progress only; no scroll/block anchor yet (I7 refinement).
-- Bookmarks and comments are created, not edited or deleted from the app.
+- Bookmarks are created, not edited or deleted from the app. Your own comments can be
+  replied to, edited and deleted from the cached reader thread (see **Writes**); work-author
+  moderation (deleting other people's comments, approving/rejecting, freezing/hiding), inbox
+  replies, and editing a comment that already has replies (AO3's rule) are not offered —
+  those stay on AO3.
 - New-work posting creates the work plus its first chapter in one request;
   further chapters are added and corrected from the chapter manager. Chapter
   deletion is not implemented, and neither is AO3's dedicated chapter-reordering
@@ -315,14 +353,18 @@ shows exactly what was done.
   about 29 days. Management requires a signed-in AO3 session, and its actions
   additionally require `AO3I_WRITE_ENABLED=true`; nothing is scheduled or posted
   in the background.
-- Cached comment threads are a read-only copy of AO3's rendered comments: there
-  is no reply, edit or delete from the cached thread, and only AO3's first page
-  is stored (further pages link out). The copy is keyed to the commentable the
-  reader position maps to — `work` for Entire Work view or a one-chapter work,
-  `chapter:<ao3_chapter_id>` for a single chapter of a multi-chapter work — so
-  the thread can differ between views. Refreshing is explicit: the "Refresh
-  comments" button under a cached thread does one `POST /read/<id>/comments`,
-  which replaces the cached copy; a failed refresh keeps the old copy with a
-  fixed notice, and nothing refreshes in the background.
+- Cached comment threads mirror AO3's rendered comments and carry **Reply** on every
+  comment plus **Edit**/**Delete** on the signed-in account's own comments when writes are
+  enabled (Edit only while the comment has no replies, AO3's rule). An edit is prefilled
+  from the cached rendered text — the original raw comment source is not cached, so review
+  it before saving. Only AO3's first page is stored (further pages link out), and a
+  refreshed thread drops deleted comments (hoisting their replies), so AO3's
+  "(Previous comment deleted.)" marker is not part of the local copy. The copy is keyed to
+  the commentable the reader position maps to — `work` for Entire Work view or a
+  one-chapter work, `chapter:<ao3_chapter_id>` for a single chapter of a multi-chapter
+  work — so the thread can differ between views. Refreshing is explicit: the "Refresh
+  comments" button under a cached thread does one `POST /read/<id>/comments`, which
+  replaces the cached copy; a failed refresh keeps the old copy with a fixed notice, and
+  nothing refreshes in the background.
 - No OPDS, no batch import, no collection management.
 - The local text is a cache for personal offline reading; do not redistribute it.

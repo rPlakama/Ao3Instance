@@ -126,7 +126,9 @@ triggers `/lost_cookie`. Import is validated by the §2.2 probe before being mar
 | --- | --- | --- | --- | --- | --- |
 | kudos | `POST /kudos` | HTML | `kudo[commentable_id]`, `kudo[commentable_type]=Work` | 302 → `Referer#kudos_message`; page shows kudos count/self | 302 → same with error flash; body shows error text |
 | comment | `POST /works/:id/comments` | HTML | `comment[pseud_id]`, `comment[comment_content]` | 302 → `/comments/:id` or work page anchored `comment_<id>` | 200 re-render with error block; 302 → `/429`; 302 → `/auth_error` |
-| reply | `POST /comments/:comment_id/comments` | HTML | same | 302 → thread anchored | as above |
+| comment reply | `POST /comments/:comment_id/comments` | HTML | `comment[pseud_id]`, `comment[comment_content]`; commentable is the parent comment | 302 → thread page anchored `comment_<new id>` | 200 re-render with error block; policy refusals are 302 + flash only; 302 → `/429`; 302 → `/auth_error` |
+| comment edit | `PATCH /comments/:id` | HTML | `comment[comment_content]`, CSRF token | 302 → the comment's thread page (flash only) | **302 also for refusals** (non-owner, frozen, or already replied to); 200/422 re-render; 302 → `/auth_error` |
+| comment delete | `DELETE /comments/:id` | HTML | CSRF token only | 302 → the parent/work comment page (flash only) | **302 → the same shapes for permission failure**; the status cannot distinguish success; 302 → `/auth_error`; 429; 403/503 |
 | subscribe | `POST /users/:uid/subscriptions` | **JSON** | `subscription[subscribable_id]`, `subscription[subscribable_type]` | 201 `{item_id, item_success_message}` | 422 `{errors:[…]}` |
 | unsubscribe | `DELETE /users/:uid/subscriptions/:id` | **JSON** | — | 200 `{item_success_message}` | 404/302 login |
 | bookmark | `POST /works/:id/bookmarks` | HTML | `bookmark[pseud_id]`, `[bookmarker_notes]`, `[tag_string]`, `[collection_names]`, `[private]`, `[rec]` | 302 → `/bookmarks/:id` | 200 re-render (new form) |
@@ -142,10 +144,11 @@ triggers `/lost_cookie`. Import is validated by the §2.2 probe before being mar
 
 Deferred (documented, not implemented): chapter deletion/reordering, byline/co-creator
 changes, work skins/work preferences, mute/block, collections, comment moderation
-(approve/reject/freeze/hide), admin version of any action. Draft publishing and work
-deletion are implemented — see §4.9 and §4.10; creating and editing chapters are
-implemented — see §4.11 and §4.12; editing a work's metadata and tags is implemented —
-see §4.13.
+(approve/reject/freeze/hide), work-author deletion of other people's comments, inbox
+replies, admin version of any action. Draft publishing and work deletion are implemented —
+see §4.9 and §4.10; creating and editing chapters are implemented — see §4.11 and §4.12;
+editing a work's metadata and tags is implemented — see §4.13; replying to, editing and
+deleting a comment are implemented — see §4.14–§4.16.
 
 ---
 
@@ -200,6 +203,10 @@ see §4.13.
 - **Success detection:** follow the 302; a success lands on `/comments/:id` (new comment
   page) or on the work page containing `id="comment_<n>"`. A validation failure renders
   `200` with the form and an error block.
+- **Replies, edits and deletes are separate contracts.** Posting a reply to an existing
+  comment is the same `create` action with the parent comment as the commentable (§4.14);
+  editing and deleting an existing comment are `PATCH`/`DELETE` on the comment itself
+  (§4.15–§4.16), with AO3's own ownership and edit rules on top.
 
 ### 4.3 Subscriptions — `POST /users/:uid/subscriptions`
 
@@ -589,6 +596,171 @@ see §4.13.
     `restricted`), series, challenge assignments/claims, and chapter dates/scheduling.
     Those stay on AO3.
 
+### 4.14 Comment reply — `POST /comments/:comment_id/comments`
+
+- **Preconditions:** signed-in usable session (both cookies, §2); CSRF token; writes
+  enabled client-side; `:comment_id` is a **parent comment**, not a work. AO3's create
+  guards apply as for §4.2 (`comments_controller.rb:2-39`): posted, visible, non-draft,
+  non-unrevealed work; comments enabled; not blocked; parent comment not frozen, hidden by
+  an admin, or unapproved spam; guest-reply preference satisfied. Those guards answer with
+  a flash + redirect, not a re-rendered form
+  (`comments_controller.rb:40-56,112-143,155-172,197-216`).
+- **Nested commentable:** the nested route (`resources :comments do resources :comments
+  end`, `routes.rb:573,592`) makes `load_commentable` call
+  `Comment.find(params[:comment_id])` (`comments_controller.rb:297-315`), and `create`
+  attaches the new comment to it through `Comment.commentable_object` (`:404,497-499`).
+  The request therefore carries no work id; the client keeps the work id only to return to
+  the cached thread and refresh it.
+- **Body:** `comment[pseud_id]=<pseud id>`, `comment[comment_content]=<text>`
+  (≤ 10,000 chars, `config/config.yml:105`), `authenticity_token`. The pseud must belong
+  to the account (`check_pseud_ownership`, `comments_controller.rb:94-100`).
+- **Response classification** (`create`, `comments_controller.rb:396-448`):
+
+  | response | meaning |
+  | --- | --- |
+  | 302 → thread page anchored `#comment_<id>` | reply created; the fragment carries the new comment id (`redirect_to_comment` → `redirect_to_all_comments`, `comments_controller.rb:712-758`) |
+  | 302 with no `#comment_` fragment and no auth marker | accepted by the client as `replied` with evidence `posted`; **also the shape of AO3's policy refusals** (blocked, frozen/hidden/unapproved parent, comments off), whose only signal is a flash |
+  | 200 re-render with the form and an error block | validation, Akismet spam, duplicate or moderation refusal; typed from AO3's exact strings (`classify_comment_failure`) |
+  | 302 → `/429` | AO3's comment limiter (HTML path); wait 15 minutes |
+  | 429 | rate limited (HTTP path); honour `Retry-After` |
+  | 302 → `/auth_error` | CSRF expired; Rails aborted before `create`, so the session layer's one token-refresh retry is safe |
+  | 302 → `/users/login` | logged out; re-authenticate |
+  | 302 → `/lost_cookie` | jar incomplete (`user_credentials` missing) |
+  | 404 | the parent comment no longer exists; reported as upstream drift, nothing retried |
+  | 403/503 | edge block / challenge |
+  | transport error | **ambiguous**: the reply may exist; verify on AO3 before retrying |
+
+- **Idempotency:** none. AO3 rejects only *identical* content by the same pseud on the same
+  commentable (`app/models/comment.rb:84-89`); two different replies both post. One
+  confirmed request; never auto-retried; a timeout is ambiguous.
+- **Limits and budget:** comment text 10,000 chars (`config.yml:105`). AO3's own limiter
+  allows 3 comments / 900 s per logged-in user for `create` (and `update`), exempting the
+  ultimate parent's author (`comments_controller.rb:59-79`); replies share the client
+  `comment` governor budget (3 / 900 s) with top-level comments.
+- **Gotchas:**
+  - The commentable is the **parent comment**, not the work: there is no `work_id` field
+    in the reply request, and a reply's parent can itself be a reply.
+  - The redirect is not proof. The policy refusals above are 302 + flash and look like
+    success; the app re-fetches the cached thread once afterwards (best effort) so the
+    reader should show the reply, but it does not fail the audit row if the reply is
+    missing. A reply that never appears on AO3 was refused even if the audit says
+    `replied`.
+  - AO3's comment limiter applies to replies exactly as to top-level comments (3 per
+    15 minutes) and is per user, not per thread.
+
+### 4.15 Comment edit — `PATCH /comments/:id`
+
+- **Preconditions:** signed-in usable session (both cookies, §2); CSRF token; writes
+  enabled client-side; `:id` is a comment owned by the signed-in account
+  (`check_ownership` on the loaded comment: `comments_controller.rb:17,102-106`;
+  `application_controller.rb:488-490`). AO3's edit rule is stricter and is a separate
+  guard: the comment must not be frozen (`iced?`) and must have **no replies**
+  (`count_all_comments.zero?`) — `check_permission_to_edit`
+  (`comments_controller.rb:252-259`), applied to `edit` and `update`.
+- **Body:** `comment[comment_content]=<new text>` (≤ 10,000 chars), `authenticity_token`.
+  The client sends a real `PATCH` (AO3's own form posts with `_method=patch`). The
+  controller always merges `edited_at: Time.current` (`comments_controller.rb:451-454`),
+  so AO3 marks the comment "Last Edited"; the client sends no `edited_at`.
+  `comment_params` also permits `pseud_id`, `name` and `email`
+  (`comments_controller.rb:772-776`), but the client sends none of them — ownership of the
+  existing comment already fixes the author.
+- **Response classification** (`update`, `comments_controller.rb:451-467`):
+
+  | response | meaning |
+  | --- | --- |
+  | 302 → the comment's thread page (anchored `#comment_<id>`) | edit accepted; audit `comment-updated` |
+  | 302 → the comment/work page from a permission guard (non-owner, frozen comment, comment with replies, blocked, hidden/unrevealed/unposted work) | **refusal, flash only** — indistinguishable from success by status or target |
+  | 200 re-render of the edit form with the error block | validation, Akismet "edited spam", duplicate or moderation refusal; typed from AO3's exact strings (the client also maps 422 to the same refusal) |
+  | 302 → `/auth_error` | CSRF expired; Rails aborted before `update`, so one token refresh and retry is safe |
+  | 302 → `/users/login` / `/lost_cookie` | logged out / jar incomplete |
+  | 404 | the comment no longer exists; reported as upstream drift |
+  | 429 | rate limited; honour `Retry-After` |
+  | 403/503 | edge block / challenge |
+  | transport error | **unknown**: the edit may have landed; verify on AO3 before retrying |
+
+- **Permissions and owner rules:** own comments only. AO3 allows no edits once a comment
+  has any reply, even by its author, and refuses frozen comments; work authors and admins
+  get no edit permission over someone else's comment. The reader offers **Edit** only on
+  comments whose `author_login` matches the signed-in account and which the cached thread
+  shows without replies (the thread's set of parents), and `GET /write/comment/edit`
+  returns 400 before rendering an editor for a replied-to comment.
+- **Limits and budget:** comment text 10,000 chars (`config.yml:105`); the client governor
+  allows `comment_edit` 10 per hour. AO3's comment limiter covers `update` as well as
+  `create` (`comments_controller.rb:66-79`), so edits also count against the 3 / 900 s
+  allowance unless the account authored the work.
+- **Idempotency:** re-sending the same text converges to the same comment (nothing is
+  created or deleted), but AO3 has no idempotency token and the client sends **one
+  confirmed request and never retries**; a timeout is reported as unknown.
+- **Gotchas:**
+  - **The edit box starts from the cached rendering, not the original source.** The cache
+    stores the inner HTML of AO3's rendered `blockquote.userstuff` (the comment's
+    `body_html`); the raw `comment_content` the author originally submitted is not cached.
+    AO3's sanitizer has already normalised it, so review the textarea before saving an
+    edit.
+  - **The 302/flash ambiguity.** The UI only offers Edit on the account's own comments
+    without replies, but a frozen comment or a hidden work is refused with a redirect whose
+    reason is only a flash; the audit records `comment-updated` for a request AO3 answered
+    with a redirect, not a guaranteed change. If the text does not change on AO3, the edit
+    was refused.
+  - The whole comment body is replaced; an emptied textarea is rejected locally ("the
+    comment is empty") before any request.
+  - After success the affected cached thread is re-fetched once (best effort), so the reader
+    shows the new text and AO3's "Last Edited" line; a failed refresh keeps the old copy and
+    is logged.
+
+### 4.16 Comment delete — `DELETE /comments/:id`
+
+- **Preconditions:** signed-in usable session (both cookies, §2); CSRF token; writes
+  enabled client-side; `:id` is a comment the account owns. On AO3 the delete permission is
+  wider: `check_permission_to_delete` allows admins, the comment's author, **and the
+  ultimate parent's author** (`comments_controller.rb:19,247-249`; `can_destroy_comment?`,
+  `app/helpers/comments_helper.rb:182-186`), so a work creator can delete other people's
+  comments on their work. This client only offers delete on the commenter's own comments;
+  work-author deletion is still deferred.
+- **Request:** `DELETE /comments/:id` with `authenticity_token` in the body **and** as
+  `X-CSRF-Token` (§2.3; a bare DELETE is answered with `/auth_error` while looking like a
+  redirect). No other fields. The app confirms locally first
+  (`GET /write/comment/delete?work_id=<id>&comment_id=<id>`), and that page says that a
+  comment with replies is replaced by AO3's deleted-comment marker rather than removed.
+- **Destroy semantics:** `destroy_or_mark_deleted`
+  (`lib/acts_as_commentable/comment_methods.rb:25-33`): a comment with no children is
+  destroyed; a comment with replies sets `is_deleted = true`, wipes its content to
+  `deleted comment` and saves with `validate: false` — AO3 keeps a
+  "(Previous comment deleted.)" placeholder so the thread stays intact
+  (`app/views/comments/_single_comment.html.erb:10-13`). There is no undo.
+- **Response classification** (`destroy`, `comments_controller.rb:470-493`):
+
+  | response | meaning |
+  | --- | --- |
+  | 302 → the parent comment's thread page (reply) or the work's comment page (top-level) | request accepted; `destroy` routes by the comment's position in the thread |
+  | 302 → the same kinds of pages from `check_permission_to_delete` (non-owner and not an admin) | **permission refusal, flash only — the status and shape are identical to success** |
+  | 302 → `/auth_error` | CSRF expired; Rails aborted before `destroy` |
+  | 302 → `/users/login` / `/lost_cookie` | logged out / jar incomplete |
+  | 404 | the comment does not exist (already deleted); reported as upstream drift, nothing retried |
+  | 429 | rate limited; honour `Retry-After` |
+  | 403/503 | edge block / challenge |
+  | transport error | **unknown**: the delete may have landed; verify on AO3 before retrying |
+
+- **Why the status proves nothing:** AO3 answers a successful delete and a permission
+  failure with the same kind of redirect; the failure reason is only a flash in the signed
+  session, which a non-browser client cannot read. The app therefore (a) offers delete only
+  on the account's own comments and (b) writes the audit outcome `comment-deleted` for the
+  **verified request**, not a guaranteed deletion. The post-write thread refresh is the
+  practical confirmation: if the comment is still on AO3 it comes back in the cached copy.
+- **Idempotency:** destructive and never auto-retried. Repeating after success finds no
+  comment (404) or another redirect; the client sends one confirmed request and a timeout is
+  reported as unknown, so the user checks the thread on AO3 first.
+- **Budget:** the client governor allows `comment_delete` 10 per hour. AO3's own comment
+  limiter covers `create` and `update` only (`comments_controller.rb:66-79`); delete is not
+  rate-limited by it, so the client budget is the cap that matters.
+- **Gotchas:**
+  - **Deleted-with-replies is a marker, not a removal.** The thread stays; only the body is
+    wiped. The local cache is rebuilt from visible comment bodies, so a refresh drops the
+    deleted comment and hoists its replies to the deleted comment's parent — the cached copy
+    does not render AO3's "(Previous comment deleted.)" placeholder.
+  - Replies to a deleted comment are not deleted; delete is not a thread prune.
+  - Deletion cannot be undone from AO3 or this client.
+
 ---
 
 ## 5. Outcome detection
@@ -599,6 +771,13 @@ Ordered from strongest to weakest signal. Prefer the highest available for each 
 2. **Final URL** — classify the `Location`/status directly (the client never follows
    redirects by itself; a verification read is a separate explicit GET):
    - `/comments/:id` → comment created;
+   - a thread page whose fragment is `#comment_<id>` → comment created or replied to (the
+     fragment names the new comment; §4.2, §4.14);
+   - a comment's thread page (edit) or the work/parent comment page (delete) → the app's
+     requested comment write was accepted — **not proof**: AO3's permission and edit-rule
+     refusals redirect to the same kinds of pages with only a flash (§4.15–§4.16), so these
+     actions are only offered on the account's own comments and the audit records the
+     verified request;
    - `/bookmarks/:id` → bookmark created;
    - `/works/:id` → work created and posted, or (for `PUT /works/:id/post_draft`) a
      draft published, or (for `PATCH /works/:id`) work metadata updated (§4.13) — but
@@ -622,10 +801,13 @@ Ordered from strongest to weakest signal. Prefer the highest available for each 
    - failure: one of the exact strings in §4.1 appears in the page.
    For a work create, the failure marker is a re-rendered form carrying an `#error`
    block whose `li` items are AO3's messages (§4.8); for a chapter create or update it
-   is the same marker on the chapter form (§4.11–§4.12).
+   is the same marker on the chapter form (§4.11–§4.12); for a comment create, reply or
+   edit it is the re-rendered comment form with AO3's error block (§4.2, §4.14–§4.15).
 4. **Re-read verification** — for ambiguous cases (network failure after send, missing
    marker): read the target state (kudos given? subscription present? comment id present?)
-   and only then decide. Never infer success from "no error".
+   and only then decide. Never infer success from "no error". For a comment write the
+   app's post-write refresh of the cached thread is the practical read: it shows the new
+   or edited text when the write landed, and brings the comment back when it did not.
 
 Never use HTTP status alone: kudos success and failure are both `302`.
 
@@ -643,9 +825,9 @@ Never use HTTP status alone: kudos success and failure are both `302`.
 | `LogoutFailed` | upstream did not sign out (e.g. token rejected) | 302 → `/auth_error` on logout, or 5xx | local wipe still happens; tell the user |
 | `Killed` | operator kill switch | terminal state | no network until restart |
 | `RateLimited` | IP/global throttle | 429 + `Retry-After` | park account, surface wait |
-| `CommentRateLimited` | 3/900 s | 302 → `/429` after a comment POST | wait 15 min; explain |
+| `CommentRateLimited` | 3/900 s | 302 → `/429` after a comment create/update POST | wait 15 min; explain |
 | `AlreadyDone` | kudos duplicate | exact string §4.1 | treat as success |
-| `PolicyRefused` | own work, blocked, banned, frozen, comments off | page text | explain; no retry |
+| `PolicyRefused` | own work, blocked, banned, frozen, comments off | page text; for comment edits/deletes a redirect + flash only (§4.15–§4.16) | explain; no retry |
 | `SpamRejected` | Akismet | exact string §4.2 | no retry; suggest rewording |
 | `Validation` | duplicate comment, too long, missing pseud, bad subscription type | re-render / 422 | show message |
 | `TargetGone` | work deleted/private/hidden | 302 → `/404` or login | drop local state (**not constructed yet**: read outcome, lands with the W2 parser) |
@@ -661,10 +843,10 @@ Never use HTTP status alone: kudos success and failure are both `302`.
 | --- | --- | --- |
 | `ServerUnique` | kudos | retry allowed; map duplicate to `AlreadyDone` |
 | `ServerConstrained` | favorite tags (model validation) | retry allowed; 422 duplicate → already done |
-| `ClientGuarded` | comments, bookmarks, chapter update, work metadata update | **never auto-retry**; verify by re-read; require a new user confirmation for a second attempt |
+| `ClientGuarded` | comments (top-level and replies), comment edits, bookmarks, chapter update, work metadata update | **never auto-retry**; verify by re-read; require a new user confirmation for a second attempt |
 | `NoConstraint` | subscriptions | **never retry**; pre-check the index, post-check, show state |
 | `NonIdempotentCreate` | work create, chapter create | **never retry**; read the 302 to classify; a timeout is ambiguous — the user verifies on AO3 before a second attempt |
-| `DestructiveStateChange` | draft publish, work delete | **never auto-retry**; one confirmed request; classify from the redirect; a timeout is unconfirmed — verify My Works/My Drafts before a second attempt (deletion is irreversible) |
+| `DestructiveStateChange` | draft publish, work delete, comment delete | **never auto-retry**; one confirmed request; classify from the redirect; a timeout is unconfirmed — verify My Works/My Drafts (or the comment thread) before a second attempt (deletion is irreversible) |
 
 Ambiguity rule: a transport failure *after* the request was written is `Ambiguous`. The
 only acceptable follow-up is a read that proves the effect; if the read cannot prove
@@ -693,6 +875,10 @@ worse than a failed one.
 | session lifetime | 2 weeks (3 months remembered) | `config.yml:14-15` |
 | comment thread depth | 5 | `config.yml:198` |
 
+AO3's comment limiter covers `create` and `update` (top-level comments, replies and edits)
+but **not** `destroy`; the ultimate parent's author is exempt
+(`comments_controller.rb:59-79`).
+
 The client's own floor is stricter than the server's: ≥ 2 s between requests, one in
 flight, no parallelism, no background writes. Work creation is additionally budgeted at
 3 per hour by the write governor: posting is rare, consequential and non-idempotent.
@@ -701,14 +887,20 @@ confirmed request and never retried. Chapter create and update share one `chapte
 budget of 10 per hour: a chapter save is public and, for a create, non-idempotent, so it
 is one confirmed request with no automatic retry. Work metadata edits are budgeted at 10
 per hour (`edit_work`); the update is one confirmed `PATCH /works/:id` with no automatic
-retry, and a timeout is reported as ambiguous.
+retry, and a timeout is reported as ambiguous. Comment replies share the `comment` budget
+(3 / 900 s) with top-level comments; comment edits and deletes each have a 10 per hour
+client budget (`comment_edit`, `comment_delete`) — delete is not rate-limited by AO3, and
+edit sits inside the stricter server-side comment allowance anyway. Each is one confirmed
+request with no automatic retry.
 
 ---
 
 ## 9. Anti-patterns (each one is a bug we have seen elsewhere)
 
 1. Posting to `/works/:id/kudos` — the route is `POST /kudos` with the work in the body.
-2. Treating `302` as success for kudos/comments.
+2. Treating `302` as success for kudos, comments, or comment edits/deletes. AO3's
+   permission and edit-rule refusals redirect to the same pages as successes with only a
+   flash (§4.15–§4.16).
 3. Sending `Accept: application/json` to `/kudos` or `/comments` — `UnknownFormat`, `/404`.
 4. Storing only `_otwarchive_session` — next request is `/lost_cookie`.
 5. Caching the CSRF token across login or across accounts.

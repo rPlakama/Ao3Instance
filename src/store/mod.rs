@@ -196,7 +196,7 @@ pub(super) fn authors_from_row(row: &sqlx::sqlite::SqliteRow) -> Vec<String> {
 
 pub(super) use crate::time::now_secs;
 pub use access::AccessEntry;
-pub use comments::{CommentSetInfo, WORK_SCOPE, chapter_scope};
+pub use comments::{CommentSetInfo, CommentWithScope, WORK_SCOPE, chapter_scope};
 pub use errors::HttpErrorRow;
 pub use lists::{
     BookmarkEntry, BrowseResult, BrowseSort, CacheStats, ReadingEntry, ReadingStatus,

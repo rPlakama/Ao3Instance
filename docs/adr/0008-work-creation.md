@@ -3,9 +3,9 @@
 - **Status:** Accepted (2026-11-25)
 - **Date:** 2026-11-25
 - **Supersedes:** the "works/chapters creation" deferral in ADR-0003, for new works,
-  chapter management, managing existing ones and work metadata/tag editing; chapter
-  deletion/reordering remain deferred
-- **Related:** ADR-0003, ADR-0005, `docs/ao3-write-api.md` §3–§4.13,
+  chapter management, managing existing ones, work metadata/tag editing, and (from
+  ADR-0003's v1.1 note) comment editing; chapter deletion/reordering remain deferred
+- **Related:** ADR-0003, ADR-0005, `docs/ao3-write-api.md` §3–§4.16,
   `docs/write-client-plan.md`
 
 ## Context
@@ -92,6 +92,27 @@ does not have to hardcode private database facts.
    re-submits every value; `POST /write/work/edit` then sends exactly one
    `PATCH /works/<id>` with the `work[...]` metadata fields. Chapter text is never
    sent — it stays with the chapter editor (item 8).
+
+10. **Comments can be replied to, edited and deleted from the cached reader thread.** The
+    reader renders AO3's comment action row when the write gate is ready: **Reply** on
+    every cached comment, **Edit**/**Delete** on comments whose `author_login` matches the
+    signed-in account, and **Edit** only while the cached thread shows no reply (AO3's
+    rule: "[c]omments with replies cannot be edited", `comments_controller.rb:252-259`).
+    The routes are `GET /write/comment/reply|edit|delete?work_id=<id>&comment_id=<id>`,
+    the no-network previews `POST /write/comment/reply/preview` and
+    `/write/comment/edit/preview`, and the saves `POST /write/comment/reply|edit|delete`.
+    Each save commits an intent row and sends exactly one request: reply
+    `POST /comments/<parent_id>/comments` carrying `comment[pseud_id]` +
+    `comment[comment_content]` (302 with `#comment_<id>` = `replied`; a 200 re-render
+    carries AO3's refusal text), edit `PATCH /comments/<id>` with
+    `comment[comment_content]` (`comment-updated`), and delete `DELETE /comments/<id>`
+    (`comment-deleted`). After a success the affected cached thread is re-fetched once
+    (best effort) so the reader shows the change; a failed refresh is logged and never
+    turns the write into an error. Replies share the `comment` governor budget (3 / 900 s,
+    AO3's own limit); edits and deletes are budgeted 10/hour each. AO3 answers some
+    edit/delete refusals with a redirect whose reason is only a flash, so both rest on the
+    UI's ownership guard and the audit records the verified request, not a guaranteed
+    effect.
 
 ## Non-idempotent-create rules
 
@@ -201,6 +222,41 @@ shape:
   (comment permissions, restricted), series and scheduling/backdating stay on AO3;
   chapter text is edited only through the chapter editor.
 
+## Comment-action rules
+
+Replying to, editing and deleting a comment reuse the same spine, with AO3's comment rules
+mirrored where the cache can prove them:
+
+- **Only own comments for edits and deletes.** The viewer's login is compared to the
+  cached comment's `author_login` (case-insensitive); the server returns 403 before any
+  request for someone else's comment. On AO3 the delete permission is wider — the work's
+  author can delete other people's comments (`check_permission_to_delete`,
+  `comments_controller.rb:247-249`) — but that moderation surface is not offered here.
+- **No edits once a comment has a reply.** AO3's rule (`check_permission_to_edit`,
+  `comments_controller.rb:252-259`) is mirrored in the reader's action row and in
+  `GET /write/comment/edit`, which returns 400 for a replied-to comment before rendering
+  the editor. Frozen comments cannot be edited either, but the cache does not store AO3's
+  frozen/moderation state, so AO3 can still refuse an edit the UI offered — and that
+  refusal is a flash on a redirect.
+- **The reply target is the parent comment.** `POST /comments/<parent_id>/comments` has a
+  nested commentable, so no work id is sent (`comments_controller.rb:297-315`); the app
+  keeps the work id only to return to and refresh the cached thread.
+- **Delete is a marker when the thread continues.** `destroy_or_mark_deleted` wipes a
+  commented-with-replies comment's text to "deleted comment" and keeps the row so the
+  thread stays intact (`lib/acts_as_commentable/comment_methods.rb:25-33`); the
+  confirmation page says so. The local cache is rebuilt from visible comment bodies, so a
+  refresh drops the placeholder and hoists its replies.
+- **Redirect ambiguity, honestly recorded.** AO3 answers a successful delete and a
+  permission-refused delete with the same kind of redirect; the reason is only a flash.
+  Some reply refusals (blocked user, frozen or closed thread) are flash-only redirects
+  too. The app therefore restricts edits and deletes to the account's own comments and
+  audits the verified request rather than claiming the effect; the post-write thread
+  refresh is the practical confirmation.
+- **Refresh and budgets.** After a success the affected comment scope is re-fetched once
+  (best effort), so the reader shows the reply, the new text or the removed comment; a
+  failed refresh is logged and leaves the previous copy. Replies share the `comment`
+  budget (3/900 s, AO3's own limit) and edits/deletes are 10/hour each.
+
 ## Scope
 
 **Now:** new work plus first chapter; publish or save as draft; composer options
@@ -215,11 +271,18 @@ request and no auto-retry; chapter saves are budgeted 10/hour. Plus work
 metadata/tag editing: the editor is prefilled from AO3's own edit form, validated
 and confirmed locally, then exactly one `PATCH /works/<id>` (never chapter text,
 never `work[posted]`), with a cache refresh after success and a 10/hour budget.
+Plus comment actions: reply, edit and delete on the cached reader thread — Reply on any
+comment, Edit/Delete only on the account's own comments, Edit only while the comment has
+no replies — with a local confirmation each, exactly one request
+(`POST /comments/<parent_id>/comments`, `PATCH /comments/<id>`, `DELETE /comments/<id>`),
+an audit row (`replied`, `comment-updated`, `comment-deleted`), a best-effort thread
+refresh, replies sharing `comment` 3/900 s and edits/deletes budgeted 10/hour each.
 
-**Later** (each needs its own contract, confirmation rules and tests): deleting
-and reordering chapters, byline/co-creator changes, work skins and work
-preferences (comment permissions, restricted), and any scheduling or background
-posting. These remain deferred and are not implied by this ADR.
+**Later** (each needs its own contract, confirmation rules and tests): work-author
+comment moderation (deleting other people's comments, approve/reject/freeze/hide), inbox
+replies, deleting and reordering chapters, byline/co-creator changes, work skins and work
+preferences (comment permissions, restricted), and any scheduling or background posting.
+These remain deferred and are not implied by this ADR.
 
 ## Consequences
 
@@ -249,6 +312,14 @@ posting. These remain deferred and are not implied by this ADR.
   work page, exactly like a successful save. The action is therefore offered only
   on the account's own works, and a timeout is reported as unknown instead of
   being retried.
+- Comment edits and deletes inherit the same limitation in a sharper form: AO3 answers a
+  successful delete and a permission-refused delete with the same kind of redirect, and
+  an edit refused for a frozen comment or a comment with replies also redirects with only
+  a flash. The actions are therefore offered only on the account's own comments (and
+  Edit only while no reply exists in the cached thread) and the audit row records the
+  verified request, not a guaranteed effect; the thread refresh afterwards is the
+  practical confirmation. A delete of a threaded comment leaves AO3's deleted-comment
+  marker in place rather than removing the thread.
 
 ## Test and evidence
 
@@ -287,11 +358,21 @@ posting. These remain deferred and are not implied by this ADR.
   edit-page parser/validator and the fail-closed foreign page; `ao3::actions`
   covers the redirect classifier (work path accepted, `/edit` or a different id
   rejected). Full suite 317 green; evidence `notes/gates/work-edit.txt`.
-- The actions are documented in `docs/ao3-write-api.md` §3–§4.13, and
+- `tests/comments_actions.rs` (6 tests): the cached reader offers Reply on every comment
+  and Edit/Delete only on the account's own safe comments (no Edit once replied to); a
+  reply confirms, sends exactly one `POST /comments/<parent_id>/comments`, refreshes the
+  cached thread and audits `replied`; an edit prefills from the cache and sends exactly one
+  `PATCH /comments/<id>` (audit `comment-updated`); a delete warns and sends exactly one
+  `DELETE /comments/<id>` (audit `comment-deleted`); another person's comments are 403 and
+  a replied-to own comment is 400 for the editor; all routes refuse without the write
+  switch. The fixture gained an own-comment/reply variant while the original cache fixture
+  stayed untouched. Full suite 324 green; evidence `notes/gates/comment-actions.txt`.
+- The actions are documented in `docs/ao3-write-api.md` §3–§4.16, and
   `scripts/check-ao3-routes.sh` asserts the works new/create, edit/update,
   drafts list, post_draft, destroy, nested chapters, chapters create/update,
-  `post_without_preview_button` and warning/category array claims against the
-  pinned otwarchive clone (61 claims).
+  `post_without_preview_button`, warning/category array, comment update/destroy,
+  edit-with-replies and nested-commentable claims against the
+  pinned otwarchive clone (65 claims).
 - Evidence from the clone (`452391b`): `works_controller.rb:289-319` (create,
   `post_button` publish switch, 302 to the work vs `/preview`, the 29-day draft
   notice), `works_controller.rb:322-334` (edit),
@@ -309,4 +390,13 @@ posting. These remain deferred and are not implied by this ADR.
   (`update_positions`), `:261-264` (`post_chapter`), `:268-272`
   (`chapter_params`), `chapters/_chapter_form.html.erb` and
   `chapters/_posting_fieldset.html.erb:11-28` (button names),
-  `works/navigate.html.erb:1-7` (chapter index markup).
+  `works/navigate.html.erb:1-7` (chapter index markup). For comment actions:
+  `comments_controller.rb:19,247-259` (delete permission; edit rule — no replies, not
+  frozen), `:297-315` (nested commentable is the parent comment), `:396-448`
+  (create/reply, redirect and refusal shapes), `:451-467` (update, `edited_at`),
+  `:470-493` (destroy, deleted-with-replies routing), `:59-79` (rate limit covers
+  create/update), `:772-776` (`comment_params`),
+  `app/models/comment.rb:84-89` (duplicate rule),
+  `lib/acts_as_commentable/comment_methods.rb:25-33` (`destroy_or_mark_deleted`),
+  `comments/_single_comment.html.erb:10-13` (deleted placeholder) and
+  `comments/_comment_actions.html.erb` (action row the reader mirrors).

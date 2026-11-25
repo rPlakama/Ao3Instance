@@ -177,7 +177,9 @@ Full contracts live in `ao3-write-api.md`; this is the map.
 | --- | --- | --- | --- |
 | kudos | `POST /kudos` | `kudo[commentable_id]`, `kudo[commentable_type]` | `routes.rb:605`; `kudos_controller.rb:100-102` |
 | comment | `POST /works/:id/comments` | `comment[pseud_id]`, `comment[comment_content]`, `name`, `email` | `routes.rb:417`; `comments_controller.rb:772-777` |
-| reply | `POST /comments/:comment_id/comments` | same + parent from URL | `routes.rb:573,590` |
+| comment reply | `POST /comments/:comment_id/comments` | `comment[pseud_id]`, `comment[comment_content]`; the commentable is the parent comment | `routes.rb:573,592`; `comments_controller.rb:297-315,396-448` |
+| comment edit | `PATCH /comments/:id` | `comment[comment_content]` (the controller adds `edited_at`; no replies allowed) | `routes.rb:573`; `comments_controller.rb:252-259,451-467` |
+| comment delete | `DELETE /comments/:id` | CSRF token only (marked deleted instead when it has replies) | `routes.rb:573`; `comments_controller.rb:470-493`; `lib/acts_as_commentable/comment_methods.rb:25-33` |
 | subscribe | `POST /users/:uid/subscriptions` | `subscription[subscribable_id]`, `[subscribable_type]` | `routes.rb:343`; `subscriptions_controller.rb:89-93` |
 | unsubscribe | `DELETE /users/:uid/subscriptions/:id` | — | `routes.rb:343`; `subscriptions_controller.rb:48-58` |
 | bookmark | `POST /works/:id/bookmarks` | `bookmark[pseud_id]`, `[bookmarker_notes]`, `[tag_string]`, `[collection_names]`, `[private]`, `[rec]` | `routes.rb:402`; `bookmarks_controller.rb:335-339` |
@@ -187,18 +189,22 @@ Full contracts live in `ao3-write-api.md`; this is the map.
 | mute | `POST /users/:uid/muted/users` | `muted_id` (byline) | `routes.rb:370`; `muted/users_controller.rb:75-79` |
 | block | `POST /users/:uid/blocked/users` | `blocked_id` (byline) | `routes.rb:360`; `blocked/users_controller.rb:75-79` |
 
-Three later write slices are not repeated in this map: work creation/publishing
+Other write slices are not repeated in this map: work creation/publishing
 (`POST /works`, `PUT /works/:id/post_draft`, `DELETE /works/:id`), chapter
-create/update, and work metadata/tag editing (`PATCH /works/:id`, the `update`
+create/update, work metadata/tag editing (`PATCH /works/:id`, the `update`
 action guarded by `check_ownership_or_admin` —
 `works_controller.rb:16,354-394`, permitted by `work_params` at `:911-934`; its
-form is `works/edit.html.erb` → `_standard_form.html.erb`). Chapters are a
+form is `works/edit.html.erb` → `_standard_form.html.erb`), and the comment action
+contract (the reply's commentable is the parent comment,
+`comments_controller.rb:297-315`; edit is refused once a comment has replies,
+`:252-259`; delete marks a commented-with-replies comment deleted instead of destroying
+it, `lib/acts_as_commentable/comment_methods.rb:25-33`). Chapters are a
 **nested resource** under the work
 (`routes.rb:403-414`): `POST /works/:work_id/chapters` creates one and
 `PUT /works/:work_id/chapters/:id` updates it, with the fields from
 `chapters_controller.rb:268-272` and the button names from
 `chapters/_posting_fieldset.html.erb:11-28`. The full contracts are in
-[`ao3-write-api.md`](ao3-write-api.md) §4.8–§4.13.
+[`ao3-write-api.md`](ao3-write-api.md) §4.2 and §4.8–§4.16.
 
 ---
 

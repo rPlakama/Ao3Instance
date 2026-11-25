@@ -44,6 +44,15 @@ This is an unofficial project, not affiliated with or endorsed by the OTW.
   buttons do (the click is the deliberate action); comments and bookmarks go
   through a confirmation page that names the target. Every action is attempted
   once and recorded in an append-only audit ledger.
+- **Comment replies, edits and deletes (opt-in)** — cached reader threads carry AO3's
+  comment actions when writes are enabled: **Reply** on any comment and
+  **Edit**/**Delete** on the signed-in account's own comments, with Edit offered only
+  until the comment gets a reply (AO3's rule). The reply editor shows the parent
+  comment; every action confirms locally, sends exactly one request to AO3, and
+  re-fetches the cached thread once so the reader shows the change. Replies count
+  against AO3's 3-per-15-minutes comment limit; edits and deletes are budgeted at
+  10/hour each. A delete is permanent (AO3 keeps a deleted-comment marker when the
+  thread has replies), and every attempt is recorded in the audit ledger.
 - **Posting new works (opt-in)** — a composer at `/works/new` mirrors AO3's
   new-work form (rating, archive warnings, categories, tags, title, creator
   pseud, summary, notes, language, collections, gifts, chapter title, work
@@ -170,7 +179,9 @@ diagnostics and FlareSolverr limits.
    password is never persisted.
 4. Writes remain disabled until `AO3I_WRITE_ENABLED=true`. Kudos and work
    subscriptions post straight from the reader; comments and bookmarks confirm
-   first. With a session, the header's **Post** link opens the new-work
+   first. Cached comment threads also gain **Reply** — and **Edit**/**Delete** on
+   your own comments — once writes are enabled, each through its own confirmation.
+   With a session, the header's **Post** link opens the new-work
    composer, and **My Works** rows link to each work's chapter manager
    (**Chapters**; the **Add Chapter** shortcut appears for works still in
    progress once writes are enabled) and, once writes are enabled, to a posted
@@ -178,12 +189,18 @@ diagnostics and FlareSolverr limits.
 
 ## Limitations
 
-- Cached comment threads are a read-only copy of what AO3 rendered: the reader
-  can load and show them, but there is no reply, edit or delete control on the
-  cached comments — those stay on AO3. Only AO3's first page is cached;
-  further pages link out to the site. A "Refresh comments" button under the
-  thread replaces the copy on demand — one explicit request; nothing refreshes
-  in the background.
+- Cached comment threads mirror AO3's rendered comments. When writes are enabled, the
+  reader offers **Reply** on every comment and **Edit**/**Delete** on your own comments;
+  Edit disappears once a comment has a reply (AO3's rule), and a delete is always the
+  commenter's own — work authors cannot delete other people's comments from here. Work-author
+  moderation (approving/rejecting, freezing/hiding) and inbox replies are not offered, and
+  only AO3's first page is cached — further pages link out.
+  AO3 answers some edit/delete refusals with the same redirect as success (the reason is
+  only a flash), so the app scopes both to your own comments and the audit records the
+  verified request, not a guaranteed effect. A deleted comment with replies becomes AO3's
+  deleted-comment marker upstream; the cached copy drops deleted comments on the next
+  refresh. A "Refresh comments" button under the thread replaces the copy on demand — one
+  explicit request; nothing refreshes in the background.
 - Cached comments follow AO3's commentable for the view you are reading: the
   work itself in Entire Work mode (and for a one-chapter work), or one chapter
   in single-chapter view of a multi-chapter work — so switching views can show

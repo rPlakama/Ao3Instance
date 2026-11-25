@@ -25,6 +25,8 @@ fn budget(action: &str) -> (usize, Duration) {
         "post_work" => (3, Duration::from_secs(3_600)),
         "publish_draft" => (10, Duration::from_secs(3_600)),
         "chapter" => (10, Duration::from_secs(3_600)),
+        "comment_edit" => (10, Duration::from_secs(3_600)),
+        "comment_delete" => (10, Duration::from_secs(3_600)),
         "edit_work" => (10, Duration::from_secs(3_600)),
         "delete_work" => (5, Duration::from_secs(3_600)),
         _ => (10, Duration::from_secs(60)),

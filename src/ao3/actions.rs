@@ -389,6 +389,142 @@ pub async fn post_comment(
     }
 }
 
+/// `POST /comments/:comment_id/comments` — one reply to an existing comment.
+pub async fn post_comment_reply(
+    session: &mut AccountSession,
+    parent_comment_id: &str,
+    pseud_id: i64,
+    content: &str,
+) -> Result<CommentOutcome> {
+    let content = content.trim();
+    if content.is_empty() {
+        return Err(Error::Validation("the reply is empty".into()));
+    }
+    if content.chars().count() > COMMENT_MAX_CHARS {
+        return Err(Error::Validation(format!(
+            "the reply is longer than {COMMENT_MAX_CHARS} characters"
+        )));
+    }
+    let path = format!("/comments/{}/comments", parent_comment_id.trim());
+    let pseud = pseud_id.to_string();
+    let response = session
+        .post_write(
+            &path,
+            &[
+                ("comment[pseud_id]", pseud.as_str()),
+                ("comment[comment_content]", content),
+            ],
+        )
+        .await?;
+    classify_comment_write(response, "comment reply")
+}
+
+/// `PATCH /comments/:id` — edits one comment's text.
+///
+/// AO3 only allows edits on your own comment while it has no replies and is not
+/// frozen; the UI mirrors that, and AO3 is the final judge.
+pub async fn update_comment(
+    session: &mut AccountSession,
+    comment_id: &str,
+    content: &str,
+) -> Result<()> {
+    let content = content.trim();
+    if content.is_empty() {
+        return Err(Error::Validation("the comment is empty".into()));
+    }
+    if content.chars().count() > COMMENT_MAX_CHARS {
+        return Err(Error::Validation(format!(
+            "the comment is longer than {COMMENT_MAX_CHARS} characters"
+        )));
+    }
+    let path = format!("/comments/{}", comment_id.trim());
+    let response = session
+        .patch_write(&path, &[("comment[comment_content]", content)])
+        .await?;
+    match response.status {
+        302 | 303 => {
+            check_comment_redirect(&response)?;
+            Ok(())
+        }
+        200 | 422 => Err(classify_comment_failure(&response.body)),
+        429 => Err(Error::RateLimited {
+            retry_after: response.retry_after,
+        }),
+        403 | 503 => Err(Error::BlockedByEdge {
+            status: response.status,
+        }),
+        status => Err(Error::UpstreamChanged(format!(
+            "comment update returned HTTP {status}"
+        ))),
+    }
+}
+
+/// `DELETE /comments/:id` — deletes one comment (or marks it deleted when it
+/// has replies, matching AO3's `destroy_or_mark_deleted`).
+///
+/// AO3 answers both success and permission failure with a redirect (the failure
+/// is only a flash), so the UI only offers this on the account's own comments
+/// and the audit speaks of the attempt, not a verified effect.
+pub async fn delete_comment(session: &mut AccountSession, comment_id: &str) -> Result<()> {
+    let path = format!("/comments/{}", comment_id.trim());
+    let response = session.delete_write(&path).await?;
+    match response.status {
+        302 | 303 => {
+            check_comment_redirect(&response)?;
+            Ok(())
+        }
+        429 => Err(Error::RateLimited {
+            retry_after: response.retry_after,
+        }),
+        403 | 503 => Err(Error::BlockedByEdge {
+            status: response.status,
+        }),
+        status => Err(Error::UpstreamChanged(format!(
+            "comment delete returned HTTP {status}"
+        ))),
+    }
+}
+
+fn check_comment_redirect(response: &crate::ao3::client::Response) -> Result<()> {
+    if response.location_contains("/auth_error") {
+        return Err(Error::CsrfExpired);
+    }
+    if response.location_contains("/users/login") {
+        return Err(Error::LoggedOut);
+    }
+    if response.location_contains("/lost_cookie") {
+        return Err(Error::SessionIncomplete);
+    }
+    if response.location_contains("/429") {
+        return Err(Error::RateLimited { retry_after: None });
+    }
+    Ok(())
+}
+
+fn classify_comment_write(
+    response: crate::ao3::client::Response,
+    action: &str,
+) -> Result<CommentOutcome> {
+    match response.status {
+        302 | 303 => {
+            check_comment_redirect(&response)?;
+            Ok(CommentOutcome {
+                comment_id: comment_id_from_location(response.location.as_deref()),
+            })
+        }
+        429 => Err(Error::RateLimited {
+            retry_after: response.retry_after,
+        }),
+        200 => Err(classify_comment_failure(&response.body)),
+        403 | 503 => Err(Error::BlockedByEdge {
+            status: response.status,
+        }),
+        status => Err(Error::UpstreamChanged(format!(
+            "{action} returned HTTP {status}"
+        ))),
+    }
+}
+
 /// Maps the re-rendered comment form's error text to a typed failure.
 fn classify_comment_failure(body: &str) -> Error {
     if body.contains("already left this comment") {

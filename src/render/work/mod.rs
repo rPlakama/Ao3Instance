@@ -82,6 +82,10 @@ pub struct ReadContext<'a> {
     /// AO3 page that carries this commentable's thread (for the "more comments"
     /// link when the cached copy is only the first page).
     pub comment_page_path: Option<&'a str>,
+    /// Cache scope of the rendered comment thread (`work` or `chapter:<id>`).
+    pub comment_scope_key: Option<&'a str>,
+    /// Signed-in AO3 login, when known: enables edit/delete on own comments.
+    pub viewer_account: Option<&'a str>,
 }
 
 pub fn read_page(
@@ -277,6 +281,8 @@ mod tests {
                 show_comments: false,
                 comment_notice: None,
                 comment_page_path: None,
+                comment_scope_key: None,
+                viewer_account: None,
             },
         );
         assert!(!html.contains("<iframe"), "chapters render inline: {html}");
@@ -348,6 +354,8 @@ mod tests {
                 show_comments: false,
                 comment_notice: None,
                 comment_page_path: None,
+                comment_scope_key: None,
+                viewer_account: None,
             },
         );
         assert!(
@@ -415,6 +423,8 @@ mod tests {
             show_comments: false,
             comment_notice: None,
             comment_page_path: None,
+            comment_scope_key: None,
+            viewer_account: None,
         }
     }
 

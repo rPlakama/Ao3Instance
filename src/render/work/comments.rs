@@ -67,7 +67,7 @@ pub(super) fn comments_section(work: &StoredWork, ctx: &ReadContext<'_>) -> Stri
                 ));
             }
         } else {
-            out.push_str(&thread_html(ctx.comments));
+            out.push_str(&thread_html(work, ctx));
             out.push_str(&thread_footer(work, ctx));
         }
     } else if ctx.comment_set.is_some() {
@@ -108,7 +108,8 @@ fn comment_form(work: &StoredWork, ctx: &ReadContext<'_>) -> String {
     )
 }
 
-fn thread_html(comments: &[Comment]) -> String {
+fn thread_html(work: &StoredWork, ctx: &ReadContext<'_>) -> String {
+    let comments = ctx.comments;
     let present: HashSet<&str> = comments
         .iter()
         .map(|comment| comment.comment_id.as_str())
@@ -124,20 +125,42 @@ fn thread_html(comments: &[Comment]) -> String {
         }
     }
 
+    // A comment with any reply cannot be edited (AO3's rule), so the edit link
+    // needs the set of parents, not just direct children.
+    let replied_parents: HashSet<&str> = comments
+        .iter()
+        .filter_map(|comment| comment.parent_id.as_deref())
+        .collect();
     let mut out = String::from("<ol class=\"thread\">");
     for (index, root) in roots.iter().enumerate() {
-        render_comment(&mut out, root, index, 0, &children);
+        render_comment(
+            &mut out,
+            root,
+            index,
+            0,
+            &children,
+            work,
+            ctx,
+            &replied_parents,
+        );
     }
     out.push_str("</ol>");
     out
 }
 
+#[allow(
+    clippy::too_many_arguments,
+    reason = "recursive thread renderer with the owner/permission context threaded through"
+)]
 fn render_comment(
     out: &mut String,
     comment: &Comment,
     index: usize,
     depth: usize,
     children: &HashMap<&str, Vec<&Comment>>,
+    work: &StoredWork,
+    ctx: &ReadContext<'_>,
+    replied_parents: &HashSet<&str>,
 ) {
     if depth > MAX_DEPTH {
         return;
@@ -184,14 +207,68 @@ fn render_comment(
         ));
     }
 
+    out.push_str(&comment_actions(comment, work, ctx, replied_parents));
+
     if let Some(replies) = children.get(comment.comment_id.as_str()) {
         out.push_str("<ol class=\"thread\">");
         for (reply_index, reply) in replies.iter().enumerate() {
-            render_comment(out, reply, reply_index, depth + 1, children);
+            render_comment(
+                out,
+                reply,
+                reply_index,
+                depth + 1,
+                children,
+                work,
+                ctx,
+                replied_parents,
+            );
         }
         out.push_str("</ol>");
     }
     out.push_str("</li>");
+}
+
+/// Reply (anyone signed in) and edit/delete (own comments) links, matching AO3's
+/// `_single_comment.html.erb` action row plus its edit rules: a comment with
+/// replies cannot be edited (`comments_controller.rb:252-259`), and delete is
+/// limited to the comment author (or the work creator, which this UI does not
+/// offer yet).
+fn comment_actions(
+    comment: &Comment,
+    work: &StoredWork,
+    ctx: &ReadContext<'_>,
+    replied_parents: &HashSet<&str>,
+) -> String {
+    if !ctx.write_gate.can_write() {
+        return String::new();
+    }
+    let work_id = escape(&work.ao3_id);
+    let comment_id = escape(&comment.comment_id);
+    let own = ctx.viewer_account.is_some_and(|account| {
+        comment
+            .author_login
+            .as_deref()
+            .is_some_and(|login| login.eq_ignore_ascii_case(account))
+    });
+    let mut out = String::from("<ul class=\"comment actions\" role=\"navigation\">");
+    out.push_str(&format!(
+        "<li><a href=\"/write/comment/reply?work_id={work_id}&amp;comment_id={comment_id}\">\
+         Reply</a></li>"
+    ));
+    if own {
+        if !replied_parents.contains(comment.comment_id.as_str()) {
+            out.push_str(&format!(
+                "<li><a href=\"/write/comment/edit?work_id={work_id}&amp;comment_id={comment_id}\">\
+                 Edit</a></li>"
+            ));
+        }
+        out.push_str(&format!(
+            "<li><a href=\"/write/comment/delete?work_id={work_id}&amp;comment_id={comment_id}\">\
+             Delete</a></li>"
+        ));
+    }
+    out.push_str("</ul>");
+    out
 }
 
 fn thread_footer(work: &StoredWork, ctx: &ReadContext<'_>) -> String {

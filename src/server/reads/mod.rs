@@ -315,6 +315,58 @@ pub(super) fn comment_scope(
     )
 }
 
+/// Best-effort refetch of one cached comment scope after a comment write.
+///
+/// The write already succeeded upstream, so a failed refresh only leaves the
+/// previous cache in place (with a log line); it must never fail the request.
+pub(super) async fn refresh_comments_scope(
+    state: &AppState,
+    work_id: &str,
+    scope: &str,
+) -> Handled<()> {
+    let path = if scope == crate::store::WORK_SCOPE {
+        format!("/works/{work_id}?view_full_work=true&show_comments=true")
+    } else if let Some(ao3_chapter_id) = scope.strip_prefix("chapter:") {
+        format!("/works/{work_id}/chapters/{ao3_chapter_id}?show_comments=true")
+    } else {
+        return Ok(());
+    };
+    let html = fetch_page_html(state, &path, work_id).await?;
+    let parsed = crate::ao3::comments::parse_comments_page(&html).map_err(AppError::from)?;
+    state
+        .store
+        .replace_comments(
+            work_id,
+            scope,
+            &parsed.comments,
+            parsed.total,
+            parsed.has_more,
+        )
+        .await?;
+    Ok(())
+}
+
+/// Reader URL that shows the comment scope a write happened in.
+pub(super) async fn comment_reader_back(
+    state: &AppState,
+    work_id: &str,
+    scope: &str,
+    notice_flag: &str,
+) -> String {
+    if let Some(ao3_chapter_id) = scope.strip_prefix("chapter:")
+        && let Ok(chapters) = state.store.get_chapters(work_id).await
+        && let Some(chapter) = chapters
+            .iter()
+            .find(|chapter| chapter.ao3_chapter_id.as_deref() == Some(ao3_chapter_id))
+    {
+        return format!(
+            "/read/{work_id}?chapter={}&show_comments=1&notice={notice_flag}",
+            chapter.idx
+        );
+    }
+    format!("/read/{work_id}?view_full_work=true&show_comments=1&notice={notice_flag}")
+}
+
 pub(super) async fn read_work(
     State(state): State<Arc<AppState>>,
     Path(id): Path<String>,
@@ -421,6 +473,8 @@ pub(super) async fn read_work(
             comment_set: comment_set.as_ref(),
             comment_notice,
             comment_page_path: Some(comment_page_path.as_str()),
+            comment_scope_key: Some(comment_scope_key.as_str()),
+            viewer_account: (!snap.account.is_empty()).then_some(snap.account.as_str()),
         },
     )))
 }

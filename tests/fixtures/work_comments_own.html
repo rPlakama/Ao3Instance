@@ -1,0 +1,165 @@
+<!DOCTYPE html>
+<!--
+  Synthetic AO3 "work page fetched with ?show_comments=true" comment section.
+
+  Structure follows the pinned otwarchive clone (`452391b`):
+    - app/views/comments/_commentable.html.erb: `#feedback.feedback`,
+      actions with `#show_comments_link`, `#add_comment_placeholder`,
+      `#comments_placeholder` holding `ol.pagination.actions` and `ol.thread`.
+    - app/views/comments/_comment_thread.html.erb: a comment `<li>` followed by a
+      wrapper `<li>` containing the nested reply `ol.thread`.
+    - app/views/comments/_single_comment.html.erb: `li.comment#comment_<id>`,
+      `h4.byline` (pseud link or plain guest name), `span.posted.datetime`,
+      `div.icon`, `blockquote.userstuff`, `p.edited.datetime`.
+    - Deleted comments render "(Previous comment deleted.)" with no body block;
+      their replies are still rendered and must not be lost.
+
+  This fixture is deliberately a fragment: the comment parser only reads the
+  commentable, and tests/fixtures/work_full.html covers the work page itself.
+-->
+<html lang="en">
+  <body>
+    <div id="feedback" class="feedback">
+      <h3 class="landmark heading">Actions</h3>
+      <ul class="actions">
+        <li><a href="#main">&#8593; Top</a></li>
+        <li id="show_comments_link"><a href="#" data-show-comments="true">Hide Comments (7)</a></li>
+      </ul>
+
+      <h3 class="landmark heading">Kudos</h3>
+      <div id="kudos">
+        <p class="kudos">1,024 guests left kudos on this work!</p>
+      </div>
+
+      <h3 class="landmark heading"><a id="comments">Comments</a></h3>
+
+      <div id="add_comment_placeholder" title="top level comment">
+        <div id="add_comment">
+          <div class="post comment" id="comment_form_for_12345">
+            <form id="comment_for_12345" class="new_comment" action="/works/12345/comments" accept-charset="UTF-8" method="post">
+              <fieldset>
+                <legend>Comment</legend>
+                <p>
+                  <label for="comment_content_for_12345">Comment</label>
+                  <textarea id="comment_content_for_12345" name="comment[comment_content]" rows="4"></textarea>
+                </p>
+                <p class="submit actions"><input type="submit" name="commit" value="Comment" /></p>
+              </fieldset>
+            </form>
+          </div>
+        </div>
+      </div>
+
+      <div id="comments_placeholder">
+        <ol class="pagination actions" role="navigation" aria-label="Pagination">
+          <li class="previous"><span class="disabled">&#8592; Previous</span></li>
+          <li class="current"><span>1</span></li>
+          <li><a href="?show_comments=true&amp;page=2">2</a></li>
+          <li class="next"><a href="?show_comments=true&amp;page=2">Next &#8594;</a></li>
+        </ol>
+
+        <ol class="thread">
+          <li class="odd comment group" id="comment_9001" role="article">
+            <h4 class="heading byline">
+              <a href="/users/reader_one/pseuds/reader_one">reader_one</a>
+              <span class="posted datetime">01 Nov 2026 10:00 UTC</span>
+            </h4>
+            <div class="icon">
+              <img class="icon" alt="reader_one" src="/images/avatars/default.png" />
+            </div>
+            <blockquote class="userstuff">
+              <p>First comment with <em>markup</em>.</p>
+              <script>bad()</script>
+            </blockquote>
+            <h5 class="landmark heading">Comment actions</h5>
+            <ul class="actions" id="navigation_for_comment_9001">
+              <li><a href="/comments/9001/reply">Reply</a></li>
+              <li><a href="/comments/9001">Thread</a></li>
+            </ul>
+          </li>
+          <li>
+            <ol class="thread">
+              <li class="even comment group" id="comment_9002" role="article">
+                <h4 class="heading byline">
+                  guest_name
+                  <span class="posted datetime">02 Nov 2026 09:00 UTC</span>
+                </h4>
+                <div class="icon"><span class="visitor icon"><!-- visitor icon holder --></span></div>
+                <blockquote class="userstuff">
+                  <p>A reply from a guest.</p>
+                </blockquote>
+                <p class="edited datetime">Last Edited 03 Nov 2026 08:00 UTC</p>
+              </li>
+            </ol>
+          </li>
+          <li class="even comment group" id="comment_9003" role="article">
+            <p>(Previous comment deleted.)</p>
+          </li>
+          <li>
+            <ol class="thread">
+              <li class="odd comment group" id="comment_9004" role="article">
+                <h4 class="heading byline">
+                  <a href="/users/third_user/pseuds/third_user">third_user</a>
+                  <span class="posted datetime">04 Nov 2026 11:30 UTC</span>
+                </h4>
+                <div class="icon">
+                  <img class="icon" alt="third_user" src="/images/avatars/default.png" />
+                </div>
+                <blockquote class="userstuff">
+                  <p>Reply to a deleted comment.</p>
+                </blockquote>
+              </li>
+            </ol>
+          </li>
+          <li class="odd comment group" id="comment_9005" role="article">
+            <h4 class="heading byline">
+              <a href="/users/reader_one/pseuds/reader_one">reader_one</a>
+              <span class="parent">on chapter 2</span>
+              <span class="posted datetime">05 Nov 2026 12:00 UTC</span>
+            </h4>
+            <div class="icon">
+              <img class="icon" alt="reader_one" src="/images/avatars/default.png" />
+            </div>
+            <blockquote class="userstuff">
+              <p>Second top-level comment.</p>
+            </blockquote>
+          </li>
+          <li class="even comment group" id="comment_9006" role="article">
+            <h4 class="heading byline">
+              <a href="/users/someone/pseuds/someone">someone</a>
+              <span class="posted datetime">06 Nov 2026 09:00 UTC</span>
+            </h4>
+            <div class="icon">
+              <img class="icon" alt="someone" src="/images/avatars/default.png" />
+            </div>
+            <blockquote class="userstuff">
+              <p>My own leaf comment.</p>
+            </blockquote>
+          </li>
+          <li class="odd comment group" id="comment_9007" role="article">
+            <h4 class="heading byline">
+              <a href="/users/someone/pseuds/someone">someone</a>
+              <span class="posted datetime">07 Nov 2026 09:00 UTC</span>
+            </h4>
+            <blockquote class="userstuff">
+              <p>My own comment that already has a reply.</p>
+            </blockquote>
+          </li>
+          <li>
+            <ol class="thread">
+              <li class="even comment group" id="comment_9008" role="article">
+                <h4 class="heading byline">
+                  another_guest
+                  <span class="posted datetime">08 Nov 2026 09:00 UTC</span>
+                </h4>
+                <blockquote class="userstuff">
+                  <p>A guest replied to my comment.</p>
+                </blockquote>
+              </li>
+            </ol>
+          </li>
+        </ol>
+      </div>
+    </div>
+  </body>
+</html>

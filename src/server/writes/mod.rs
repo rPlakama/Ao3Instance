@@ -6,6 +6,7 @@
 
 mod actions;
 mod chapter;
+mod comment_actions;
 mod edit_work;
 mod preview;
 mod work;
@@ -31,6 +32,12 @@ pub(super) use actions::{
     write_bookmark, write_comment, write_kudos, write_reading, write_subscribe, write_unsubscribe,
 };
 pub(super) use chapter::{chapter_editor, chapter_preview, chapter_save};
+pub(super) use comment_actions::{
+    delete_page as comment_delete_page, delete_save as comment_delete_save,
+    edit_page as comment_edit_page, edit_preview as comment_edit_preview,
+    edit_save as comment_edit_save, reply_page as comment_reply_page,
+    reply_preview as comment_reply_preview, reply_save as comment_reply_save,
+};
 pub(super) use edit_work::{edit_work, edit_work_preview, edit_work_save};
 pub(super) use preview::{write_comment_preview, write_preview};
 pub(super) use work::{compose, delete_work, publish_draft, write_work, write_work_preview};
@@ -190,6 +197,10 @@ pub(super) fn notice_text(key: &str) -> Option<&'static str> {
         "reading_read" => Some("Marked as read."),
         "reading_failed" => Some("AO3 refused the reading update; see the audit log."),
         "comment_posted" => Some("Comment posted on AO3."),
+        "comment_updated" => Some("Comment updated on AO3."),
+        "comment_deleted" => Some("Comment deleted on AO3."),
+        "comment_edit_failed" => Some("AO3 rejected the comment edit; see the audit log."),
+        "comment_delete_failed" => Some("AO3 rejected the comment delete; see the audit log."),
         "comment_failed" => Some("AO3 rejected the comment; see the audit log."),
         "comment_spam" => Some("AO3's spam filter rejected the comment; reword and try again."),
         "comment_rate_limited" => Some("AO3's comment limit is 3 per 15 minutes; try again later."),

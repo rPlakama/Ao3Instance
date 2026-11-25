@@ -305,7 +305,7 @@ The fault matrix in ADR-0005 is the acceptance test for W6.
 **Remaining W6:** sandbox validation against a local otwarchive (operator step; heavy
 Docker stack), then final gates and the release skill.
 
-### W6 addendum — 2026-11-25: direct kudos/subscribe and cached comments
+### W6 addendum — 2026-11-25: direct kudos/subscribe, cached comments and comment actions
 
 **Direct posts.** Reader kudos and work subscribe/unsubscribe now post directly from the
 work page like AO3's own forms: `form.new_kudo` → `POST /write/kudos` in the bottom
@@ -333,6 +333,40 @@ AO3's first page is cached (`has_more` links out); deleted or hidden comments ar
 from the cache and their replies are hoisted to the omitted comment's parent rather than
 lost. Bodies are untrusted author HTML, stored raw like chapter text and sanitized at
 render. Tests: `tests/comments_cache.rs`.
+
+**Comment actions.** The cached thread now carries AO3's comment action row when the write
+gate is ready: **Reply** on every comment, **Edit**/**Delete** on comments whose
+`author_login` matches the signed-in account (case-insensitive), and **Edit** only while
+the comment has no replies — AO3's rule (`comments_controller.rb:252-259`). The links take
+`work_id` + `comment_id` to `GET /write/comment/reply|edit|delete`; the reply editor shows
+the parent comment's author and sanitized text, the edit editor is prefilled from the
+cached comment body, and delete is a destructive confirmation that explains AO3's
+deleted-comment marker. `POST /write/comment/reply/preview` and
+`POST /write/comment/edit/preview` validate locally and render a confirmation page without
+a network write; the saves are one confirmed request each:
+`POST /comments/<parent_id>/comments` with `comment[pseud_id]` +
+`comment[comment_content]` (a 302 carrying `#comment_<id>` is success, audit `replied`;
+a 200 re-render maps AO3's refusal text to typed notices, and spam/rate-limit flags are
+surfaced; policy refusals on the reply — blocked user, frozen or closed thread — are
+flash-only redirects), `PATCH /comments/<id>` with `comment[comment_content]` (audit
+`comment-updated`; only the account's own comments, and the editor returns 400 for a
+replied-to comment before sending anything), and `DELETE /comments/<id>` (audit
+`comment-deleted`; only the account's own comments). Replies share the `comment` governor
+budget — AO3's own 3 / 15 minutes — and edits and deletes are 10/hour each. After any
+success the affected comment scope is re-fetched once, best effort, so the reader shows
+the change; a failed refresh keeps the cached copy and logs, and the reader returns with a
+notice. Because AO3 answers edit/delete refusals with the same redirect as success (the
+reason is only a flash) and the cache does not store AO3's frozen/moderation state, both
+actions rest on the UI's ownership guard and the audit records the verified request, not a
+guaranteed effect; the thread refresh is the practical confirmation. The reader context
+gained the cache scope and viewer login, and the store gained `find_comment`. Tests:
+`tests/comments_actions.rs` (6: reader offers Reply and only-safe Edit/Delete links; reply
+confirms + one POST + refresh + audit; edit prefilled + one PATCH + audit; delete warns +
+one DELETE + audit; other people's comments 403 and a replied-to own comment 400; write
+switch required) plus a new own-comment fixture (the cache fixture is unchanged); full
+suite 324 green; the route-drift gate rose to 65 claims (comment update/destroy, the
+edit-with-replies rule, the nested commentable). Evidence:
+`notes/gates/comment-actions.txt`.
 
 ### Work creation addendum — 2026-11-25
 
