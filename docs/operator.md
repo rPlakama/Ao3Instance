@@ -92,6 +92,14 @@ Limits and behaviour:
 `/my/works`, `/my/works/drafts` the signed-in author's works and drafts, read from AO3's
 own `/users/<login>/works[/drafts]` (30-min cached, offline notice, `?page=N`,
 `?refresh=1`; drafts warn that AO3 deletes unposted drafts after ~29 days) ·
+`/my/works/<id>/chapters` one work's chapter manager: AO3's own chapter index from
+`/works/<id>/navigate` (signed-in, 30-min cached, `?refresh=1`) with chapter titles and
+dates, plus Edit/Add Chapter links when writes are enabled ·
+`/write/chapter/new?work_id=<id>` and `/write/chapter/edit?work_id=<id>&chapter_id=<id>`
+the chapter editor (signed in and writes enabled; blank for a new chapter with the next
+number suggested; an edit is prefilled from AO3's chapter form) ·
+`POST /write/chapter/preview` local validation + confirmation (no upstream write) ·
+`POST /write/chapter` the one chapter create/update request ·
 `GET /write/preview?kind=work-publish|work-delete&id=<id>` local confirmation ·
 `POST /write/work/publish` one confirmed `PUT /works/<id>/post_draft` ·
 `POST /write/work/delete` one confirmed `DELETE /works/<id>` ·
@@ -156,7 +164,9 @@ and verifies that `ao3i.db` and `key` are created.
    subscriptions post straight from the reader; comments and bookmarks show a
    confirmation page first. The signed-in menu and the dashboard sidebar gain
    Writing entries (My Works, My Drafts, and — with writes enabled — Post a new
-   work). Every write is recorded in **Audit**.
+   work); My Works rows link to each work's chapter manager (**Chapters**, and
+   **Add Chapter** for a work still in progress once writes are enabled). Every
+   write is recorded in **Audit**.
 
 ## Data on disk
 
@@ -197,6 +207,20 @@ re-importing the session; cached works and progress are unaffected.
   it, `save_button` saves it as an AO3 draft. It is never retried — a timeout is
   recorded as ambiguous and the composer tells you to check your works list on
   AO3 before trying again.
+- Adding and editing chapters: the chapter manager at
+  `/my/works/<id>/chapters` lists AO3's own chapter index for one of your works
+  (30-minute cached; `?refresh=1` forces a fetch) with chapter titles, dates and
+  Edit links, and the editor at `/write/chapter/new|edit` mirrors AO3's chapter
+  form (a new chapter suggests the next number; an edit is prefilled from AO3).
+  The editor validates against AO3's chapter limits and shows a confirmation
+  page naming the chapter; `/write/chapter` then sends exactly one
+  `POST /works/<work_id>/chapters` (`post_without_preview_button` publishes,
+  `save_button` saves an unposted AO3 chapter draft) or one
+  `PUT /works/<work_id>/chapters/<chapter_id>` (`update_button`). On success the
+  reader opens with a notice and the cached work is re-fetched once, best effort,
+  so it shows the new chapter; an AO3 refusal re-renders the editor with AO3's
+  messages and the composed text preserved. It is never retried — a timeout is
+  recorded as ambiguous, so check the chapter on AO3 before trying again.
 - Managing works: `/my/works` and `/my/works/drafts` (linked from the signed-in
   header menu and from the dashboard sidebar's **Writing** section) show AO3's
   own works and drafts lists. **Post Draft** and
@@ -211,8 +235,8 @@ re-importing the session; cached works and progress are unaffected.
   The **Post a new work** link appears only with writes enabled; My Works and My
   Drafts need only a signed-in AO3 session.
 - Client budgets: comments 3/15 min (AO3's own limit), kudos 10/min,
-  subscriptions 20/h, bookmarks 10/min, new works 3/h, draft publishing 10/h,
-  work deletes 5/h. `Retry-After` parks the action.
+  subscriptions 20/h, bookmarks 10/min, new works 3/h, chapter saves 10/h,
+  draft publishing 10/h, work deletes 5/h. `Retry-After` parks the action.
 - The audit log (`/audit`) is append-only and stores targets and outcomes — never
   payloads, cookies or passwords.
 - To stop all writes immediately: restart with `AO3I_WRITE_ENABLED=false` (default).
@@ -251,14 +275,21 @@ shows exactly what was done.
 
 - Chapter-level reading progress only; no scroll/block anchor yet (I7 refinement).
 - Bookmarks and comments are created, not edited or deleted from the app.
-- New-work posting creates a work plus its first chapter only: there is no "add
-  chapter" flow and a work cannot be edited from the app, so chapter management
-  and metadata/tag editing stay on AO3. **My Works**/**My Drafts** can publish a
-  draft and delete a work or draft, and deletion is permanent — AO3 cannot undo
-  it. Drafts live on AO3, not locally, and AO3 deletes unposted drafts after
-  about 29 days. Management requires a signed-in AO3 session, and its actions
-  additionally require `AO3I_WRITE_ENABLED=true`; nothing is scheduled or posted
-  in the background.
+- New-work posting creates the work plus its first chapter in one request;
+  further chapters are added and corrected from the chapter manager. Chapter
+  deletion is not implemented, and neither is AO3's dedicated chapter-reordering
+  view (the editor's Chapter Number field can still change a chapter's position
+  one at a time, but there is no reorder screen). Work metadata/tag editing also
+  stays on AO3. There is no scheduling or backdating UI: AO3 dates a new chapter
+  today and the publication date is never exposed. After a successful chapter
+  save the cached copy of the work is re-fetched once (best effort) so the
+  reader shows the change; if that refresh fails, the previous copy stays until
+  "Refresh from AO3". **My Works**/**My Drafts** can publish a draft and delete
+  a work or draft, and deletion is permanent — AO3 cannot undo it. Drafts live
+  on AO3, not locally, and AO3 deletes unposted drafts after about 29 days.
+  Management requires a signed-in AO3 session, and its actions additionally
+  require `AO3I_WRITE_ENABLED=true`; nothing is scheduled or posted in the
+  background.
 - Cached comment threads are a read-only copy of AO3's rendered comments: there
   is no reply, edit or delete from the cached thread, and only AO3's first page
   is stored (further pages link out). The copy is keyed to the commentable the

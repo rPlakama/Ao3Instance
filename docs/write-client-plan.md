@@ -337,14 +337,14 @@ render. Tests: `tests/comments_cache.rs`.
 ### Work creation addendum — 2026-11-25
 
 **Decision.** New-work creation is now in scope ([ADR-0008](adr/0008-work-creation.md)),
-superseding the "works/chapters creation" deferral in ADR-0003 for new works only. The
-composer at `GET /works/new` mirrors AO3's own new-work form: rating, archive warnings,
-categories, fandom/relationship/character/additional tags, title, creator pseud, summary,
-notes, language, collections, gifts, chapter title and work text. The option lists
-(ratings, warnings, categories, numeric language ids, creator pseuds) are parsed from
-AO3's real `/works/new` page and cached for 10 minutes, so no private database id is
-hardcoded. AO3's model limits are mirrored locally (title 1–255, summary 1,250, notes
-5,000, each tag 150, at most 75 user-defined tags, work text 10–510,000, at least one
+superseding the "works/chapters creation" deferral in ADR-0003 for new works and chapter
+management. The composer at `GET /works/new` mirrors AO3's own new-work form: rating,
+archive warnings, categories, fandom/relationship/character/additional tags, title,
+creator pseud, summary, notes, language, collections, gifts, chapter title and work text.
+The option lists (ratings, warnings, categories, numeric language ids, creator pseuds) are
+parsed from AO3's real `/works/new` page and cached for 10 minutes, so no private database
+id is hardcoded. AO3's model limits are mirrored locally (title 1–255, summary 1,250,
+notes 5,000, each tag 150, at most 75 user-defined tags, work text 10–510,000, at least one
 warning, rating/fandom/language/pseud required), so an obviously invalid work never
 reaches the archive.
 
@@ -362,9 +362,42 @@ a 302 to `/works/:id/preview` means saved as a draft (audit `work-draft`, then a
 a timeout is audited `ambiguous` and never retried. The `post_work` governor budget is
 3 per hour.
 
-**Scope.** New work plus first chapter, publish or draft. Adding chapters and editing
-a work stay later work; the works manager and its publish/delete actions are the next
-addendum. Tests: `tests/writes_work.rs` (6) plus `ao3::compose` unit tests.
+**Chapter management.** A chapter is added or edited through AO3's own surfaces, with
+the same write spine. `GET /my/works/<id>/chapters` fetches `/works/<id>/navigate`
+through the 30-minute page cache and parses `ol.chapter.index.group > li > a` plus
+`span.datetime` (work title from `h2.heading`; AO3's `<position>. ` display prefix is
+stripped), listing chapters in order with dates, Edit links and Add Chapter; My Works
+rows gained **Chapters**, and **Add Chapter** for works still in progress when writes
+are enabled. The editor at `/write/chapter/new|edit` mirrors
+`chapters/_chapter_form.html.erb`: a new chapter suggests the next position from the
+parsed index, and an edit is prefilled from AO3's `GET /works/<w>/chapters/<c>/edit`
+(`#chapter-form`), with textarea values decoded to raw author HTML rather than
+serialized entities. Fields are `chapter[title]`, `chapter[position]`,
+`chapter[wip_length]`, `chapter[summary]`, `chapter[notes]`, `chapter[endnotes]`,
+`chapter[content]`, validated locally against AO3's chapter limits (title 255,
+summary 1,250, notes 5,000, text 10–510,000; `?` is accepted as "total unknown" like
+AO3 renders it). `POST /write/chapter/preview` renders a local confirmation with no
+network write; `POST /write/chapter` then sends exactly one request — create
+`POST /works/<w>/chapters` with `post_without_preview_button` (posted) or
+`save_button` (chapter draft), update `PUT /works/<w>/chapters/<c>` with
+`update_button`. A 302 to `/works/<w>/chapters/<c>` means saved (audit
+`chapter-posted`/`chapter-updated`, the new id parsed from `Location`; on update the
+redirect must name the edited chapter, otherwise it is AO3's permission/not-found
+refusal); a 302 to `…/preview` means chapter draft (audit `chapter-draft`); a 200/422
+`#error` re-render is AO3's refusal (audit `failed`, AO3's messages and the composed
+text kept on the editor); a timeout is audited `ambiguous` and never retried. After a
+success the cached work is re-fetched once, best effort, so the reader shows the new
+chapter; a refresh failure is logged and never turns the write into an error. The
+`chapter` governor budget is 10 per hour. Tests: `tests/writes_chapters.rs` (7) plus
+`ao3::chapters` parser/validation unit tests (4); full suite 309 green; the route gate
+stands at 57 claims and the wiring crawl covers `/my/works/12345/chapters`. Evidence:
+`notes/gates/chapter-management.txt`.
+
+**Scope.** New work plus first chapter, publish or draft. Chapter management (index,
+add, edit) is documented above; editing a work's metadata/tags, chapter
+deletion/reordering and scheduling stay later work, and the works manager with its
+publish/delete actions is the next addendum. Tests: `tests/writes_work.rs` (6) plus
+`ao3::compose` unit tests.
 
 ### Works management addendum — 2026-11-25
 

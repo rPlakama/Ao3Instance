@@ -136,11 +136,14 @@ triggers `/lost_cookie`. Import is validated by the §2.2 probe before being mar
 | work create | `POST /works` | HTML | `work[title]`, `work[rating_string]`, `work[archive_warning_strings][]`, `work[fandom_string]`, `work[language_id]`, `work[chapter_attributes][content]`, `work[author_attributes][ids][]`, `post_button`/`save_button` | 302 → `/works/:id` (posted) or `/works/:id/preview` (draft) | 200 re-render with `#error` blocks; 429; 302 → `/auth_error` |
 | draft publish | `PUT /works/:id/post_draft` | HTML | `authenticity_token` only — the draft already exists | 302 → `/works/:id` (now posted) | 302 → `/users/:login/works/:id/edit` (already posted/invalid); 200/422 with `#error`; 302 → `/auth_error`; 429; 403/503 |
 | work delete | `DELETE /works/:id` | HTML | `authenticity_token` (body field **and** `X-CSRF-Token`) | 302 → `/users/:login/works` (posted work) or `/users/:login/works/drafts` (draft) | 302 → `/users/login`, `/lost_cookie`, `/auth_error`; 200/422; 429; 403/503 |
+| chapter create | `POST /works/:work_id/chapters` | HTML | `chapter[title]`, `chapter[position]`, `chapter[wip_length]`, `chapter[summary]`, `chapter[notes]`, `chapter[endnotes]`, `chapter[content]`, `post_without_preview_button`/`save_button` | 302 → `/works/:work_id/chapters/:id` (posted) or `/works/:work_id/chapters/:id/preview` (unposted draft) | 200 re-render with `#error`; 429; 302 → `/auth_error` |
+| chapter update | `PUT /works/:work_id/chapters/:id` | HTML | the same `chapter[...]` fields, `update_button` | 302 → `/works/:work_id/chapters/:id` | 200 re-render with `#error`; 429; 302 → `/auth_error` |
 
-Deferred (documented, not implemented): chapter addition, editing a work or its
-tags/metadata, mute/block, collections, comment moderation
+Deferred (documented, not implemented): chapter deletion/reordering, editing a work
+or its tags/metadata, co-creators, mute/block, collections, comment moderation
 (approve/reject/freeze/hide), admin version of any action. Draft publishing and work
-deletion are implemented — see §4.9 and §4.10.
+deletion are implemented — see §4.9 and §4.10; creating and editing chapters are
+implemented — see §4.11 and §4.12.
 
 ---
 
@@ -375,6 +378,120 @@ deletion are implemented — see §4.9 and §4.10.
     30-minute cached `/users/<login>/works` pages — otherwise My Works keeps showing a
     work that no longer exists.
 
+### 4.11 Chapter create — `POST /works/:work_id/chapters`
+
+- **Preconditions:** signed-in usable session (both cookies, §2); CSRF token; writes
+  enabled client-side; `:work_id` is an existing work authored by the signed-in account
+  (`users_only` + `check_ownership`, `chapters_controller.rb:4-11`). Chapters are a
+  **nested resource** under the work (`routes.rb:403-414`), not a flat write like the
+  actions above.
+- **Body:** `chapter[title]`, `chapter[position]`, `chapter[wip_length]`,
+  `chapter[summary]`, `chapter[notes]`, `chapter[endnotes]`, `chapter[content]`,
+  `authenticity_token`.
+  `chapter[wip_length]` is the work's "of N" **expected chapter count**: the controller
+  copies it into `@work.wip_length` directly (`chapters_controller.rb:116`), while the
+  chapter's own `wip_length` accessor is a virtual attribute that only carries a
+  placeholder (`chapter.rb:156-172`). A blank value or AO3's `?` means "total unknown"
+  (the client preserves both).
+- **Button name decides posted vs draft** (`_posting_fieldset.html.erb:11-29`):
+  `post_without_preview_button` (Post) sets `@chapter.posted = true` before saving and
+  redirects to the chapter (`chapters_controller.rb:121,126`); `save_button` (Save as
+  Draft) — or any other non-post submit — saves the chapter unposted and redirects to its
+  `/preview` path (`:129`). The controller tests only parameter **presence**
+  (`params[:post_without_preview_button]`), so the submitted value is ignored.
+  `preview_button` renders AO3's preview view (a 200, not a write); the client previews
+  locally and never sends it upstream.
+- **Response classification** (redirects are `302`; both branches of the create action
+  are redirects):
+
+  | response | meaning |
+  | --- | --- |
+  | 302 → `/works/:work_id/chapters/:id` | chapter created and **posted**; the id is not in the request — parse it from `Location` |
+  | 302 → `/works/:work_id/chapters/:id/preview` | chapter created as an **unposted draft**; the id comes from the same path |
+  | 200 (or 422) re-render of the chapter form with `#error li` | validation failure (chapter, or the parent work); AO3's messages; nothing created |
+  | 302 → `/auth_error` | CSRF expired; Rails aborted before the action |
+  | 302 → `/users/login` | logged out; re-authenticate |
+  | 302 → `/lost_cookie` | jar incomplete (`user_credentials` missing) |
+  | 429 | rate limited; honour `Retry-After` |
+  | 403/503 | edge block / challenge |
+  | transport error | **ambiguous**: the chapter may exist; verify the chapter list on AO3 before retrying |
+
+- **Idempotency:** none — a second successful post creates a second chapter. The client
+  sends one confirmed request and never retries; a timeout is closed as `ambiguous`. The
+  CSRF refresh-and-retry is the only safe retry: Rails aborts in
+  `protect_from_forgery` before `chapters#create` runs.
+- **Limits:** chapter title ≤ 255, summary ≤ 1,250, notes and end notes ≤ 5,000 each,
+  chapter text 10–510,000 (`chapter.rb:14-24`, same constants as the work text,
+  `config.yml:101-108`).
+- **Budget:** the client governor allows `chapter` 10 per hour, covering create and
+  update; like the other public writes it is one at a time and never auto-retried.
+- **Gotchas:**
+  - The chapter fieldset is **singular and nested** (`chapter[...]` under the work),
+    unlike work creation's `work[chapter_attributes][...]` (§4.8). Mixing the two shapes
+    silently loses fields.
+  - There is no chapter id in the request. The redirect path is both the proof and the
+    only source of the new id; a response that is not a redirect means nothing was
+    created.
+  - `chapter[position]` is a plain number. AO3's own new-chapter form pre-fills
+    `@work.number_of_chapters + 1` (`chapters_controller.rb:81-83`), and order is
+    `position ASC` (`work.rb:785-793`); reordering afterwards lives in AO3's separate
+    Manage Chapters view (`routes.rb:404-407`, `chapters_controller.rb:167-181`), which
+    this client does not mirror.
+  - `chapter[published_at]` (date selects) is permitted (`chapters_controller.rb:268-272`)
+    but this client does not send it; AO3 dates a new chapter today
+    (`chapter.rb:174-182`).
+  - Posting the first chapter of an unposted draft work also posts the work:
+    `post_chapter` sets `@work.posted = true` (`chapters_controller.rb:261-264`). The
+    client's chapter links start from My Works' posted rows; the drafts list offers
+    publish/delete only.
+
+### 4.12 Chapter update — `PUT /works/:work_id/chapters/:id`
+
+- **Preconditions:** as §4.11, and `:id` is a chapter of that work
+  (`load_work` + `load_chapter` + `check_ownership`,
+  `chapters_controller.rb:4-11`). AO3's own form is a `form_for([@work, chapter])`, so the
+  browser submits `POST` with `_method=put`; the client sends a real `PUT`
+  (`routes.rb:403-414`).
+- **Body:** the same `chapter[...]` fields as §4.11 plus `update_button` (Update);
+  `chapter[author_attributes]` is permitted by the controller but the client leaves the
+  writers inherited from the work.
+- **Response classification:**
+
+  | response | meaning |
+  | --- | --- |
+  | 302 → `/works/:work_id/chapters/:id` (the edited chapter) | chapter **updated** |
+  | 302 → anywhere else, e.g. `/works/:work_id` | refusal, not a save: a missing chapter redirects to the work (`chapters_controller.rb:252-258`) and a non-owner is denied with the work as destination (`check_ownership`, `application_controller.rb:488-490`) |
+  | 200 (or 422) re-render of the chapter form with `#error li` | validation failure; AO3's messages; nothing changed |
+  | 302 → `/auth_error` | CSRF expired; Rails aborted before the action |
+  | 302 → `/users/login` | logged out; re-authenticate |
+  | 302 → `/lost_cookie` | jar incomplete |
+  | 429 | rate limited; honour `Retry-After` |
+  | 403/503 | edge block / challenge |
+  | transport error | **unknown**: the update may have landed; verify the chapter on AO3 before retrying |
+
+- **Idempotency:** re-sending the same fields converges to the same chapter, but AO3
+  offers no idempotency token and the client still sends **one confirmed request and
+  never retries**; a timeout is reported as unknown.
+- **Button names on update:** `update_button` (Update) saves the edit without touching
+  the posted flag; AO3's edit form only shows `post_button`/`post_without_preview_button`
+  on an unposted chapter, and those set `posted = true`
+  (`chapters_controller.rb:154`; `_posting_fieldset.html.erb:22-29`). The client sends
+  `update_button`, so a chapter's existing posted/draft state is preserved.
+- **Limits and budget:** same as §4.11 (chapter limits; `chapter` 10/hour).
+- **Gotchas:**
+  - The redirect must name the **edited** chapter, not just any chapter. A 302 to
+    `/works/:work_id` is AO3's ownership or chapter-not-found redirect
+    (`application_controller.rb:488-490`, `chapters_controller.rb:252-258`); the client
+    treats it as a refusal rather than a successful save.
+  - The edit page also offers **Delete Chapter** (`chapters/edit.html.erb:12`, through
+    `/works/:work_id/chapters/:id/confirm_delete`); it is not implemented by this client.
+  - Changing `chapter[position]` moves the chapter within the work; AO3's dedicated
+    Manage Chapters page can reorder in bulk (`chapters_controller.rb:167-181`), which
+    this client does not mirror.
+  - When the parent work is invalid, the controller copies the work's errors onto the
+    chapter and re-renders instead of saving (`chapter_cannot_be_saved?`,
+    `chapters_controller.rb:230-239`); those messages are the work's, not the chapter's.
+
 ---
 
 ## 5. Outcome detection
@@ -389,6 +506,8 @@ Ordered from strongest to weakest signal. Prefer the highest available for each 
    - `/works/:id` → work created and posted, or (for `PUT /works/:id/post_draft`) a
      draft published;
    - `/works/:id/preview` → work created as an unposted draft;
+   - `/works/:work_id/chapters/:id` → chapter created and posted, or chapter updated;
+   - `/works/:work_id/chapters/:id/preview` → chapter created as an unposted draft;
    - `/users/:login/works` or `/users/:login/works/drafts` → work deleted (the drafts
      list means the deleted work was a draft; both are success for `DELETE /works/:id`);
    - `/users/:login/works/:id/edit` → draft publish refused (already posted or invalid);
@@ -403,7 +522,8 @@ Ordered from strongest to weakest signal. Prefer the highest available for each 
    - success: the kudos section shows the user / `#kudos_message` is present;
    - failure: one of the exact strings in §4.1 appears in the page.
    For a work create, the failure marker is a re-rendered form carrying an `#error`
-   block whose `li` items are AO3's messages (§4.8).
+   block whose `li` items are AO3's messages (§4.8); for a chapter create or update it
+   is the same marker on the chapter form (§4.11–§4.12).
 4. **Re-read verification** — for ambiguous cases (network failure after send, missing
    marker): read the target state (kudos given? subscription present? comment id present?)
    and only then decide. Never infer success from "no error".
@@ -442,9 +562,9 @@ Never use HTTP status alone: kudos success and failure are both `302`.
 | --- | --- | --- |
 | `ServerUnique` | kudos | retry allowed; map duplicate to `AlreadyDone` |
 | `ServerConstrained` | favorite tags (model validation) | retry allowed; 422 duplicate → already done |
-| `ClientGuarded` | comments, bookmarks | **never auto-retry**; verify by re-read; require a new user confirmation for a second attempt |
+| `ClientGuarded` | comments, bookmarks, chapter update | **never auto-retry**; verify by re-read; require a new user confirmation for a second attempt |
 | `NoConstraint` | subscriptions | **never retry**; pre-check the index, post-check, show state |
-| `NonIdempotentCreate` | work create | **never retry**; read the 302 to classify; a timeout is ambiguous — the user verifies on AO3 before a second attempt |
+| `NonIdempotentCreate` | work create, chapter create | **never retry**; read the 302 to classify; a timeout is ambiguous — the user verifies on AO3 before a second attempt |
 | `DestructiveStateChange` | draft publish, work delete | **never auto-retry**; one confirmed request; classify from the redirect; a timeout is unconfirmed — verify My Works/My Drafts before a second attempt (deletion is irreversible) |
 
 Ambiguity rule: a transport failure *after* the request was written is `Ambiguous`. The
@@ -469,6 +589,7 @@ worse than a failed one.
 | work notes | 5,000 chars | `config.yml:104` |
 | tag name | 150 chars | `config.yml:106` |
 | work text | 10–510,000 chars | `config.yml:107-108` |
+| chapter title / summary / notes / text | same constants as the work fields (`chapter.rb:14-24`) | `config.yml:101,103,104,107,108` |
 | user-defined tags (fandom, relationship, character, additional) | 75 total | `config.yml:132` |
 | session lifetime | 2 weeks (3 months remembered) | `config.yml:14-15` |
 | comment thread depth | 5 | `config.yml:198` |
@@ -477,7 +598,9 @@ The client's own floor is stricter than the server's: ≥ 2 s between requests, 
 flight, no parallelism, no background writes. Work creation is additionally budgeted at
 3 per hour by the write governor: posting is rare, consequential and non-idempotent.
 Draft publishing is budgeted at 10 per hour and work deletion at 5 per hour; both are one
-confirmed request and never retried.
+confirmed request and never retried. Chapter create and update share one `chapter`
+budget of 10 per hour: a chapter save is public and, for a create, non-idempotent, so it
+is one confirmed request with no automatic retry.
 
 ---
 

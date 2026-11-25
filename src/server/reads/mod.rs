@@ -226,6 +226,21 @@ pub(super) async fn fetch_page_html(
     }
 }
 
+/// Re-fetches one already-cached work and replaces the cached copy.
+///
+/// Used after a chapter create/update so the reader immediately shows the new
+/// state. Best-effort by design: the write already succeeded upstream, so the
+/// caller only logs a refresh failure (the cached copy stays readable and
+/// `Refresh from AO3` is available in the reader).
+pub(super) async fn refresh_cached_work(state: &AppState, id: &str) -> Handled<()> {
+    let html = fetch_work_html(state, id).await?;
+    let mut page = parse_work_page(&html).map_err(AppError::from)?;
+    page.ao3_id = id.to_string();
+    let content_hash = sha256_hex(html.as_bytes());
+    state.store.upsert_work(&page, &content_hash).await?;
+    Ok(())
+}
+
 /// `GET /works/<id>` is the AO3-shaped alias: cached works read like `/read/<id>`,
 /// uncached ones get an offline miss page with an explicit open button.
 pub(super) async fn work_alias(

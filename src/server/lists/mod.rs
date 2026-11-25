@@ -17,7 +17,9 @@ use crate::render::{self, NavSection};
 use crate::server::AppState;
 use crate::server::error::Handled;
 
-pub(super) use account::{bookmarks, dashboard, my_drafts, my_works, reading, subscriptions};
+pub(super) use account::{
+    bookmarks, dashboard, my_drafts, my_work_chapters, my_works, reading, subscriptions,
+};
 pub(super) use browse::{autocomplete, browse, tag_browse};
 pub(super) use directory::{fandoms, medium_fandoms, tag_search};
 

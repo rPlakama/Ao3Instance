@@ -2,6 +2,7 @@
 
 pub mod account_lists;
 pub mod actions;
+pub mod chapters;
 pub mod client;
 pub mod comments;
 pub mod compose;

@@ -638,6 +638,143 @@ fn delete_work_result(location: Option<&str>) -> Result<()> {
     )))
 }
 
+/// How a chapter submission should be saved on AO3.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ChapterSave {
+    /// New chapter, posted immediately (`post_without_preview_button`).
+    Post,
+    /// New chapter, saved as an unposted chapter draft (`save_button`).
+    Draft,
+    /// Existing chapter (`update_button`, one `PUT`).
+    Update,
+}
+
+/// Result of one chapter submission.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SavedChapter {
+    pub chapter_id: Option<String>,
+    pub draft: bool,
+}
+
+/// Creates or updates one chapter through AO3's own chapter form.
+///
+/// Exactly one request: the caller owns the confirmation step, intent/audit rows
+/// and the governor. Chapter saving is not idempotent for creates, so nothing is
+/// retried here (the CSRF refresh inside the session is the only exception; Rails
+/// aborts `/auth_error` before the controller runs).
+pub async fn save_chapter(
+    session: &mut AccountSession,
+    work_id: &str,
+    chapter_id: Option<&str>,
+    fields: &crate::ao3::chapters::ChapterFields,
+    mode: ChapterSave,
+) -> Result<SavedChapter> {
+    let updating = chapter_id.is_some();
+    let mut form: Vec<(&str, String)> = vec![
+        ("utf8", "\u{2713}".to_string()),
+        ("chapter[content]", fields.content.clone()),
+    ];
+    let mut push = |name: &'static str, value: &str| {
+        if !value.trim().is_empty() || (updating && name != "chapter[position]") {
+            form.push((name, value.to_string()));
+        }
+    };
+    push("chapter[title]", fields.title.trim());
+    push("chapter[position]", fields.position.trim());
+    push("chapter[wip_length]", fields.wip_length.trim());
+    push("chapter[summary]", fields.summary.trim());
+    push("chapter[notes]", fields.notes.trim());
+    push("chapter[endnotes]", fields.endnotes.trim());
+
+    let path = match chapter_id {
+        Some(chapter_id) => format!("/works/{}/chapters/{chapter_id}", work_id.trim()),
+        None => format!("/works/{}/chapters", work_id.trim()),
+    };
+    form.push((
+        match mode {
+            ChapterSave::Post => "post_without_preview_button",
+            ChapterSave::Draft => "save_button",
+            ChapterSave::Update => "update_button",
+        },
+        match mode {
+            ChapterSave::Post => "Post",
+            ChapterSave::Draft => "Save as Draft",
+            ChapterSave::Update => "Update",
+        }
+        .to_string(),
+    ));
+    let encoded: Vec<(&str, &str)> = form
+        .iter()
+        .map(|(name, value)| (*name, value.as_str()))
+        .collect();
+    let response = match mode {
+        ChapterSave::Update => session.put_write(&path, &encoded).await?,
+        ChapterSave::Post | ChapterSave::Draft => session.post_write(&path, &encoded).await?,
+    };
+    match response.status {
+        302 | 303 => {
+            if response.location_contains("/users/login") {
+                return Err(Error::LoggedOut);
+            }
+            if response.location_contains("/auth_error") {
+                return Err(Error::CsrfExpired);
+            }
+            if response.location_contains("/lost_cookie") {
+                return Err(Error::SessionIncomplete);
+            }
+            let location = response.location;
+            classify_chapter_redirect(location.as_deref(), mode, chapter_id)
+        }
+        200 | 422 => Err(classify_work_failure(&response.body)),
+        429 => Err(Error::RateLimited {
+            retry_after: response.retry_after,
+        }),
+        403 | 503 => Err(Error::BlockedByEdge {
+            status: response.status,
+        }),
+        status => Err(Error::UpstreamChanged(format!(
+            "chapter save returned HTTP {status}"
+        ))),
+    }
+}
+
+fn classify_chapter_redirect(
+    location: Option<&str>,
+    mode: ChapterSave,
+    expected_chapter_id: Option<&str>,
+) -> Result<SavedChapter> {
+    let location = location.unwrap_or_default();
+    let chapter_id = crate::ao3::chapters::chapter_id_from_path(location);
+    if mode == ChapterSave::Update {
+        // Only the chapter's own path proves the update; a 302 to `/works/<id>`
+        // is AO3's ownership / "chapter not found" redirect, not a save.
+        let expected = expected_chapter_id.map(str::trim);
+        return match (chapter_id, expected) {
+            (Some(found), Some(expected)) if found == expected => Ok(SavedChapter {
+                chapter_id: Some(found),
+                draft: false,
+            }),
+            (Some(found), None) => Ok(SavedChapter {
+                chapter_id: Some(found),
+                draft: false,
+            }),
+            _ => Err(Error::UpstreamChanged(format!(
+                "chapter update redirected to {location:?} (permission or not-found)"
+            ))),
+        };
+    }
+    if let Some(chapter_id) = chapter_id {
+        Ok(SavedChapter {
+            chapter_id: Some(chapter_id),
+            draft: location.contains("/preview"),
+        })
+    } else {
+        Err(Error::UpstreamChanged(format!(
+            "chapter create redirected to {location:?}"
+        )))
+    }
+}
+
 /// First `/works/<id>` in a redirect target (`/works/123` or `/works/123/preview`).
 fn work_id_from_location(location: Option<&str>) -> Option<String> {
     let rest = location?
@@ -761,6 +898,38 @@ mod tests {
         assert!(delete_work_result(Some("/users/someone/works")).is_ok());
         assert!(delete_work_result(Some("/users/someone/works/drafts")).is_ok());
         assert!(delete_work_result(Some("/")).is_err());
+    }
+
+    #[test]
+    fn chapter_redirects_are_classified_by_path() {
+        let posted =
+            classify_chapter_redirect(Some("/works/123/chapters/456"), ChapterSave::Post, None)
+                .expect("posted");
+        assert_eq!(posted.chapter_id.as_deref(), Some("456"));
+        assert!(!posted.draft);
+        let draft = classify_chapter_redirect(
+            Some("/works/123/chapters/457/preview"),
+            ChapterSave::Draft,
+            None,
+        )
+        .expect("draft");
+        assert_eq!(draft.chapter_id.as_deref(), Some("457"));
+        assert!(draft.draft);
+        assert!(
+            classify_chapter_redirect(
+                Some("/works/123/chapters/457"),
+                ChapterSave::Update,
+                Some("457")
+            )
+            .is_ok()
+        );
+        let refused =
+            classify_chapter_redirect(Some("/works/123"), ChapterSave::Update, Some("457"))
+                .expect_err("a work redirect is a permission/not-found refusal");
+        assert!(matches!(refused, Error::UpstreamChanged(_)), "{refused:?}");
+        assert!(
+            classify_chapter_redirect(Some("/users/someone"), ChapterSave::Post, None).is_err()
+        );
     }
 
     #[test]

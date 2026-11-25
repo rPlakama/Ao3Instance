@@ -61,6 +61,7 @@ async fn every_rendered_local_link_resolves() {
         "/history",
         "/my/works",
         "/my/works/drafts",
+        "/my/works/12345/chapters",
         "/users/login",
         "/users/logout/confirm",
     ];

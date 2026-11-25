@@ -1,0 +1,57 @@
+<!DOCTYPE html>
+<!--
+  Synthetic AO3 "Edit Chapter" page (`otwarchive/app/views/chapters/edit.html.erb`
+  rendering `chapters/_chapter_form.html.erb`) for the chapter editor parser tests:
+  form fields are `chapter[title]`, `chapter[position]`, `chapter[wip_length]`,
+  `chapter[summary]`, `chapter[notes]`, `chapter[endnotes]`, `chapter[content]`.
+-->
+<html lang="en">
+  <body>
+    <div id="main" class="chapters-edit region" role="main">
+      <h2 class="heading">Edit Chapter</h2>
+      <div id="chapter-form" class="verbose post work chapter">
+        <form class="edit_chapter" id="edit_chapter_78902" action="/works/12345/chapters/78902" accept-charset="UTF-8" method="post">
+          <input type="hidden" name="_method" value="put" />
+          <input type="hidden" name="authenticity_token" value="form-token" />
+          <fieldset id="chapter-ordering">
+            <legend>Name, Order and Date</legend>
+            <dl>
+              <dt><label for="chapter_title">Chapter Title</label></dt>
+              <dd><input type="text" value="A Map of Small Things" name="chapter[title]" id="chapter_title" /></dd>
+              <dt><label for="chapter_position">Chapter Number</label></dt>
+              <dd>
+                <p>
+                  <input type="text" value="2" class="number" name="chapter[position]" id="chapter_position" />
+                  <label for="chapter_wip_length">of</label>
+                  <input type="text" value="2" class="number" name="chapter[wip_length]" id="chapter_wip_length" />
+                </p>
+              </dd>
+            </dl>
+          </fieldset>
+          <fieldset>
+            <legend>Chapter Preface</legend>
+            <dl>
+              <dt class="summary"><label for="chapter_summary">Chapter Summary</label></dt>
+              <dd class="summary"><textarea rows="4" cols="60" name="chapter[summary]" id="chapter_summary">The apprentice redraws the harbour from memory.</textarea></dd>
+              <dt class="notes"><label for="chapter_notes">Chapter Notes</label></dt>
+              <dd class="notes"><textarea class="observe_textlength" name="chapter[notes]" id="chapter_notes">PLACEHOLDER CHAPTER TWO NOTE: the coastline keeps its own counsel.</textarea></dd>
+              <dt class="notes"><label for="chapter_endnotes">End Notes</label></dt>
+              <dd class="notes"><textarea class="observe_textlength" name="chapter[endnotes]" id="chapter_endnotes"></textarea></dd>
+            </dl>
+          </fieldset>
+          <fieldset class="text">
+            <legend class="required">Chapter Text*</legend>
+            <textarea id="content" class="mce-editor observe_textlength large" name="chapter[content]">&lt;p&gt;PLACEHOLDER PROSE (chapter two): the apprentice redraws the harbour from memory and signs it.&lt;/p&gt;</textarea>
+          </fieldset>
+          <fieldset>
+            <legend>Post</legend>
+            <ul class="actions">
+              <li><input type="submit" name="preview_button" value="Preview" /></li>
+              <li><input type="submit" name="update_button" value="Update" /></li>
+            </ul>
+          </fieldset>
+        </form>
+      </div>
+    </div>
+  </body>
+</html>

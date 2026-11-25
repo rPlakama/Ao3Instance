@@ -187,6 +187,15 @@ Full contracts live in `ao3-write-api.md`; this is the map.
 | mute | `POST /users/:uid/muted/users` | `muted_id` (byline) | `routes.rb:370`; `muted/users_controller.rb:75-79` |
 | block | `POST /users/:uid/blocked/users` | `blocked_id` (byline) | `routes.rb:360`; `blocked/users_controller.rb:75-79` |
 
+Two later write slices are not repeated in this map: work creation/publishing
+(`POST /works`, `PUT /works/:id/post_draft`, `DELETE /works/:id`) and chapter
+create/update. Chapters are a **nested resource** under the work
+(`routes.rb:403-414`): `POST /works/:work_id/chapters` creates one and
+`PUT /works/:work_id/chapters/:id` updates it, with the fields from
+`chapters_controller.rb:268-272` and the button names from
+`chapters/_posting_fieldset.html.erb:11-28`. The full contracts are in
+[`ao3-write-api.md`](ao3-write-api.md) §4.8–§4.12.
+
 ---
 
 ## 6. Policy

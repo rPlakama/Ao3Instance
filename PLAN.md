@@ -237,6 +237,32 @@ deleting 5/h. `tests/account_works.rs` (5 tests) plus
 gate gained the drafts list, `post_draft` and `destroy` claims. Evidence:
 `notes/gates/works-manager.txt`.
 
+**Chapter management (2026-11-25):** a chapter manager at `GET
+/my/works/<id>/chapters` renders AO3's own `/works/<id>/navigate` chapter index through
+the 30-minute page cache (chapter titles in order with dates, Edit links and Add
+Chapter; AO3's `<position>. ` prefix is stripped), and My Works rows gained **Chapters**
+plus **Add Chapter** for works still in progress. The editor at
+`GET /write/chapter/new` / `GET /write/chapter/edit` mirrors AO3's chapter form and is
+prefilled from AO3's chapter edit page (textarea values decoded to raw author HTML, not
+entities); a new chapter suggests the next position from the parsed index. `POST
+/write/chapter/preview` validates against AO3's chapter limits locally and renders a
+confirmation with no network write; `POST /write/chapter` sends exactly one request:
+`POST /works/<w>/chapters` with `post_without_preview_button` (posted) or `save_button`
+(chapter draft), or `PUT /works/<w>/chapters/<c>` with `update_button`. A 302 to
+`/works/<w>/chapters/<c>` means saved (audit `chapter-posted`/`chapter-updated`; the new
+chapter id is parsed from the redirect, and on update the redirect must name the edited
+chapter or it is AO3's permission/not-found refusal), a 302 to `…/preview` means a
+chapter draft (audit `chapter-draft`), and a 200 `#error` re-render is AO3's refusal
+shown on the editor with the composed text preserved (audit `failed`). A timeout is
+audited `ambiguous` and never retried. After success the cached work is re-fetched once
+(best effort) so the reader shows the new chapter, and the `chapter` governor budget is
+10/hour. `tests/writes_chapters.rs` (7 tests) plus `ao3::chapters` parser/validation unit
+tests (4); full suite 309 green; the route-drift gate gained nested `resources
+:chapters`, `chapters#create`/`#update`, `post_without_preview_button` and
+`chapter_params` claims (57 total); the wiring crawl covers
+`/my/works/12345/chapters`. Chapter deletion/reordering, backdating and work
+metadata/tag editing remain later work. Evidence: `notes/gates/chapter-management.txt`.
+
 **Known deviations (documented, not blockers):** required-tag marks are
 styled text badges rather than SVG artwork; comment avatars are a CSS-drawn
 visitor silhouette rather than AO3's synced user images, and the kudos module

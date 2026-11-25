@@ -5,10 +5,12 @@
 - **Supersedes:** `docs/init-audit.md` §2 D3 and D4 (read-only v0)
 - **Related:** ADR-0005, `docs/ao3-write-api.md`
 
-> **Amended (2026-11-25).** New-work creation is in scope again; see
-> [ADR-0008](0008-work-creation.md). The "works/chapters creation" item in the deferral
-> table below now covers only chapter addition; editing/deleting an existing work and a My
-> Works management view also remain unimplemented.
+> **Amended (2026-11-25).** Authoring is in scope again; see
+> [ADR-0008](0008-work-creation.md). New work creation, chapter addition/editing, the
+> My Works/Drafts manager, publishing a draft and deleting a work are implemented. The
+> "works/chapters creation" item in the deferral table below now covers only the remaining
+> authoring slices: chapter deletion/reordering, work metadata/tag editing, co-creators and
+> scheduling.
 
 ## Context
 

@@ -1,0 +1,57 @@
+Chapter management (add / edit chapters) — verification
+2026-11-25T17:20Z (America/Recife)
+
+== feature
+GET /my/works/<id>/chapters   AO3 chapter index via 30-min cached /works/<id>/navigate
+                              (ol.chapter.index.group parser); chapters listed with
+                              positions/dates, Edit links, Add Chapter; My Works rows
+                              gained Chapters / Add Chapter.
+GET /write/chapter/new        editor built from AO3's chapter form; next chapter number
+GET /write/chapter/edit       editor prefilled from AO3's edit page (#chapter-form;
+                              textarea values decoded from entities to raw author HTML)
+POST /write/chapter/preview   local validation + confirmation, no network write
+POST /write/chapter           one create (POST /works/<w>/chapters, post_without_preview_button
+                              or save_button) or update (PUT /works/<w>/chapters/<c>,
+                              update_button); fields chapter[title|position|wip_length|
+                              summary|notes|endnotes|content]
+Classification: 302 /works/<w>/chapters/<c> = saved (audit chapter-posted/chapter-updated,
+new chapter id parsed; for updates the redirect must name the edited chapter — a 302 to the
+work path is AO3's permission/not-found refusal, not a save); 302 .../<c>/preview = chapter
+draft (audit chapter-draft); 200/422 #error = AO3 refusal shown on the editor with text
+preserved + audit failed; 429 / login / auth / lost-cookie typed; timeout = ambiguous, never
+retried. Governor chapter = 10/h.
+After success the cached work is re-fetched once (best effort) so the reader shows it.
+
+== tests
+cargo test: 309 passed, 0 failed
+  new tests/writes_chapters.rs (7): chapter index with edit links; post chapter
+  confirms + exactly one POST + cache refresh + audit; draft button + audit;
+  edit page prefilled + exactly one PUT + audit; short content rejected locally
+  with zero writes; AO3 #error surfaced and audited without retry; write switch
+  required. New ao3::chapters parser/validation tests (4): index ids/dates,
+  editor prefill incl. decoded markup, fail-closed on foreign pages, limits.
+  Wiring crawl now includes /my/works/12345/chapters.
+cargo fmt --check: exit 0
+cargo clippy --all-targets -D warnings: exit 0
+nix build .#default: exit 0  store: /nix/store/nk7v09wx7nx2a92g4krp9k84lfgjj18z-ao3instance-0.1.4
+scripts/check-ao3-routes.sh --require: 57 passed, 0 failed (nested chapters,
+  chapters#create/update, post_without_preview_button, chapter_params claims)
+scripts/check-no-solver-build-dep.sh: ok
+
+== UI
+.run/screenshots-chapters/chapter-manager-light.png, chapter-editor-light.png
+(1100px light; mock AO3 navigate/edit pages; editor prefill verified to show raw
+author HTML in the textarea, not entities).
+
+== contract details validated against the research pass
+- chapter[wip_length] "?" (AO3's "total unknown" value) is accepted by local
+  validation and preserved through the editor; the "of" field is a text input
+  so the browser does not drop it.
+- navigate display_title carries a "<position>. " prefix: the parser strips it
+  before rendering the chapter list.
+- editor textarea values are decoded author HTML (single escape on render), so
+  submitting them back does not double-escape.
+
+== known limitations left for later rounds
+Chapter delete/reordering, backdated chapter publication, work metadata/tag
+editing, co-creators, and comment replies are still unimplemented.

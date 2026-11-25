@@ -1,0 +1,26 @@
+<!DOCTYPE html>
+<!--
+  Synthetic AO3 chapter index page (`otwarchive/app/views/works/navigate.html.erb`)
+  for the chapter manager parser tests. The view renders
+  `ol.chapter.index.group > li > a` per chapter (display title) plus a datetime.
+-->
+<html lang="en">
+  <body>
+    <div id="main" class="works-navigate region" role="main">
+      <h2 class="heading">
+        <a href="/works/12345">PLACEHOLDER: The Map and the Mirror</a> by
+        <a rel="author" href="/users/tester">tester</a>
+      </h2>
+      <ol class="chapter index group" role="navigation">
+        <li>
+          <a href="/works/12345/chapters/78901">1. Chapter 1: The Cartographer&#39;s Apprentice</a>
+          <span class="datetime">(2025-01-02)</span>
+        </li>
+        <li>
+          <a href="/works/12345/chapters/78902">Chapter 2: A Map of Small Things</a>
+          <span class="datetime">(2025-01-09)</span>
+        </li>
+      </ol>
+    </div>
+  </body>
+</html>

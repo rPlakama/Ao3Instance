@@ -149,6 +149,74 @@ pub(in crate::server) async fn subscriptions(
     Ok(Html(render::subscriptions_page(&page, &entries)))
 }
 
+/// `GET /my/works/<work_id>/chapters` — AO3's chapter index for one owned work.
+pub(in crate::server) async fn my_work_chapters(
+    State(state): State<Arc<AppState>>,
+    axum::extract::Path(work_id): axum::extract::Path<String>,
+    Query(query): Query<MyWorksQuery>,
+) -> Handled<Html<String>> {
+    let refresh = query.refresh.as_deref() == Some("1");
+    let notice = query
+        .notice
+        .as_deref()
+        .and_then(crate::server::writes::notice_text);
+    let cache_acct = crate::server::cache::cache_account(&state).await;
+    let page =
+        crate::server::page_context(&state, "Chapters — AO3Instance", NavSection::Dashboard).await;
+    let cached_title = state
+        .store
+        .get_work(&work_id)
+        .await?
+        .map(|work| work.title)
+        .unwrap_or_else(|| format!("work {work_id}"));
+    if cache_acct.is_empty() {
+        return Ok(Html(render::chapter_manager_page(
+            &page,
+            &work_id,
+            &crate::ao3::chapters::ChapterIndex {
+                work_title: cached_title,
+                chapters: Vec::new(),
+            },
+            None,
+            None,
+            Some("Sign in to AO3 on the Session page to manage chapters."),
+        )));
+    }
+    let path = format!("/works/{work_id}/navigate");
+    let fetched =
+        crate::server::cache::fetch_cached_optional(&state, &cache_acct, &path, true, refresh)
+            .await;
+    let parsed = fetched.as_ref().and_then(|entry| {
+        crate::ao3::chapters::parse_chapter_index(&entry.body)
+            .ok()
+            .map(|mut index| {
+                if index.work_title.is_empty() {
+                    index.work_title = cached_title.clone();
+                }
+                index
+            })
+    });
+    let cache_meta = fetched
+        .as_ref()
+        .map(|entry| (entry.from_cache, entry.fetched_at));
+    let error = match (&fetched, &parsed) {
+        (None, _) => Some(
+            "Could not reach archiveofourown.org for the chapter list; the cached work is unaffected.",
+        ),
+        (Some(_), None) => {
+            Some("AO3 returned an unexpected chapter page (session or layout problem).")
+        }
+        _ => None,
+    };
+    let index = parsed.unwrap_or(crate::ao3::chapters::ChapterIndex {
+        work_title: cached_title,
+        chapters: Vec::new(),
+    });
+    Ok(Html(render::chapter_manager_page(
+        &page, &work_id, &index, cache_meta, notice, error,
+    )))
+}
+
 #[derive(Deserialize)]
 pub(in crate::server) struct MyWorksQuery {
     page: Option<i64>,

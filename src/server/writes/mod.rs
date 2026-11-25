@@ -5,6 +5,7 @@
 //! state that authorises a write.
 
 mod actions;
+mod chapter;
 mod preview;
 mod work;
 
@@ -28,6 +29,7 @@ use crate::render::NavSection;
 pub(super) use actions::{
     write_bookmark, write_comment, write_kudos, write_reading, write_subscribe, write_unsubscribe,
 };
+pub(super) use chapter::{chapter_editor, chapter_preview, chapter_save};
 pub(super) use preview::{write_comment_preview, write_preview};
 pub(super) use work::{compose, delete_work, publish_draft, write_work, write_work_preview};
 
@@ -171,6 +173,13 @@ pub(super) fn notice_text(key: &str) -> Option<&'static str> {
             Some("AO3 is rate limiting this instance; try publishing again later.")
         }
         "work_deleted" => Some("Work deleted on AO3."),
+        "chapter_posted" => Some("Chapter posted on AO3."),
+        "chapter_draft" => Some("Chapter saved as a draft on AO3."),
+        "chapter_updated" => Some("Chapter updated on AO3."),
+        "chapter_failed" => Some("AO3 rejected the chapter; see the audit log."),
+        "chapter_rate_limited" => {
+            Some("AO3 is rate limiting this instance; try the chapter again later.")
+        }
         "work_delete_failed" => Some("AO3 could not delete that work; see the audit log."),
         "work_delete_rate_limited" => {
             Some("AO3 is rate limiting this instance; try deleting again later.")

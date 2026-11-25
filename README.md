@@ -55,6 +55,15 @@ This is an unofficial project, not affiliated with or endorsed by the OTW.
   minutes with an honest offline notice). A draft can be published, and a posted
   work or draft deleted, from the app: each action goes through a confirmation
   page, sends exactly one request and is never retried.
+- **Chapter management (opt-in)** — add chapters to, and correct chapters of,
+  works you authored. `/my/works/<id>/chapters` renders AO3's own chapter index
+  (30-minute cached) in order with chapter dates and Edit links; the editor
+  suggests the next chapter number and prefills an edit from AO3's chapter form
+  (raw author HTML, not entities). A save is previewed locally and confirmed,
+  then sends exactly one request — Post or Save as Draft for a new chapter,
+  Update for an existing one — and the cached work is re-fetched once afterwards
+  so the reader shows the change. AO3 refusals appear on the editor with the
+  composed text preserved; nothing is retried.
 - **Diagnostics** — `/diagnostics` shows upstream HTTP failures, the request
   governor and optional FlareSolverr state, without exposing cookies.
 - **Optional FlareSolverr** — if the host already runs FlareSolverr, blocked
@@ -155,7 +164,9 @@ diagnostics and FlareSolverr limits.
 4. Writes remain disabled until `AO3I_WRITE_ENABLED=true`. Kudos and work
    subscriptions post straight from the reader; comments and bookmarks confirm
    first. With a session, the header's **Post** link opens the new-work
-   composer. Every write appears in **Audit**.
+   composer, and **My Works** rows link to each work's chapter manager
+   (**Chapters**; the **Add Chapter** shortcut appears for works still in
+   progress once writes are enabled). Every write appears in **Audit**.
 
 ## Limitations
 
@@ -169,8 +180,15 @@ diagnostics and FlareSolverr limits.
   work itself in Entire Work mode (and for a one-chapter work), or one chapter
   in single-chapter view of a multi-chapter work — so switching views can show
   a different thread.
-- New-work posting creates the work and its first chapter in one request; there
-  is no "add chapter" flow yet, and a work cannot be edited from the app. The
+- New-work posting creates the work and its first chapter in one request;
+  further chapters are added from the chapter manager, and an existing chapter
+  can be corrected there. Work metadata and tags still cannot be edited from the
+  app, and there is no chapter delete or reorder screen — those stay on AO3 (the
+  editor can still change a chapter's Chapter Number). Chapter saves are dated
+  by AO3: there is no scheduling or backdating UI (a new chapter gets today's
+  date and the publication date is never exposed). A successful save re-fetches
+  the cached work once (best effort) so the reader shows it immediately; if that
+  refresh fails, the previous cached copy stays until "Refresh from AO3". The
   author works manager can publish a draft and delete a work or draft, but
   deletion is permanent — AO3 cannot undo it — and drafts are AO3 objects that
   the archive deletes after about 29 days. Nothing is scheduled or posted in the

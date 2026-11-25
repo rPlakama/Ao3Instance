@@ -76,6 +76,11 @@ need app/controllers/works_controller.rb 'def post_draft' 'post_draft publish pa
 need config/routes.rb 'get :drafts' 'user works drafts route'
 need app/controllers/works_controller.rb 'def drafts' 'drafts list action'
 need app/controllers/works_controller.rb 'def destroy' 'work delete action'
+need config/routes.rb 'resources :chapters' 'nested chapter routes'
+need app/controllers/chapters_controller.rb 'def create' 'POST chapters (create)'
+need app/controllers/chapters_controller.rb 'def update' 'PUT chapters (update)'
+need app/controllers/chapters_controller.rb 'post_without_preview_button' 'chapter post button'
+need app/controllers/chapters_controller.rb 'params.require(:chapter).permit(' 'chapter params'
 need app/views/works/drafts.html.erb 'unposted_drafts_get_deleted' 'draft deletion caution'
 need app/views/works/_work_blurb.html.erb 'Post Draft' 'draft blurb action'
 echo
