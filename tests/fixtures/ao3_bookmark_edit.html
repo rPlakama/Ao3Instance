@@ -1,0 +1,58 @@
+<!DOCTYPE html>
+<!--
+  Synthetic AO3 "Editing bookmark" page (`otwarchive/app/views/bookmarks/edit.html.erb`
+  rendering `bookmarks/_bookmark_form.html.erb`) for the bookmark editor parser
+  tests. Fields: bookmark[bookmarker_notes], bookmark[tag_string],
+  bookmark[collection_names], bookmark[private], bookmark[rec].
+-->
+<html lang="en">
+  <body>
+    <div id="main" class="bookmarks-edit region" role="main">
+      <h2 class="heading">
+        Editing bookmark for <a href="/works/7701">The Clockwork Ferry</a>
+      </h2>
+      <ul class="navigation actions" role="navigation">
+        <li><a href="/bookmarks/501">Show</a></li>
+        <li><a href="/users/someone/bookmarks">My Bookmarks</a></li>
+      </ul>
+      <div id="bookmark-form" class="verbose post bookmark">
+        <form class="edit_bookmark" id="edit_bookmark_501" action="/bookmarks/501" accept-charset="UTF-8" method="post">
+          <input type="hidden" name="_method" value="put" />
+          <input type="hidden" name="authenticity_token" value="form-token" />
+          <fieldset>
+            <legend>Write Comments</legend>
+            <dl>
+              <dt><label for="bookmark_bookmarker_notes">Notes</label></dt>
+              <dd>
+                <textarea name="bookmark[bookmarker_notes]" id="bookmark_bookmarker_notes" rows="4">PLACEHOLDER BOOKMARK NOTE: read on the night ferry.</textarea>
+              </dd>
+              <dt><label for="bookmark_tag_string">Your tags</label></dt>
+              <dd><input type="text" value="Fluff, Comfort Reading" name="bookmark[tag_string]" id="bookmark_tag_string" /></dd>
+              <dt><label for="bookmark_collection_names">Post to Collections / Challenges</label></dt>
+              <dd><input type="text" value="" name="bookmark[collection_names]" id="bookmark_collection_names" /></dd>
+              <dt>Private bookmark?</dt>
+              <dd>
+                <input type="hidden" name="bookmark[private]" value="0" />
+                <input type="checkbox" name="bookmark[private]" id="bookmark_private" value="1" checked />
+                <label for="bookmark_private">Private</label>
+              </dd>
+              <dt>Rec?</dt>
+              <dd>
+                <input type="hidden" name="bookmark[rec]" value="0" />
+                <input type="checkbox" name="bookmark[rec]" id="bookmark_rec" value="1" checked />
+                <label for="bookmark_rec">Recommendation</label>
+              </dd>
+            </dl>
+          </fieldset>
+          <fieldset>
+            <legend>Post</legend>
+            <ul class="actions">
+              <li><input type="submit" name="update_button" value="Update" /></li>
+              <li><a href="/bookmarks/501">Cancel</a></li>
+            </ul>
+          </fieldset>
+        </form>
+      </div>
+    </div>
+  </body>
+</html>

@@ -138,3 +138,131 @@ pub fn parse_bookmarks(html: &str) -> Option<LiveBookmarksPage> {
         items,
     })
 }
+
+/// The editable fields of one bookmark, from `GET /bookmarks/:id/edit`.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct BookmarkEditFields {
+    pub notes: String,
+    pub tags: String,
+    pub collections: String,
+    pub private: bool,
+    pub rec: bool,
+    /// Title of the bookmarked work (for confirmation headings).
+    pub bookmarkable_title: String,
+    /// AO3 work id when the bookmarkable is a work.
+    pub work_id: Option<String>,
+}
+
+/// Parses `GET /bookmarks/:id/edit` (owner-only `bookmarks/edit.html.erb`).
+pub fn parse_bookmark_editor(html: &str) -> Option<BookmarkEditFields> {
+    let doc = Html::parse_document(html);
+    let form_sel = Selector::parse("form[action^='/bookmarks/']").ok()?;
+    let form = doc.select(&form_sel).next()?;
+    let heading_link = Selector::parse("h2.heading a[href]").ok()?;
+    let (bookmarkable_title, work_id) = doc
+        .select(&heading_link)
+        .next()
+        .map(|link| {
+            let href = link.value().attr("href").unwrap_or_default();
+            let work_id = href
+                .split('/')
+                .skip_while(|segment| *segment != "works")
+                .nth(1)
+                .map(str::to_string);
+            (collapse_text(&link), work_id)
+        })
+        .unwrap_or_default();
+    let textarea = |name: &str| -> String {
+        let Ok(selector) = Selector::parse(&format!("textarea[name='{name}']")) else {
+            return String::new();
+        };
+        form.select(&selector)
+            .next()
+            .map(|node| node.text().collect::<String>())
+            .unwrap_or_default()
+    };
+    let input = |name: &str| -> String {
+        let Ok(selector) = Selector::parse(&format!("input[name='{name}']")) else {
+            return String::new();
+        };
+        form.select(&selector)
+            .next()
+            .and_then(|node| node.value().attr("value"))
+            .unwrap_or_default()
+            .to_string()
+    };
+    let checked = |name: &str| -> bool {
+        let Ok(selector) =
+            Selector::parse(&format!("input[type='checkbox'][name='{name}'][checked]"))
+        else {
+            return false;
+        };
+        form.select(&selector).next().is_some()
+    };
+    Some(BookmarkEditFields {
+        notes: textarea("bookmark[bookmarker_notes]"),
+        tags: input("bookmark[tag_string]"),
+        collections: input("bookmark[collection_names]"),
+        private: checked("bookmark[private]"),
+        rec: checked("bookmark[rec]"),
+        bookmarkable_title,
+        work_id,
+    })
+}
+
+/// Local validation for bookmark edits (`ArchiveConfig.NOTES_MAX` / `TAG_MAX`).
+pub fn validate_bookmark_fields(fields: &BookmarkEditFields) -> Vec<String> {
+    let mut errors = Vec::new();
+    if fields.notes.chars().count() > crate::ao3::compose::NOTES_MAX {
+        errors.push(format!(
+            "Bookmark notes must be at most {} characters.",
+            crate::ao3::compose::NOTES_MAX
+        ));
+    }
+    for tag in fields
+        .tags
+        .split(',')
+        .map(str::trim)
+        .filter(|tag| !tag.is_empty())
+    {
+        if tag.chars().count() > crate::ao3::compose::TAG_MAX {
+            errors.push(format!(
+                "Each bookmark tag must be at most {} characters.",
+                crate::ao3::compose::TAG_MAX
+            ));
+            break;
+        }
+    }
+    errors
+}
+
+#[cfg(test)]
+mod bookmark_editor_tests {
+    use super::*;
+
+    #[test]
+    fn parses_the_bookmark_editor_prefill() {
+        let html = include_str!("../../../tests/fixtures/ao3_bookmark_edit.html");
+        let fields = parse_bookmark_editor(html).expect("bookmark editor");
+        assert_eq!(fields.bookmarkable_title, "The Clockwork Ferry");
+        assert_eq!(fields.work_id.as_deref(), Some("7701"));
+        assert!(fields.notes.contains("PLACEHOLDER BOOKMARK NOTE"));
+        assert_eq!(fields.tags, "Fluff, Comfort Reading");
+        assert!(fields.collections.is_empty());
+        assert!(fields.private, "private checkbox is checked");
+        assert!(fields.rec, "rec checkbox is checked");
+        assert!(validate_bookmark_fields(&fields).is_empty());
+
+        let mut broken = fields;
+        broken.notes = "n".repeat(crate::ao3::compose::NOTES_MAX + 1);
+        broken.tags = "t".repeat(crate::ao3::compose::TAG_MAX + 1);
+        let errors = validate_bookmark_fields(&broken);
+        assert!(errors.iter().any(|error| error.contains("notes")));
+        assert!(errors.iter().any(|error| error.contains("tag")));
+    }
+
+    #[test]
+    fn a_non_editor_bookmark_page_is_rejected() {
+        assert!(parse_bookmark_editor("<html><body>login</body></html>").is_none());
+    }
+}

@@ -4,8 +4,9 @@
 - **Date:** 2026-11-25
 - **Supersedes:** the "works/chapters creation" deferral in ADR-0003, for new works,
   chapter management, managing existing ones, work metadata/tag editing, and (from
-  ADR-0003's v1.1 note) comment editing; chapter deletion/reordering remain deferred
-- **Related:** ADR-0003, ADR-0005, `docs/ao3-write-api.md` §3–§4.16,
+  ADR-0003's v1.1 note) comment editing and bookmark editing; chapter
+  deletion/reordering remain deferred
+- **Related:** ADR-0003, ADR-0005, `docs/ao3-write-api.md` §3–§4.18,
   `docs/write-client-plan.md`
 
 ## Context
@@ -257,6 +258,57 @@ mirrored where the cache can prove them:
   failed refresh is logged and leaves the previous copy. Replies share the `comment`
   budget (3/900 s, AO3's own limit) and edits/deletes are 10/hour each.
 
+## Bookmark edit/delete rules
+
+Editing and deleting a bookmark reuse the same spine, with AO3's own bookmark form and
+ownership filter:
+
+- **The live list is the entry point.** `/bookmarks` renders AO3's
+  `/users/<login>/bookmarks` page (30-minute cache, `?refresh=1`); when writes are enabled
+  each row with a bookmark id gains **Edit Bookmark** and **Delete Bookmark** links carrying
+  the bookmark id and work id. The local-cache view (`?local=1`) has no actions, and the
+  routes themselves do not check ownership — the UI scoping to the account's own live list
+  is the guard, because AO3's ownership filter answers with a redirect whose reason is only
+  a flash (below).
+- **The editor is AO3's own bookmark form.** `GET /write/bookmark/edit?bookmark_id=<id>`
+  fetches `GET /bookmarks/<id>/edit` (`bookmarks/edit.html.erb` →
+  `bookmarks/_bookmark_form.html.erb`) and parses the prefill: notes
+  (`bookmark[bookmarker_notes]`), your tags (`bookmark[tag_string]`), collections
+  (`bookmark[collection_names]`) and the `bookmark[private]`/`bookmark[rec]` checkboxes,
+  plus the bookmarkable title and work id from the heading link. A page without the form
+  marker fails closed with an honest upstream error; a non-owner's edit page is a redirect,
+  so the app shows an error instead of a form.
+- **Local validation, then one PATCH.** `POST /write/bookmark/edit/preview` validates the
+  notes (≤ 5,000, `NOTES_MAX`) and each comma-separated tag (≤ 150, `TAG_MAX`) and renders
+  a confirmation page that re-submits the values; `POST /write/bookmark/edit` sends exactly
+  one `PATCH /bookmarks/<id>` with `bookmark[bookmarker_notes]`,
+  `bookmark[tag_string]`, `bookmark[collection_names]`, `bookmark[private]` and
+  `bookmark[rec]`. The booleans are always sent as `1`/`0` so unchecking clears them, and
+  `bookmark[pseud_id]` is omitted so the bookmark's pseud/creatorship is unchanged.
+- **Delete is one confirmed DELETE.** `GET /write/bookmark/delete?bookmark_id=<id>` warns
+  that the bookmark is removed from AO3 permanently; `POST /write/bookmark/delete` sends
+  exactly one `DELETE /bookmarks/<id>` with the CSRF token. On success the local bookmark
+  receipt is dropped (`Store::remove_bookmark`) and the AO3 bookmark-list cache is
+  invalidated.
+- **Classify from the redirect, with an ownership caveat.** Edit success is a 302 to the
+  bookmark page (`/bookmarks/<id>`, audit `edit_bookmark` → `bookmark-updated`); delete
+  success is a 302 to the owner's bookmarks index (audit `delete_bookmark` →
+  `bookmark-deleted`). A 200/422 re-render is AO3's typed refusal; `/auth_error`,
+  `/users/login` and `/lost_cookie` are typed as usual; a transport error is recorded
+  `failed` and never retried. AO3's ownership filter redirects a non-owner to the bookmark
+  page — the same target as a successful edit, and a `/bookmarks` path the delete classifier
+  also accepts — so the success signal is only sound because the links are offered on the
+  account's own live list; the audit records the verified request, not a guaranteed effect.
+- **Back to the list with a notice.** After either success the app invalidates the cached
+  `/users/<login>/bookmarks` pages and redirects to `/bookmarks?notice=bookmark_updated`
+  (`bookmark_deleted`); the live bookmarks page renders that notice flash.
+- **Budgets.** `bookmark_edit` and `bookmark_delete` are 10 per hour each; both are one
+  confirmed request with no automatic retry.
+- **Not implemented.** Bookmark creation stays the one-action **Bookmark** confirmation
+  (default pseud, no notes/tags/collections form); changing the bookmark's pseud and
+  collection curation stay on AO3, and external-work bookmarks are out of scope (creation
+  and the local receipt are work bookmarks only).
+
 ## Scope
 
 **Now:** new work plus first chapter; publish or save as draft; composer options
@@ -277,11 +329,21 @@ no replies — with a local confirmation each, exactly one request
 (`POST /comments/<parent_id>/comments`, `PATCH /comments/<id>`, `DELETE /comments/<id>`),
 an audit row (`replied`, `comment-updated`, `comment-deleted`), a best-effort thread
 refresh, replies sharing `comment` 3/900 s and edits/deletes budgeted 10/hour each.
+Plus bookmark edit/delete: the account's own live bookmarks list offers **Edit Bookmark**
+and **Delete Bookmark**; the editor is prefilled from AO3's own bookmark form (notes, tags,
+collections, private/rec) and validated locally, then exactly one `PATCH /bookmarks/<id>`
+(booleans as 1/0, pseud omitted); delete is a destructive confirmation and exactly one
+`DELETE /bookmarks/<id>`; each success audits (`bookmark-updated`/`bookmark-deleted`),
+invalidates the cached bookmarks page and returns to `/bookmarks` with a notice. Both are
+budgeted 10/hour and never retried, and the audit records the verified request because
+AO3's ownership refusal shares the redirect shape.
 
-**Later** (each needs its own contract, confirmation rules and tests): work-author
-comment moderation (deleting other people's comments, approve/reject/freeze/hide), inbox
-replies, deleting and reordering chapters, byline/co-creator changes, work skins and work
-preferences (comment permissions, restricted), and any scheduling or background posting.
+**Later** (each needs its own contract, confirmation rules and tests): bookmark
+create-form parity (notes/tags/collections on creation — creation stays the one-action
+**Bookmark** for now), collection curation, work-author comment moderation (deleting other
+people's comments, approve/reject/freeze/hide), inbox replies, deleting and reordering
+chapters, byline/co-creator changes, work skins and work preferences (comment permissions,
+restricted), and any scheduling or background posting.
 These remain deferred and are not implied by this ADR.
 
 ## Consequences
@@ -320,6 +382,12 @@ These remain deferred and are not implied by this ADR.
   verified request, not a guaranteed effect; the thread refresh afterwards is the
   practical confirmation. A delete of a threaded comment leaves AO3's deleted-comment
   marker in place rather than removing the thread.
+- Bookmark edits and deletes inherit the same limitation: AO3's ownership filter answers a
+  non-owner with a redirect to a bookmark page — for an edit the same target as a
+  successful save, for a delete a `/bookmarks` path the classifier accepts — so both are
+  offered only on the account's own live bookmark list and the audit records the verified
+  request, not a guaranteed effect. Deleting a bookmark removes only the bookmark; the work
+  itself is untouched.
 
 ## Test and evidence
 
@@ -367,12 +435,21 @@ These remain deferred and are not implied by this ADR.
   a replied-to own comment is 400 for the editor; all routes refuse without the write
   switch. The fixture gained an own-comment/reply variant while the original cache fixture
   stayed untouched. Full suite 324 green; evidence `notes/gates/comment-actions.txt`.
-- The actions are documented in `docs/ao3-write-api.md` §3–§4.16, and
+- `tests/bookmark_actions.rs` (4 tests): the live bookmarks list offers Edit/Delete links
+  when writes are enabled; the editor prefills from AO3's bookmark-edit page, the preview
+  sends nothing upstream and the confirmed save sends exactly one `PATCH /bookmarks/<id>`
+  with the five fields (booleans as 1/0) and audits `bookmark-updated`; delete warns, sends
+  exactly one `DELETE /bookmarks/<id>`, drops the local bookmark receipt and audits
+  `bookmark-deleted`; both routes refuse without the write switch.
+  `ao3::account_lists::bookmarks` unit tests (2) cover the editor-page parser/validator and
+  the fail-closed non-editor page. Full suite 330 green; evidence
+  `notes/gates/bookmarks-edit.txt`.
+- The actions are documented in `docs/ao3-write-api.md` §3–§4.18, and
   `scripts/check-ao3-routes.sh` asserts the works new/create, edit/update,
   drafts list, post_draft, destroy, nested chapters, chapters create/update,
   `post_without_preview_button`, warning/category array, comment update/destroy,
-  edit-with-replies and nested-commentable claims against the
-  pinned otwarchive clone (65 claims).
+  edit-with-replies, nested-commentable and bookmark update/destroy/edit-field claims
+  against the pinned otwarchive clone (68 claims).
 - Evidence from the clone (`452391b`): `works_controller.rb:289-319` (create,
   `post_button` publish switch, 302 to the work vs `/preview`, the 29-day draft
   notice), `works_controller.rb:322-334` (edit),
@@ -399,4 +476,12 @@ These remain deferred and are not implied by this ADR.
   `app/models/comment.rb:84-89` (duplicate rule),
   `lib/acts_as_commentable/comment_methods.rb:25-33` (`destroy_or_mark_deleted`),
   `comments/_single_comment.html.erb:10-13` (deleted placeholder) and
-  `comments/_comment_actions.html.erb` (action row the reader mirrors).
+  `comments/_comment_actions.html.erb` (action row the reader mirrors). For bookmark
+  actions: `bookmarks_controller.rb:5-6,8,10,12-22` (session/status and ownership guards;
+  pseud-ownership check), `:179-190` (`edit` renders the form), `:206-217` (`update`
+  redirects to the bookmark), `:239-250` (`destroy` redirects to the owner's list),
+  `:335-339` (`bookmark_params`: pseud, notes, tag string, collections, private, rec),
+  `bookmarks/edit.html.erb:2-8` (bookmarkable heading) and
+  `bookmarks/_bookmark_form.html.erb:22,62-101` (persisted form `_method=put`, notes,
+  tags, collections, private/rec); the ownership refusal is
+  `application_controller.rb:267-279,488-490`.

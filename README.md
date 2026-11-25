@@ -39,7 +39,7 @@ This is an unofficial project, not affiliated with or endorsed by the OTW.
   Later, favorites and dashboard modules, cached for 30 minutes with offline
   fallback.
 - **Writes (opt-in, off by default)** — kudos, comments, subscribe/unsubscribe,
-  bookmarks with notes, and mark for later/as read.
+  bookmarks, and mark for later/as read.
   Kudos and work subscriptions post directly from the reader the way AO3's own
   buttons do (the click is the deliberate action); comments and bookmarks go
   through a confirmation page that names the target. Every action is attempted
@@ -53,6 +53,15 @@ This is an unofficial project, not affiliated with or endorsed by the OTW.
   against AO3's 3-per-15-minutes comment limit; edits and deletes are budgeted at
   10/hour each. A delete is permanent (AO3 keeps a deleted-comment marker when the
   thread has replies), and every attempt is recorded in the audit ledger.
+- **Bookmark editing and deletion (opt-in)** — the live AO3 bookmarks page gains
+  **Edit Bookmark** and **Delete Bookmark** on each row when writes are enabled.
+  The editor is prefilled from AO3's own bookmark edit page and covers notes, your
+  tags, collections and the private/rec flags; it validates locally and confirms
+  before exactly one `PATCH /bookmarks/<id>` (booleans are always sent as 1/0 so
+  unchecking clears them; the pseud is left untouched). Delete warns that AO3
+  removes the bookmark permanently, then sends exactly one `DELETE /bookmarks/<id>`.
+  Both invalidate the cached bookmarks page and return to `/bookmarks` with a
+  notice; each action is budgeted at 10/hour and never retried.
 - **Posting new works (opt-in)** — a composer at `/works/new` mirrors AO3's
   new-work form (rating, archive warnings, categories, tags, title, creator
   pseud, summary, notes, language, collections, gifts, chapter title, work
@@ -205,6 +214,17 @@ diagnostics and FlareSolverr limits.
   work itself in Entire Work mode (and for a one-chapter work), or one chapter
   in single-chapter view of a multi-chapter work — so switching views can show
   a different thread.
+- Bookmark editing and deletion cover bookmarks on works. Creation stays the
+  reader's **Bookmark** confirmation (the default pseud, no notes/tags/collections
+  form — those are added by editing afterwards), the editor cannot change which
+  pseud owns the bookmark, and collection curation stays on AO3. External-work
+  bookmarks (AO3's bookmarklet/ExternalWork path) are not created by the app and
+  have no local bookmark receipt, so the bookmark flow is work bookmarks only.
+  AO3 answers a non-owner's edit or delete with the same redirect shape as a
+  success (only the flash differs), so the links are offered only on your own
+  live bookmarks page and the audit records the verified request; a delete is
+  permanent, and a failed or timed-out request is never retried — check the
+  bookmark on AO3 before trying again.
 - New-work posting creates the work and its first chapter in one request;
   further chapters are added from the chapter manager, and an existing chapter
   can be corrected there. A posted work's metadata and tags can be edited from

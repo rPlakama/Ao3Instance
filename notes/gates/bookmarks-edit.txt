@@ -1,0 +1,42 @@
+Bookmark editing and deletion — verification
+2026-11-25T18:55Z (America/Recife)
+
+== feature
+Live bookmarks page (/bookmarks from AO3's /users/<login>/bookmarks) shows
+Edit Bookmark / Delete Bookmark on each row when writes are enabled.
+GET  /write/bookmark/edit?bookmark_id=&work_id=   prefilled from AO3's own
+     /bookmarks/<id>/edit (notes, tags, collections, private/rec checkboxes)
+POST /write/bookmark/edit/preview                 local validation + confirmation
+POST /write/bookmark/edit                         exactly one PATCH /bookmarks/<id>
+GET  /write/bookmark/delete                       destructive confirmation
+POST /write/bookmark/delete                       exactly one DELETE /bookmarks/<id>
+
+Edit body: bookmark[bookmarker_notes], bookmark[tag_string],
+bookmark[collection_names], bookmark[private]=1|0, bookmark[rec]=1|0 (booleans
+always sent so unchecking clears; pseud omitted, creatorship unchanged).
+Success: edit = 302 to the bookmark/owner list (audit edit_bookmark ->
+bookmark-updated); delete = 302 to /users/<login>/bookmarks or the work (audit
+delete_bookmark -> bookmark-deleted). The cached bookmark list is invalidated
+and the browser lands on /bookmarks with a notice flash (bookmarks page now
+renders notice). Delete also drops the local bookmark receipt. Limits mirrored:
+notes 5000, tag 150. Governors: bookmark_edit 10/h, bookmark_delete 10/h.
+Ownership: AO3 redirects non-owners with the same 302 shape, so edit/delete are
+only offered on the account's own live list; docs record that honestly.
+
+== tests
+cargo test: 330 passed, 0 failed
+  new tests/bookmark_actions.rs (4): list offers edit/delete links; edit
+  prefills + preview + exactly one PATCH with the five fields + audit; delete
+  warns + exactly one DELETE + ledger removed + audit; write switch required.
+  new parser/validation unit tests (2) for the bookmark editor page.
+cargo fmt --check: exit 0
+cargo clippy --all-targets -D warnings: exit 0
+nix build .#default: exit 0   store: /nix/store/0ly898xghm9c7z8d8gsrznwyllzyisfd-ao3instance-0.1.4
+scripts/check-ao3-routes.sh --require: 68 passed, 0 failed (bookmark update /
+  destroy / edit-field claims)
+scripts/check-no-solver-build-dep.sh: ok
+
+== known limitations left for later rounds
+Bookmark creation stays one-click (no notes editor on create), pseud/collection
+curation is AO3-only, external-work bookmarks unsupported, favourite-tag
+toggles and comment moderation for work authors remain to do.

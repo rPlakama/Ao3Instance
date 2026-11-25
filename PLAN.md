@@ -321,6 +321,35 @@ edit-with-replies rule, the nested commentable). Work-author moderation (deletin
 comments, approve/reject/freeze/hide), inbox replies and comment pagination beyond the
 first cached page remain later work. Evidence: `notes/gates/comment-actions.txt`.
 
+**Bookmark editing (2026-11-25):** the live AO3 bookmarks page (`/bookmarks`, from AO3's
+`/users/<login>/bookmarks`) now shows **Edit Bookmark** and **Delete Bookmark** on each row
+when writes are enabled. Edit (`/write/bookmark/edit?bookmark_id=&work_id=`) fetches AO3's
+own `/bookmarks/<id>/edit` page and parses the prefilled form — notes, your tags,
+collections and the private/rec checkboxes, plus the bookmarkable title and work id; a
+missing form fails closed and a non-owner's page is a redirect. `POST
+/write/bookmark/edit/preview` validates locally (notes ≤ 5,000, each tag ≤ 150) and shows a
+confirmation page without any network write; `POST /write/bookmark/edit` sends exactly one
+`PATCH /bookmarks/<id>` with the five fields, the booleans always as 1/0 (so unchecking
+clears them) and `bookmark[pseud_id]` omitted (creatorship unchanged). A 302 back to the
+bookmark is success (audit `edit_bookmark` → `bookmark-updated`); a 200/422 `#error`
+re-render is AO3's typed refusal (audit `failed`). Delete (`/write/bookmark/delete`)
+warns that the bookmark is removed from AO3 permanently, then sends exactly one
+`DELETE /bookmarks/<id>` (audit `delete_bookmark` → `bookmark-deleted`); the local
+bookmark receipt is dropped and a 302 to the owner's bookmarks list is success. Both
+invalidate the cached bookmarks page and return to `/bookmarks?notice=bookmark_updated` /
+`bookmark_deleted` (the live page now renders the notice flash); budgets are 10/hour each
+and neither is retried — a transport error is recorded failed, so check AO3 before trying
+again. AO3's ownership filter redirects a non-owner to a bookmark path that can look like
+success (flash only), so both actions are offered only on the account's own live list and
+the audit records the verified request. Remaining limits: bookmark creation stays the
+one-action **Bookmark** confirmation (default pseud; no notes/tags form on create), changing
+the bookmark's pseud and collection curation stay on AO3, and external-work bookmarks are
+not created by the app and have no local bookmark receipt. `tests/bookmark_actions.rs`
+(4 tests) plus
+`ao3::account_lists::bookmarks` parser/validation unit tests (2); full suite 330 green; the
+route-drift gate rose to 68 claims (bookmark update/destroy/edit fields). Evidence:
+`notes/gates/bookmarks-edit.txt`.
+
 **Known deviations (documented, not blockers):** required-tag marks are
 styled text badges rather than SVG artwork; comment avatars are a CSS-drawn
 visitor silhouette rather than AO3's synced user images, and the kudos module

@@ -18,7 +18,10 @@ use scraper::{Html, Selector};
 
 use crate::ao3::html::{collapse_text, parse_number};
 
-pub use bookmarks::{LiveBookmark, LiveBookmarksPage, parse_bookmarks};
+pub use bookmarks::{
+    BookmarkEditFields, LiveBookmark, LiveBookmarksPage, parse_bookmark_editor, parse_bookmarks,
+    validate_bookmark_fields,
+};
 pub use directory::{
     LiveFandom, LiveMedium, LiveMediumFandoms, LiveTagHit, LiveTagSearchResults, parse_media_index,
     parse_medium_fandoms, parse_tag_search,

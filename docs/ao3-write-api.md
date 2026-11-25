@@ -141,6 +141,8 @@ triggers `/lost_cookie`. Import is validated by the §2.2 probe before being mar
 | chapter create | `POST /works/:work_id/chapters` | HTML | `chapter[title]`, `chapter[position]`, `chapter[wip_length]`, `chapter[summary]`, `chapter[notes]`, `chapter[endnotes]`, `chapter[content]`, `post_without_preview_button`/`save_button` | 302 → `/works/:work_id/chapters/:id` (posted) or `/works/:work_id/chapters/:id/preview` (unposted draft) | 200 re-render with `#error`; 429; 302 → `/auth_error` |
 | chapter update | `PUT /works/:work_id/chapters/:id` | HTML | the same `chapter[...]` fields, `update_button` | 302 → `/works/:work_id/chapters/:id` | 200 re-render with `#error`; 429; 302 → `/auth_error` |
 | work update | `PATCH /works/:id` | HTML | `work[title]`, `work[rating_string]`, `work[archive_warning_strings][]`, `work[fandom_string]`, `work[language_id]`, `work[summary]`, `work[notes]`, `work[endnotes]`, `work[collection_names]`, `work[recipients]`, `work[category_strings][]`, optional `work[relationship_string]`/`work[character_string]`/`work[freeform_string]`; CSRF token | 302 → `/works/:id` (audit `work-updated`) | 200/422 re-render with `#error`; a non-author is also redirected to `/works/:id`; 429; 302 → `/auth_error`; 403/503 |
+| bookmark edit | `PATCH /bookmarks/:id` | HTML | `bookmark[bookmarker_notes]`, `bookmark[tag_string]`, `bookmark[collection_names]`, `bookmark[private]`, `bookmark[rec]` (booleans always `1`/`0`); CSRF token | 302 → `/bookmarks/:id` (flash only) | **302 → the same bookmark page for a non-owner** (flash only); 200/422 re-render with `#error`; 429; 302 → `/auth_error`; 403/503 |
+| bookmark delete | `DELETE /bookmarks/:id` | HTML | CSRF token (body field **and** `X-CSRF-Token`) | 302 → `/users/:login/bookmarks` (the owner's list; any bookmarks/work path is accepted) | **302 → the bookmark page for a non-owner** — its path contains `/bookmarks`, so the shape cannot be distinguished; 200/422; 429; 302 → `/auth_error`; 403/503 |
 
 Deferred (documented, not implemented): chapter deletion/reordering, byline/co-creator
 changes, work skins/work preferences, mute/block, collections, comment moderation
@@ -148,7 +150,8 @@ changes, work skins/work preferences, mute/block, collections, comment moderatio
 replies, admin version of any action. Draft publishing and work deletion are implemented —
 see §4.9 and §4.10; creating and editing chapters are implemented — see §4.11 and §4.12;
 editing a work's metadata and tags is implemented — see §4.13; replying to, editing and
-deleting a comment are implemented — see §4.14–§4.16.
+deleting a comment are implemented — see §4.14–§4.16; editing and deleting a bookmark are
+implemented — see §4.17–§4.18.
 
 ---
 
@@ -239,6 +242,10 @@ deleting a comment are implemented — see §4.14–§4.16.
   (`bookmarks_controller.rb:194-204`).
 - **Idempotency:** none (a user can bookmark the same work twice? — server-side confirm
   needed; treat as client-guarded).
+- **This client's use:** creation sends only `bookmark[pseud_id]` +
+  `bookmark[private]=0` from the one-action **Bookmark** confirmation page (no
+  notes/tags/collections at create time); an existing bookmark is changed with the member
+  `PATCH /bookmarks/:id` (§4.17).
 
 ### 4.6 Reading flags — `PATCH /works/:id/mark_for_later` · `/mark_as_read`
 
@@ -761,6 +768,126 @@ deleting a comment are implemented — see §4.14–§4.16.
   - Replies to a deleted comment are not deleted; delete is not a thread prune.
   - Deletion cannot be undone from AO3 or this client.
 
+### 4.17 Bookmark edit — `PATCH /bookmarks/:id`
+
+- **Preconditions:** signed-in usable session (both cookies, §2); CSRF token; writes
+  enabled client-side; `:id` is a bookmark owned by the signed-in account. AO3's
+  `bookmarks_controller.rb` guards `edit`/`update` with `users_only` + `check_user_status`
+  (`:5-6`) and `check_ownership` on the loaded bookmark (`:8,10`; `load_bookmark` sets
+  `@check_ownership_of`, `:39-43`; `application_controller.rb:488-490,267-279`). The client
+  only offers the action from the account's own live bookmarks page (AO3's
+  `/users/<login>/bookmarks`); it does not verify ownership itself.
+- **Editor page:** `GET /bookmarks/:id/edit` (`bookmarks_controller.rb:179-190`) renders
+  `bookmarks/edit.html.erb` → `bookmarks/_bookmark_form.html.erb`; the persisted
+  bookmark's form posts to `/bookmarks/:id` with `_method=put` (`:22`, and both `PUT` and
+  `PATCH` are the member update of `resources :bookmarks`). The app parses the prefill
+  from that page (`parse_bookmark_editor`): notes textarea
+  `bookmark[bookmarker_notes]` (`:72`), "Your tags" `bookmark[tag_string]` (`:84`),
+  collections `bookmark[collection_names]` (`:92`), and the
+  `bookmark[private]`/`bookmark[rec]` checkbox state (`:100-101`); the bookmarkable title
+  and work id come from the `h2.heading` link (`edit.html.erb:2-8`). A page without the
+  `form[action^='/bookmarks/']` marker fails closed with an honest upstream error instead
+  of rendering an editor that cannot save; a non-owner's `GET …/edit` is a 302 to the
+  bookmark page (`access_denied`), so the app shows an error instead of a form.
+- **Request:** a real `PATCH /bookmarks/:id` (the client never sends AO3's `_method`
+  override). Body: `utf8=✓`, `bookmark[bookmarker_notes]`, `bookmark[tag_string]`,
+  `bookmark[collection_names]`, `bookmark[private]=1|0`, `bookmark[rec]=1|0`, and
+  `authenticity_token` (body field and `X-CSRF-Token`). The booleans are **always** sent
+  as `1` or `0` — the same net effect as AO3's own form (a hidden `0` input before each
+  checkbox, `_bookmark_form.html.erb:100-101`) — so unchecking a flag clears it instead of
+  leaving the field out. `bookmark[pseud_id]` is deliberately omitted:
+  `bookmark_params` permits it (`bookmarks_controller.rb:335-339`) and
+  `check_pseud_ownership` runs for `update` (`:12-22`), but sending it would change which
+  pseud owns the bookmark; the client leaves the pseud as AO3 has it.
+- **Response classification** (`update`, `bookmarks_controller.rb:206-217`):
+
+  | response | meaning |
+  | --- | --- |
+  | 302 → `/bookmarks/:id` (the bookmark page, not `/edit`) | edit accepted; audit `edit_bookmark` → `bookmark-updated`; the cached bookmarks list is invalidated and the browser returns to `/bookmarks?notice=bookmark_updated` |
+  | 302 → the same `/bookmarks/:id` from `check_ownership` (non-owner) | **refusal, flash only — identical target to success**; the UI only offers the action on the account's own bookmarks, and the audit records the verified request, not a guaranteed effect |
+  | 302 → a bookmarks list under `/users/…` | also accepted as a save by the classifier; the browser still returns to `/bookmarks` |
+  | 200 (or 422) re-render with `#error li` | AO3's validation refusal; its messages are typed, audit `failed`, notice `bookmark_update_failed` |
+  | 302 → `/auth_error` | CSRF expired; Rails aborted before `update`, so the session layer's one token-refresh-and-retry is safe |
+  | 302 → `/users/login` | logged out; re-authenticate |
+  | 302 → `/lost_cookie` | jar incomplete (`user_credentials` missing) |
+  | 429 | rate limited; honour `Retry-After` |
+  | 403/503 | edge block / challenge |
+  | transport error | recorded `failed` and never retried; the request may still have landed — check the bookmark on AO3 before trying again |
+
+- **Idempotency:** a converging update — re-sending the same five fields produces the
+  same bookmark — but AO3 offers no idempotency token, so the client sends **one confirmed
+  request and never retries**; the only retry is the CSRF refresh above, which Rails
+  answers before `bookmarks#update` runs.
+- **Limits and budget:** notes ≤ 5,000 chars (`ArchiveConfig.NOTES_MAX`, `config.yml:104`);
+  each bookmark tag ≤ 150 chars (`ArchiveConfig.TAG_MAX`, `config.yml:106`), tags sent
+  comma-separated in one `bookmark[tag_string]`. `validate_bookmark_fields` mirrors both
+  before the preview renders and again before the request; the client validates nothing
+  else about the tags locally. The client governor allows `bookmark_edit` 10 per hour.
+- **Gotchas:**
+  - **Ownership redirect ambiguity.** `check_ownership` sends a signed-in non-owner to the
+    bookmark page (`access_denied(redirect: @check_ownership_of)`,
+    `application_controller.rb:267-279`) — the same 302 → `/bookmarks/:id` as a successful
+    save. Success classification is only sound because the action is offered from the
+    account's own bookmark rows; never accept an arbitrary bookmark id for this action.
+  - **The pseud is not editable here.** It is omitted from the body (see above); changing
+    a bookmark's pseud stays on AO3.
+  - **Collections are by name, not curation.** `bookmark[collection_names]` adds/removes
+    this bookmark's collection submissions exactly as AO3's own field does (AO3's
+    moderation rules then apply upstream); founding or curating a collection is not part
+    of this action.
+  - **External-work bookmarks are out of scope.** AO3 bookmarks can target a Work,
+    ExternalWork or Series, but this client's bookmark flow is work bookmarks: creation is
+    `POST /works/:id/bookmarks` and the local bookmark receipt/ledger is keyed by work id.
+  - **The cached list is invalidated after the write.** A success drops the cached
+    `/users/<login>/bookmarks*` pages and returns to `/bookmarks?notice=bookmark_updated`,
+    so the list re-fetches and the notice explains the redirect.
+
+### 4.18 Bookmark delete — `DELETE /bookmarks/:id`
+
+- **Preconditions:** as for §4.17 — signed-in usable session, CSRF token, writes enabled,
+  and `:id` is a bookmark owned by the signed-in account (`check_ownership` guards
+  `destroy` too, `bookmarks_controller.rb:8,10`).
+- **Request:** `DELETE /bookmarks/:id` with `authenticity_token` in the body **and** as
+  `X-CSRF-Token` (a bare DELETE is answered with `/auth_error` while looking like a
+  redirect). No other fields. The app confirms locally first
+  (`GET /write/bookmark/delete?bookmark_id=<id>&work_id=<id>`), and that page says the
+  bookmark is removed from AO3 permanently and cannot be undone.
+- **Destroy semantics:** `bookmarks_controller.rb:239-250` calls `@bookmark.destroy` (the
+  bookmark row is gone; AO3 bookmarks have no deleted-comment-style marker) and redirects
+  to `user_bookmarks_path(current_user)` — or back to a bookmarks list when the request's
+  `Referer` is one. The client always sends `Referer: <origin>/`, so the success target is
+  the owner's index. The bookmarked work itself is untouched.
+- **Response classification** (`destroy`, `bookmarks_controller.rb:239-250`):
+
+  | response | meaning |
+  | --- | --- |
+  | 302 → `/users/:login/bookmarks` (the owner's list; the classifier also accepts any other `/bookmarks` or `/works/` path) | deleted; audit `delete_bookmark` → `bookmark-deleted`; the local bookmark receipt is dropped (`Store::remove_bookmark`, when the work id is known); the cached bookmarks list is invalidated and the browser returns to `/bookmarks?notice=bookmark_deleted` |
+  | 302 → `/bookmarks/:id` from `check_ownership` (non-owner) | **refusal, flash only** — but the target contains `/bookmarks`, so the classifier accepts it like success; the UI only offers delete on the account's own bookmarks |
+  | 200/422 re-render | AO3's refusal; typed, audit `failed`, notice `bookmark_delete_failed` |
+  | 302 → `/auth_error` | CSRF expired; Rails aborted before `destroy`, so the session layer's one token-refresh-and-retry is safe |
+  | 302 → `/users/login` / `/lost_cookie` | logged out / jar incomplete |
+  | 429 | rate limited; honour `Retry-After` |
+  | 403/503 | edge block / challenge |
+  | transport error | recorded `failed` and never retried; the delete may have landed — check AO3 before trying again |
+
+- **Why the redirect is weak evidence:** AO3 answers a successful delete and a
+  non-owner's refusal with redirects that both land on a `/bookmarks` path; the refusal's
+  reason is only a flash in the signed session, which a non-browser client cannot read. The
+  app therefore offers delete only on the account's own live bookmarks and audits the
+  verified request, not a guaranteed deletion. The list refresh after the redirect is the
+  practical confirmation: if the row is still on AO3 it comes back.
+- **Idempotency:** destructive and never auto-retried. A second attempt after a success
+  finds no such bookmark (404, reported as upstream drift); the client sends one confirmed
+  request and does not retry.
+- **Budget:** the client governor allows `bookmark_delete` 10 per hour.
+- **Gotchas:**
+  - Delete removes the **bookmark**, not the work.
+  - The local bookmark receipt is dropped only when the page carried a work id; an
+    external-work bookmark has no receipt in this client (creation is work-only, §4.5).
+  - The cached bookmarks page is invalidated and the browser returns to
+    `/bookmarks?notice=bookmark_deleted`.
+  - Deletion cannot be undone from AO3 or this client.
+
 ---
 
 ## 5. Outcome detection
@@ -778,7 +905,9 @@ Ordered from strongest to weakest signal. Prefer the highest available for each 
      refusals redirect to the same kinds of pages with only a flash (§4.15–§4.16), so these
      actions are only offered on the account's own comments and the audit records the
      verified request;
-   - `/bookmarks/:id` → bookmark created;
+   - `/bookmarks/:id` → bookmark created, or (for `PATCH /bookmarks/:id`) bookmark
+     edited — but AO3's ownership refusal also redirects a non-owner to the same bookmark
+     page, so only call it a success when the UI was scoped to the account's own bookmarks;
    - `/works/:id` → work created and posted, or (for `PUT /works/:id/post_draft`) a
      draft published, or (for `PATCH /works/:id`) work metadata updated (§4.13) — but
      AO3's ownership refusal also redirects a non-author here, so only call it a
@@ -789,6 +918,9 @@ Ordered from strongest to weakest signal. Prefer the highest available for each 
    - `/users/:login/works` or `/users/:login/works/drafts` → work deleted (the drafts
      list means the deleted work was a draft; both are success for `DELETE /works/:id`);
    - `/users/:login/works/:id/edit` → draft publish refused (already posted or invalid);
+   - `/users/:login/bookmarks` → bookmark deleted (the owner's list; the classifier also
+     accepts any bookmarks/work path) — a non-owner's refusal redirects to the bookmark
+     page, whose path also contains `/bookmarks`, so this shape is not proof;
    - `/auth_error` → CSRF expired;
    - `/users/:login/change_password` → `PasswordChangeRequired`;
    - `/429` → rate limited (the comment limiter's redirect is W5; W1 maps the HTTP 429 status);
@@ -827,7 +959,7 @@ Never use HTTP status alone: kudos success and failure are both `302`.
 | `RateLimited` | IP/global throttle | 429 + `Retry-After` | park account, surface wait |
 | `CommentRateLimited` | 3/900 s | 302 → `/429` after a comment create/update POST | wait 15 min; explain |
 | `AlreadyDone` | kudos duplicate | exact string §4.1 | treat as success |
-| `PolicyRefused` | own work, blocked, banned, frozen, comments off | page text; for comment edits/deletes a redirect + flash only (§4.15–§4.16) | explain; no retry |
+| `PolicyRefused` | own work, blocked, banned, frozen, comments off | page text; for comment edits/deletes a redirect + flash only (§4.15–§4.16), likewise for bookmark edits/deletes (§4.17–§4.18) | explain; no retry |
 | `SpamRejected` | Akismet | exact string §4.2 | no retry; suggest rewording |
 | `Validation` | duplicate comment, too long, missing pseud, bad subscription type | re-render / 422 | show message |
 | `TargetGone` | work deleted/private/hidden | 302 → `/404` or login | drop local state (**not constructed yet**: read outcome, lands with the W2 parser) |
@@ -843,10 +975,10 @@ Never use HTTP status alone: kudos success and failure are both `302`.
 | --- | --- | --- |
 | `ServerUnique` | kudos | retry allowed; map duplicate to `AlreadyDone` |
 | `ServerConstrained` | favorite tags (model validation) | retry allowed; 422 duplicate → already done |
-| `ClientGuarded` | comments (top-level and replies), comment edits, bookmarks, chapter update, work metadata update | **never auto-retry**; verify by re-read; require a new user confirmation for a second attempt |
+| `ClientGuarded` | comments (top-level and replies), comment edits, bookmark create and edit, chapter update, work metadata update | **never auto-retry**; verify by re-read; require a new user confirmation for a second attempt |
 | `NoConstraint` | subscriptions | **never retry**; pre-check the index, post-check, show state |
 | `NonIdempotentCreate` | work create, chapter create | **never retry**; read the 302 to classify; a timeout is ambiguous — the user verifies on AO3 before a second attempt |
-| `DestructiveStateChange` | draft publish, work delete, comment delete | **never auto-retry**; one confirmed request; classify from the redirect; a timeout is unconfirmed — verify My Works/My Drafts (or the comment thread) before a second attempt (deletion is irreversible) |
+| `DestructiveStateChange` | draft publish, work delete, comment delete, bookmark delete | **never auto-retry**; one confirmed request; classify from the redirect; a timeout is unconfirmed — verify My Works/My Drafts (or the comment thread/bookmark list) before a second attempt (deletion is irreversible) |
 
 Ambiguity rule: a transport failure *after* the request was written is `Ambiguous`. The
 only acceptable follow-up is a read that proves the effect; if the read cannot prove
@@ -868,7 +1000,9 @@ worse than a failed one.
 | work title | 255 chars | `config.yml:101` |
 | work summary | 1,250 chars | `config.yml:103` |
 | work notes | 5,000 chars | `config.yml:104` |
+| bookmark notes | 5,000 chars (`NOTES_MAX`) | `config.yml:104` |
 | tag name | 150 chars | `config.yml:106` |
+| bookmark tag | 150 chars (`TAG_MAX`) | `config.yml:106` |
 | work text | 10–510,000 chars | `config.yml:107-108` |
 | chapter title / summary / notes / text | same constants as the work fields (`chapter.rb:14-24`) | `config.yml:101,103,104,107,108` |
 | user-defined tags (fandom, relationship, character, additional) | 75 total | `config.yml:132` |
@@ -891,16 +1025,19 @@ retry, and a timeout is reported as ambiguous. Comment replies share the `commen
 (3 / 900 s) with top-level comments; comment edits and deletes each have a 10 per hour
 client budget (`comment_edit`, `comment_delete`) — delete is not rate-limited by AO3, and
 edit sits inside the stricter server-side comment allowance anyway. Each is one confirmed
-request with no automatic retry.
+request with no automatic retry. Bookmark edits and deletes each have a 10 per hour client
+budget (`bookmark_edit`, `bookmark_delete`); each is one confirmed `PATCH`/`DELETE
+/bookmarks/:id` with no automatic retry, and a transport error is reported as failed (not
+ambiguous), so the user checks the bookmark on AO3 before trying again.
 
 ---
 
 ## 9. Anti-patterns (each one is a bug we have seen elsewhere)
 
 1. Posting to `/works/:id/kudos` — the route is `POST /kudos` with the work in the body.
-2. Treating `302` as success for kudos, comments, or comment edits/deletes. AO3's
-   permission and edit-rule refusals redirect to the same pages as successes with only a
-   flash (§4.15–§4.16).
+2. Treating `302` as success for kudos, comments, comment edits/deletes or bookmark
+   edits/deletes. AO3's permission and edit-rule refusals redirect to the same pages as
+   successes with only a flash (§4.15–§4.18).
 3. Sending `Accept: application/json` to `/kudos` or `/comments` — `UnknownFormat`, `/404`.
 4. Storing only `_otwarchive_session` — next request is `/lost_cookie`.
 5. Caching the CSRF token across login or across accounts.

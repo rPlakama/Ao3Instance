@@ -1008,6 +1008,120 @@ fn update_work_result(work_id: &str, location: Option<&str>) -> Result<()> {
     )))
 }
 
+/// `PATCH /bookmarks/:id` — updates a bookmark's notes, tags, collections and
+/// private/rec flags. The pseud is left unchanged (omitted from the body).
+pub async fn update_bookmark(
+    session: &mut AccountSession,
+    bookmark_id: &str,
+    fields: &crate::ao3::account_lists::BookmarkEditFields,
+) -> Result<()> {
+    let mut form: Vec<(&str, String)> = vec![
+        ("utf8", "\u{2713}".to_string()),
+        (
+            "bookmark[bookmarker_notes]",
+            fields.notes.trim().to_string(),
+        ),
+        ("bookmark[tag_string]", fields.tags.trim().to_string()),
+        (
+            "bookmark[collection_names]",
+            fields.collections.trim().to_string(),
+        ),
+        (
+            "bookmark[private]",
+            if fields.private { "1" } else { "0" }.to_string(),
+        ),
+        (
+            "bookmark[rec]",
+            if fields.rec { "1" } else { "0" }.to_string(),
+        ),
+    ];
+    if fields.notes.chars().count() > crate::ao3::compose::NOTES_MAX {
+        return Err(Error::Validation("the bookmark notes are too long".into()));
+    }
+    let _ = &mut form;
+    let encoded: Vec<(&str, &str)> = form
+        .iter()
+        .map(|(name, value)| (*name, value.as_str()))
+        .collect();
+    let path = format!("/bookmarks/{}", bookmark_id.trim());
+    let response = session.patch_write(&path, &encoded).await?;
+    match response.status {
+        302 | 303 => {
+            check_bookmark_redirect(&response)?;
+            let location = response.location.unwrap_or_default();
+            let own = format!("/bookmarks/{}", bookmark_id.trim());
+            if location.contains(&own)
+                || (location.contains("/bookmarks") && location.contains("/users/"))
+            {
+                Ok(())
+            } else {
+                Err(Error::UpstreamChanged(format!(
+                    "bookmark update redirected to {location:?}"
+                )))
+            }
+        }
+        200 | 422 => Err(classify_work_failure(&response.body)),
+        429 => Err(Error::RateLimited {
+            retry_after: response.retry_after,
+        }),
+        403 | 503 => Err(Error::BlockedByEdge {
+            status: response.status,
+        }),
+        status => Err(Error::UpstreamChanged(format!(
+            "bookmark update returned HTTP {status}"
+        ))),
+    }
+}
+
+/// `DELETE /bookmarks/:id` — removes one bookmark.
+///
+/// AO3 redirects to `/users/:login/bookmarks` on success. A non-owner is also
+/// redirected (AO3's ownership filter), so the UI only offers this on the
+/// account's own live bookmark list.
+pub async fn delete_bookmark(session: &mut AccountSession, bookmark_id: &str) -> Result<()> {
+    let path = format!("/bookmarks/{}", bookmark_id.trim());
+    let response = session.delete_write(&path).await?;
+    match response.status {
+        302 | 303 => {
+            check_bookmark_redirect(&response)?;
+            let location = response.location.unwrap_or_default();
+            if location.contains("/bookmarks") || location.contains("/works/") {
+                Ok(())
+            } else {
+                Err(Error::UpstreamChanged(format!(
+                    "bookmark delete redirected to {location:?}"
+                )))
+            }
+        }
+        200 | 422 => Err(classify_work_failure(&response.body)),
+        429 => Err(Error::RateLimited {
+            retry_after: response.retry_after,
+        }),
+        403 | 503 => Err(Error::BlockedByEdge {
+            status: response.status,
+        }),
+        status => Err(Error::UpstreamChanged(format!(
+            "bookmark delete returned HTTP {status}"
+        ))),
+    }
+}
+
+fn check_bookmark_redirect(response: &crate::ao3::client::Response) -> Result<()> {
+    if response.location_contains("/auth_error") {
+        return Err(Error::CsrfExpired);
+    }
+    if response.location_contains("/users/login") {
+        return Err(Error::LoggedOut);
+    }
+    if response.location_contains("/lost_cookie") {
+        return Err(Error::SessionIncomplete);
+    }
+    if response.location_contains("/429") {
+        return Err(Error::RateLimited { retry_after: None });
+    }
+    Ok(())
+}
+
 /// First `/works/<id>` in a redirect target (`/works/123` or `/works/123/preview`).
 fn work_id_from_location(location: Option<&str>) -> Option<String> {
     let rest = location?

@@ -506,6 +506,69 @@ once + removes the local cache + audits, destructive actions need the write swit
 plus `ao3::account_lists::works` unit tests (3); full suite 297 green. Evidence:
 `notes/gates/works-manager.txt`.
 
+### Bookmark actions addendum — 2026-11-25
+
+**Edit and delete from the live list.** The live AO3 bookmarks page (`/bookmarks`, rendered
+from `/users/<login>/bookmarks` through the 30-minute page cache) now carries **Edit
+Bookmark** and **Delete Bookmark** on each row when the write gate is ready. The links
+carry `bookmark_id` and `work_id`; the local-cache view (`?local=1`) has no actions, and
+the bookmark notice flash is now rendered on the live page (`?notice=bookmark_updated` /
+`bookmark_deleted`, plus the matching failure notices).
+
+**Editor.** `GET /write/bookmark/edit?bookmark_id=<id>&work_id=<id>` fetches AO3's own
+`GET /bookmarks/<id>/edit` (`bookmarks/edit.html.erb` → `bookmarks/_bookmark_form.html.erb`)
+and parses the prefill (`parse_bookmark_editor`): notes (`bookmark[bookmarker_notes]`), your
+tags (`bookmark[tag_string]`), collections (`bookmark[collection_names]`) and the
+`bookmark[private]`/`bookmark[rec]` checkboxes, plus the bookmarkable title/work id from the
+heading link. A page without the `form[action^='/bookmarks/']` marker fails closed, and a
+non-owner's edit page is a redirect, so the app shows an error rather than a form that
+cannot save. The editor is AO3-shaped: notes textarea (5,000-char `maxlength`), "Your tags",
+"Post to Collections / Challenges", and Private/Rec checkboxes.
+
+**Preview and save.** `POST /write/bookmark/edit/preview` validates locally — notes ≤ 5,000
+(`ArchiveConfig.NOTES_MAX`) and each comma-separated tag ≤ 150 (`TAG_MAX`); nothing else is
+checked — then renders a confirmation page that re-submits the values with `confirm=yes` and
+shows the notes as the preview text. `POST /write/bookmark/edit` sends exactly one
+`PATCH /bookmarks/<id>` with `utf8`, `bookmark[bookmarker_notes]`, `bookmark[tag_string]`,
+`bookmark[collection_names]`, `bookmark[private]`, `bookmark[rec]` and the CSRF token. The
+booleans are always sent as `1`/`0` (so unchecking clears them), and `bookmark[pseud_id]` is
+omitted — the bookmark's pseud/creatorship is unchanged. A 302 back to the bookmark
+(`/bookmarks/<id>`) is success (audit `edit_bookmark` → `bookmark-updated`); a 200/422
+re-render with `#error` is AO3's typed refusal (audit `failed`, notice
+`bookmark_update_failed`); `/auth_error`, `/users/login` and `/lost_cookie` are typed as
+usual; a transport error is recorded failed and never retried. On success the cached
+`/users/<login>/bookmarks` pages are invalidated and the browser returns to
+`/bookmarks?notice=bookmark_updated`. The `bookmark_edit` governor budget is 10 per hour.
+
+**Delete.** `GET /write/bookmark/delete?bookmark_id=<id>&work_id=<id>` is a destructive
+confirmation that says AO3 removes the bookmark permanently and it cannot be undone;
+`POST /write/bookmark/delete` sends exactly one `DELETE /bookmarks/<id>` with the CSRF token
+(body field and `X-CSRF-Token`). A 302 to the owner's bookmarks index
+(`/users/<login>/bookmarks`; the classifier accepts any bookmarks/work path) is success
+(audit `delete_bookmark` → `bookmark-deleted`): the local bookmark receipt is dropped
+(`Store::remove_bookmark`, when the work id is known), the cached bookmarks pages are
+invalidated and the browser returns to `/bookmarks?notice=bookmark_deleted`. A 200/422
+re-render is AO3's typed refusal (audit `failed`, notice `bookmark_delete_failed`); a
+transport error is recorded failed and never retried. The `bookmark_delete` governor budget
+is 10 per hour.
+
+**Ownership caveat.** Both routes trust AO3's ownership filter rather than checking the
+bookmark's owner locally, and AO3 answers a non-owner with a redirect whose reason is only a
+flash: edit is redirected to `/bookmarks/<id>` — the same target as success — and delete is
+redirected to a `/bookmarks` path the classifier also accepts. The actions are therefore
+only offered on the account's own live bookmarks list, and the audit records the verified
+request, not a guaranteed effect. Remaining limits: bookmark creation keeps the one-action
+**Bookmark** confirmation (default pseud, no notes/tags/collections form), changing the
+bookmark's pseud and collection curation stay on AO3, and external-work bookmarks are out of
+scope (creation and the local receipt are work bookmarks only).
+
+**Tests and gate.** `tests/bookmark_actions.rs` (4: list offers Edit/Delete links; edit
+prefills, previews with no write, sends exactly one PATCH with the five fields and audits;
+delete warns, sends exactly one DELETE, drops the ledger receipt and audits; both need the
+write switch) plus `ao3::account_lists::bookmarks` parser/validation unit tests (2). Full
+suite 330 green; the route-drift gate rose to 68 claims (bookmark update/destroy and the
+edit fields). Evidence: `notes/gates/bookmarks-edit.txt`.
+
 ### W5 status — partial (2026-11-22): kudos + reading flags
 
 **Landed:**

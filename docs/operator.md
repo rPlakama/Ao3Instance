@@ -88,7 +88,7 @@ Limits and behaviour:
 `/works` cached library with filters ·
 `/fandoms` live AO3 `/media` directory and `/media/<slug>/fandoms` A–Z lists (30-min cached, offline fallback) ·
 `/dashboard` live AO3 subscriptions, bookmarks, reading history and local cache stats ·
-`/subscriptions`, `/bookmarks`, `/reading` (`?show=to-read` for Marked for Later) live AO3 account lists (30-min cached, offline fallback) ·
+`/subscriptions`, `/bookmarks`, `/reading` (`?show=to-read` for Marked for Later) live AO3 account lists (30-min cached, offline fallback); bookmark rows offer **Edit Bookmark**/**Delete Bookmark** when writes are enabled ·
 `/my/works`, `/my/works/drafts` the signed-in author's works and drafts, read from AO3's
 own `/users/<login>/works[/drafts]` (30-min cached, offline notice, `?page=N`,
 `?refresh=1`; drafts warn that AO3 deletes unposted drafts after ~29 days; posted rows
@@ -116,6 +116,14 @@ destructive confirmation explaining AO3's deleted-comment marker or the permanen
 `POST /write/comment/reply/preview` and `POST /write/comment/edit/preview` local
 validation + confirmation (no upstream write) ·
 `POST /write/comment/reply|edit|delete` the one comment request each ·
+`/write/bookmark/edit?bookmark_id=<id>&work_id=<id>` and
+`/write/bookmark/delete?bookmark_id=<id>&work_id=<id>` the bookmark editor (prefilled from
+AO3's own `/bookmarks/<id>/edit`: notes, tags, collections, private/rec) and the destructive
+delete confirmation (signed in and writes enabled; the links appear on the live bookmarks
+page rows) ·
+`POST /write/bookmark/edit/preview` local validation + confirmation (no upstream write) ·
+`POST /write/bookmark/edit` the one bookmark-update request ·
+`POST /write/bookmark/delete` the one bookmark-delete request ·
 `/read/<id>` reader (chapter jump, Entire Work; `?show_comments=1` shows the cached comment
 thread with Reply on every comment and Edit/Delete on your own when writes are enabled; the
 Comments action (when nothing is cached) or the "Refresh comments" button under a cached
@@ -239,6 +247,28 @@ re-importing the session; cached works and progress are unaffected.
   reply that never appears on AO3 was refused even though the audit says `replied`. The
   cache also does not store AO3's frozen/moderation state, so a frozen comment can still
   offer Edit and then be refused upstream. Deletion cannot be undone.
+- Editing and deleting bookmarks: the live `/bookmarks` list (AO3's own
+  `/users/<login>/bookmarks`) offers **Edit Bookmark**/**Delete Bookmark** on each row
+  once writes are enabled. Edit fetches AO3's own `/bookmarks/<id>/edit` form and
+  prefills notes, tags, collections and the private/rec checkboxes;
+  `POST /write/bookmark/edit/preview` validates locally (notes ≤ 5,000 characters, each
+  comma-separated tag ≤ 150) and shows a confirmation without any network write, then
+  `POST /write/bookmark/edit` sends exactly one `PATCH /bookmarks/<id>` with those five
+  fields — booleans always as `1`/`0`, so unchecking clears them, and
+  `bookmark[pseud_id]` is omitted so the owning pseud does not change. Delete warns on
+  its confirmation page that AO3 removes the bookmark permanently, then sends exactly
+  one `DELETE /bookmarks/<id>`. Edit success is a 302 back to the bookmark (audit
+  `edit_bookmark` → `bookmark-updated`); delete success is a 302 to the owner's
+  bookmarks list (audit `delete_bookmark` → `bookmark-deleted`), and the local bookmark
+  receipt is dropped. Both invalidate the cached bookmarks page and return to
+  `/bookmarks?notice=bookmark_updated` or `?notice=bookmark_deleted`; a typed refusal
+  (AO3's re-rendered error, a rate limit or an auth failure) returns the matching failure
+  notice. Neither action is retried: a transport error is
+  recorded as failed, so verify the bookmark on AO3 before trying again. Budgets: edits
+  10 per hour, deletes 10 per hour. Caveat: AO3 redirects a non-owner's edit or delete
+  with the same broad redirect shape as success (the reason is only a flash), so both
+  are offered only on the account's own live bookmarks list and the audit records the
+  verified request, not a guaranteed effect.
 - Posting a new work (`/works/new`, also the header **Post** link) composes AO3's
   own form, validates against AO3's limits, shows a confirmation page naming the
   work and pseud, then sends exactly one `POST /works`: `post_button` publishes
@@ -289,7 +319,8 @@ re-importing the session; cached works and progress are unaffected.
 - Client budgets: comments 3/15 min (AO3's own limit), kudos 10/min,
   subscriptions 20/h, bookmarks 10/min, new works 3/h, chapter saves 10/h,
   draft publishing 10/h, work deletes 5/h, work metadata edits 10/h,
-  comment edits 10/h, comment deletes 10/h.
+  bookmark edits 10/h, bookmark deletes 10/h, comment edits 10/h,
+  comment deletes 10/h.
   `Retry-After` parks the action.
 - The audit log (`/audit`) is append-only and stores targets and outcomes — never
   payloads, cookies or passwords.
@@ -330,11 +361,16 @@ shows exactly what was done.
   not a crawler and cannot be enabled for writes.
 
 - Chapter-level reading progress only; no scroll/block anchor yet (I7 refinement).
-- Bookmarks are created, not edited or deleted from the app. Your own comments can be
-  replied to, edited and deleted from the cached reader thread (see **Writes**); work-author
-  moderation (deleting other people's comments, approving/rejecting, freezing/hiding), inbox
-  replies, and editing a comment that already has replies (AO3's rule) are not offered —
-  those stay on AO3.
+- Bookmarks on works can be created from the reader, and edited or deleted from the live
+  `/bookmarks` list (see **Writes**) — but only the fields AO3's bookmark form exposes:
+  notes, your tags, collections and the private/rec flags. Bookmark creation itself stays
+  the single **Bookmark** confirmation (the default pseud; there is no notes/tags form on
+  create, and the editor cannot change the bookmark's pseud), collection curation stays on
+  AO3, and external-work bookmarks (AO3's bookmarklet/ExternalWork path) are not created by
+  the app and have no local bookmark receipt. Your own comments can be replied to, edited
+  and deleted from the cached reader thread; work-author moderation (deleting other
+  people's comments, approving/rejecting, freezing/hiding), inbox replies, and editing a
+  comment that already has replies (AO3's rule) are not offered — those stay on AO3.
 - New-work posting creates the work plus its first chapter in one request;
   further chapters are added and corrected from the chapter manager. Chapter
   deletion is not implemented, and neither is AO3's dedicated chapter-reordering

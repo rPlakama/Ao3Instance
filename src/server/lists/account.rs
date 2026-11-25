@@ -318,6 +318,7 @@ pub(in crate::server) struct BookmarksQuery {
     page: Option<i64>,
     local: Option<String>,
     refresh: Option<String>,
+    notice: Option<String>,
 }
 
 pub(in crate::server) async fn bookmarks(
@@ -327,6 +328,10 @@ pub(in crate::server) async fn bookmarks(
     let local = query.local.as_deref() == Some("1");
     let refresh = query.refresh.as_deref() == Some("1");
     let page_num = query.page.unwrap_or(1).max(1);
+    let notice = query
+        .notice
+        .as_deref()
+        .and_then(crate::server::writes::notice_text);
     let cache_acct = crate::server::cache::cache_account(&state).await;
     if !local && !cache_acct.is_empty() {
         let user_seg = user_path_segment(&cache_acct);
@@ -351,6 +356,7 @@ pub(in crate::server) async fn bookmarks(
                 &parsed,
                 page_num,
                 Some((fetched.from_cache, fetched.fetched_at)),
+                notice,
             )));
         }
     }

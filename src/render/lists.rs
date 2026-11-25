@@ -5,7 +5,7 @@ use std::collections::{HashMap, HashSet};
 
 use super::blurb::live_blurb;
 use super::chrome::{PageContext, layout};
-use super::components::{author_links_live, author_links_local, cache_banner};
+use super::components::{author_links_live, author_links_local, cache_banner, flash_notice};
 use super::{escape, sanitize};
 use crate::ao3::account_lists::{LiveBookmarksPage, LiveReadingsPage, LiveSubscriptionsPage};
 use crate::ao3::parse::{SpaceMode, percent_encode};
@@ -133,6 +133,7 @@ pub fn live_bookmarks_page(
     page: &LiveBookmarksPage,
     current_page: i64,
     cache_meta: Option<(bool, i64)>,
+    notice: Option<&str>,
 ) -> String {
     let heading = if page.total > 0 {
         format!(
@@ -151,6 +152,7 @@ pub fn live_bookmarks_page(
          <li><a href=\"/bookmarks?local=1\">Local Cache</a></li>\
          <li><a href=\"{refresh_href}\">Refresh from AO3</a></li></ul>"
     );
+    body.push_str(&flash_notice(notice));
     body.push_str(&cache_banner(
         cache_meta,
         &refresh_href,
@@ -224,6 +226,21 @@ pub fn live_bookmarks_page(
                     ));
                 }
                 body.push_str("</div>");
+            }
+            if ctx.write_enabled
+                && let Some(bookmark_id) = item.bookmark_id
+            {
+                let work_id = item
+                    .work
+                    .as_ref()
+                    .map(|work| work.ao3_id.clone())
+                    .unwrap_or_default();
+                body.push_str(&format!(
+                    "<ul class=\"bookmark actions\" role=\"navigation\">\
+                     <li><a href=\"/write/bookmark/edit?bookmark_id={bookmark_id}&amp;\
+                     work_id={work_id}\">Edit Bookmark</a></li>                     <li><a href=\"/write/bookmark/delete?bookmark_id={bookmark_id}&amp;\
+                     work_id={work_id}\">Delete Bookmark</a></li></ul>"
+                ));
             }
         }
         body.push_str("</ol>");

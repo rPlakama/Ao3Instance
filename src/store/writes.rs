@@ -195,6 +195,17 @@ impl Store {
         Ok(row.is_some())
     }
 
+    /// Drops the local bookmark receipt after AO3 deleted the bookmark.
+    pub async fn remove_bookmark(&self, account: &str, work_id: &str) -> Result<bool> {
+        let result = sqlx::query("DELETE FROM bookmarks WHERE account = ?1 AND work_id = ?2")
+            .bind(account)
+            .bind(work_id)
+            .execute(&self.pool)
+            .await
+            .map_err(|e| Error::Store(format!("remove bookmark: {e}")))?;
+        Ok(result.rows_affected() > 0)
+    }
+
     pub async fn has_kudos(&self, account: &str, work_id: &str) -> Result<bool> {
         let row = sqlx::query("SELECT 1 FROM kudos_sent WHERE account = ?1 AND work_id = ?2")
             .bind(account)

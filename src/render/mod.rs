@@ -37,6 +37,7 @@ pub(crate) const READER_JS_HASH: u64 = fnv1a_64(READER_JS.as_bytes());
 mod about;
 mod audit;
 mod blurb;
+mod bookmark_write;
 mod browse;
 mod chapters;
 mod chrome;
@@ -62,6 +63,7 @@ mod work;
 
 pub use about::about_page;
 pub use audit::{audit_page, challenge_error_page, confirm_page, error_page};
+pub use bookmark_write::bookmark_edit_page;
 pub use browse::{browse_page, filter_from};
 pub use chapters::{chapter_confirm_page, chapter_editor_page, chapter_manager_page};
 pub use chrome::{NavSection, PageContext, SolverSummary};
