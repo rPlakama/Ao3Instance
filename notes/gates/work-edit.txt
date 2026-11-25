@@ -1,0 +1,59 @@
+Work metadata/tag editing — verification
+2026-11-25T17:56Z (America/Recife)
+
+== feature
+GET /write/work/edit?work_id=   editor prefilled from AO3's own /works/<id>/edit
+                                page (form#work-form values: title, rating,
+                                warnings, fandom, categories, relationships,
+                                characters, additional tags, language id,
+                                summary, notes, end notes, collections, gifts);
+                                rating/warning/category/language choices come
+                                from the cached /works/new defaults.
+POST /write/work/edit/preview   local validation (title 255, summary 1250,
+                                notes/endnotes 5000, tag 150, <=75 tags,
+                                title/rating/warning/fandom/language required) +
+                                confirmation page, no network write
+POST /write/work/edit           one PATCH /works/<id> with work[title|
+                                rating_string|fandom_string|language_id|summary|
+                                notes|endnotes|collection_names|recipients],
+                                repeated work[archive_warning_strings][] and
+                                work[category_strings][], optional relationship/
+                                character/freeform strings. Chapter text is never
+                                sent (edited from the chapter page).
+Clearing: empty categories send the hidden empty work[category_strings][] value
+AO3's own form emits, and relationship/character/freeform strings are always sent
+(even empty), so clearing tags works.
+Classification: 302 back to /works/<id> = updated (audit work-updated; the UI
+only offers this on the account's own works, because AO3's ownership filter
+also redirects non-authors to the work page); 200/422 #error = AO3 refusal shown
+on the editor with fields preserved + audit failed; 429/login/auth/lost-cookie
+typed; timeout = ambiguous, never retried. Governor edit_work = 10/h. If the
+work was cached it is re-fetched once (best effort) and opened in the reader
+with notice work_updated; an uncached work goes through /open/<id>.
+
+== tests
+cargo test: 318 passed, 0 failed
+  new tests/writes_work_edit.rs (5): editor prefills from AO3's edit form;
+  preview + exactly one PATCH + cache refresh + audit work-updated; AO3 #error
+  shown/preserved/audited without retry; local validation blocks empty title and
+  warnings with zero writes; write switch required.
+  new ao3::compose unit tests (2): edit-page parse/validate; foreign page fails
+  closed. ao3::actions (2): redirect classification + explicit empty values
+  for cleared categories/optional tag fields (work path ok; /edit or
+  wrong id rejected).
+cargo fmt --check: exit 0
+cargo clippy --all-targets -D warnings: exit 0
+nix build .#default: exit 0   store: /nix/store/3fs72a63bxj8l3mhrgpwniz4adgla9x8-ao3instance-0.1.4
+scripts/check-ao3-routes.sh --require: 61 passed, 0 failed (works#edit/update,
+  warning/category array claims)
+scripts/check-no-solver-build-dep.sh: ok
+
+== UI
+.run/screenshots-workedit/work-editor-light.png: 1100px light render of the
+prefilled editor (tags, Work Info with summary/notes/end notes, Associations,
+Preview & Update), mock AO3 edit page + /works/new choices.
+
+== known limitations left for later rounds
+Byline/co-creator changes, work skins and preferences (comment permissions,
+restricted), scheduled/backdated posting, chapter delete/reorder, comment
+replies and bookmark editing remain unimplemented.

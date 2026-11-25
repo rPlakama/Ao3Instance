@@ -138,12 +138,14 @@ triggers `/lost_cookie`. Import is validated by the §2.2 probe before being mar
 | work delete | `DELETE /works/:id` | HTML | `authenticity_token` (body field **and** `X-CSRF-Token`) | 302 → `/users/:login/works` (posted work) or `/users/:login/works/drafts` (draft) | 302 → `/users/login`, `/lost_cookie`, `/auth_error`; 200/422; 429; 403/503 |
 | chapter create | `POST /works/:work_id/chapters` | HTML | `chapter[title]`, `chapter[position]`, `chapter[wip_length]`, `chapter[summary]`, `chapter[notes]`, `chapter[endnotes]`, `chapter[content]`, `post_without_preview_button`/`save_button` | 302 → `/works/:work_id/chapters/:id` (posted) or `/works/:work_id/chapters/:id/preview` (unposted draft) | 200 re-render with `#error`; 429; 302 → `/auth_error` |
 | chapter update | `PUT /works/:work_id/chapters/:id` | HTML | the same `chapter[...]` fields, `update_button` | 302 → `/works/:work_id/chapters/:id` | 200 re-render with `#error`; 429; 302 → `/auth_error` |
+| work update | `PATCH /works/:id` | HTML | `work[title]`, `work[rating_string]`, `work[archive_warning_strings][]`, `work[fandom_string]`, `work[language_id]`, `work[summary]`, `work[notes]`, `work[endnotes]`, `work[collection_names]`, `work[recipients]`, `work[category_strings][]`, optional `work[relationship_string]`/`work[character_string]`/`work[freeform_string]`; CSRF token | 302 → `/works/:id` (audit `work-updated`) | 200/422 re-render with `#error`; a non-author is also redirected to `/works/:id`; 429; 302 → `/auth_error`; 403/503 |
 
-Deferred (documented, not implemented): chapter deletion/reordering, editing a work
-or its tags/metadata, co-creators, mute/block, collections, comment moderation
+Deferred (documented, not implemented): chapter deletion/reordering, byline/co-creator
+changes, work skins/work preferences, mute/block, collections, comment moderation
 (approve/reject/freeze/hide), admin version of any action. Draft publishing and work
 deletion are implemented — see §4.9 and §4.10; creating and editing chapters are
-implemented — see §4.11 and §4.12.
+implemented — see §4.11 and §4.12; editing a work's metadata and tags is implemented —
+see §4.13.
 
 ---
 
@@ -492,6 +494,101 @@ implemented — see §4.11 and §4.12.
     chapter and re-renders instead of saving (`chapter_cannot_be_saved?`,
     `chapters_controller.rb:230-239`); those messages are the work's, not the chapter's.
 
+### 4.13 Work update — `PATCH /works/:id`
+
+- **Preconditions:** signed-in usable session (both cookies, §2); CSRF token; writes
+  enabled client-side; `:id` is a work authored by the signed-in account. The client
+  only offers this on the account's own **posted** works (My Works → **Edit Work**);
+  drafts are managed with publish/delete instead (§4.9–§4.10). AO3's browser flow
+  starts from `GET /works/:id/edit` (`works_controller.rb:322-334`), which is
+  owner-or-admin only: `load_work` sets `@check_ownership_of = @work`
+  (`works_controller.rb:763`) and `check_ownership_or_admin` guards `edit`/`update`
+  (`works_controller.rb:16`, `application_controller.rb:491-494`).
+- **Editor page:** `works/edit.html.erb` renders `_standard_form.html.erb` (`:40`),
+  whose `form#work-form` (`:2`) carries title (`:15`), summary (`:32`), notes and end
+  notes (`_notes_form.html.erb:21,35`), collections and gifts (`:81,89`), the tag
+  fieldset (`_work_form_tags.html.erb`: rating `:17`, archive warnings `:35-55`,
+  fandom `:55`, categories `:70-83`, relationships `:90`, characters `:102`,
+  additional tags `:114`) and the numeric language select
+  (`_work_form_associations_language.html.erb:5-10`). The app parses that page for the
+  current values (`ao3::compose::parse_edit_work_page`) and renders the select/
+  checkbox choices from the composer's cached `/works/new` defaults, so no rating,
+  warning, category or numeric language id is hardcoded. A page without `#work-form`
+  fails closed (`UpstreamChanged`).
+- **Request:** a real `PATCH /works/:id` (the member update that `resources :works`
+  provides, `routes.rb:384`; AO3's own form submits `POST` with `_method=patch`).
+  Body: `work[title]`, `work[rating_string]`, `work[fandom_string]`,
+  `work[language_id]`, `work[summary]`, `work[notes]`, `work[endnotes]`,
+  `work[collection_names]`, `work[recipients]`, repeated
+  `work[archive_warning_strings][]` and `work[category_strings][]`, and — when
+  non-empty — `work[relationship_string]`, `work[character_string]`,
+  `work[freeform_string]`; plus `utf8=✓` and `authenticity_token` (body field and
+  `X-CSRF-Token`).
+- **No `update_button` is needed.** AO3's edit form renders `update_button` for an
+  already-posted work (`works/_posting_fieldset.html.erb:21-25`), but `works#update`
+  only branches on `preview_button`, `edit_button` and `post_button`
+  (`works_controller.rb:360-394`); with no button parameter a valid request falls
+  through to `@chapter.save && @work.save` and redirects to the work, so the client
+  sends no button name.
+- **No `work[posted]`.** `posted` is not a permitted parameter
+  (`works_controller.rb:911-934`); only `post_button` sets it at `:379`, and an
+  already-posted work does not need it. Publishing a draft is the separate
+  `PUT /works/:id/post_draft` (§4.9).
+- **No chapter text.** `work[chapter_attributes]` is permitted but the client does not
+  send it, so the work's existing chapters are untouched; chapter title, text and
+  notes are the separate chapter contract (§4.11–§4.12).
+- **Response classification:**
+
+  | response | meaning |
+  | --- | --- |
+  | 302 → `/works/:id` (not `/edit` or `/preview`) | metadata/tags updated; audit `work-updated`; the app re-fetches the cached work once (best effort) and opens the reader |
+  | 302 → any other non-auth location (including `/works/:id/edit`, `…/preview`) | not a save: the client reports `UpstreamChanged` rather than guessing |
+  | 200 (or 422) re-render with `#error li` | validation refusal; AO3's own messages; nothing changed |
+  | 302 → `/auth_error` | CSRF expired; Rails aborted before the action, so the session layer's one token-refresh-and-retry is safe |
+  | 302 → `/users/login` | logged out; re-authenticate |
+  | 302 → `/lost_cookie` | jar incomplete (`user_credentials` missing) |
+  | 429 | rate limited; honour `Retry-After` |
+  | 403/503 | edge block / challenge |
+  | transport error | **ambiguous**: the update may have landed; verify the work on AO3 before retrying |
+
+- **Idempotency:** re-sending the same metadata converges to the same work state
+  (nothing is created or deleted), but AO3 offers no idempotency token, so the client
+  sends **one confirmed request and never retries the update itself**; the only retry
+  is the CSRF token refresh above, which Rails answers before `works#update` runs. A
+  timeout is reported as ambiguous/unknown.
+- **Limits:** title ≤ 255, summary ≤ 1,250, notes and end notes ≤ 5,000, each tag
+  ≤ 150 chars, fandom + relationship + character + additional tags ≤ 75 total; title,
+  rating, at least one archive warning, fandom and language are required (the same
+  limits as §4.8). `ao3::compose::validate_edit_work` mirrors them locally before
+  anything is sent.
+- **Budget:** the client governor allows `edit_work` 10 per hour.
+- **Gotchas:**
+  - **Ownership redirect ambiguity.** `check_ownership_or_admin` sends a signed-in
+    non-author to the work page (`access_denied(redirect: @check_ownership_of)`,
+    `application_controller.rb:267-279,491-494`) — the same 302 → `/works/:id` as a
+    successful save. The success classification is only sound because the action is
+    offered solely on the account's own works (My Works rows); never accept an
+    arbitrary work id for this action.
+  - **Arrays are repeated fields.** Send
+    `work[archive_warning_strings][]=…&work[archive_warning_strings][]=…` (likewise
+    `work[category_strings][]`), not one comma-joined value or a JSON array. AO3's own
+    form also carries a hidden empty array entry for each group
+    (`include_hidden: !include_blank`, `_work_form_tags.html.erb:35-55,70-83`) so an
+    empty selection is representable; the client requires at least one warning and
+    sends only the checked values.
+  - **Omitted fields are kept.** The controller assigns only the keys it receives
+    (`@work.attributes = work_params`, `works_controller.rb:361`). The client sends
+    title, rating, fandom, language, summary, notes, end notes, collections and gifts
+    on every save, so emptying a text field clears it on AO3. When no category is
+    checked the client sends the hidden empty `work[category_strings][]` value that
+    AO3's own form emits, and the optional relationship/character/additional-tag
+    strings are always sent (even empty) — so clearing those groups from the editor
+    clears them on AO3. Warnings are required, so that group is never empty.
+  - **Not sent with this action:** byline/co-creators
+    (`work[author_attributes]`), work skin, work preferences (`comment_permissions`,
+    `restricted`), series, challenge assignments/claims, and chapter dates/scheduling.
+    Those stay on AO3.
+
 ---
 
 ## 5. Outcome detection
@@ -504,7 +601,9 @@ Ordered from strongest to weakest signal. Prefer the highest available for each 
    - `/comments/:id` → comment created;
    - `/bookmarks/:id` → bookmark created;
    - `/works/:id` → work created and posted, or (for `PUT /works/:id/post_draft`) a
-     draft published;
+     draft published, or (for `PATCH /works/:id`) work metadata updated (§4.13) — but
+     AO3's ownership refusal also redirects a non-author here, so only call it a
+     success when the UI was scoped to the account's own works;
    - `/works/:id/preview` → work created as an unposted draft;
    - `/works/:work_id/chapters/:id` → chapter created and posted, or chapter updated;
    - `/works/:work_id/chapters/:id/preview` → chapter created as an unposted draft;
@@ -562,7 +661,7 @@ Never use HTTP status alone: kudos success and failure are both `302`.
 | --- | --- | --- |
 | `ServerUnique` | kudos | retry allowed; map duplicate to `AlreadyDone` |
 | `ServerConstrained` | favorite tags (model validation) | retry allowed; 422 duplicate → already done |
-| `ClientGuarded` | comments, bookmarks, chapter update | **never auto-retry**; verify by re-read; require a new user confirmation for a second attempt |
+| `ClientGuarded` | comments, bookmarks, chapter update, work metadata update | **never auto-retry**; verify by re-read; require a new user confirmation for a second attempt |
 | `NoConstraint` | subscriptions | **never retry**; pre-check the index, post-check, show state |
 | `NonIdempotentCreate` | work create, chapter create | **never retry**; read the 302 to classify; a timeout is ambiguous — the user verifies on AO3 before a second attempt |
 | `DestructiveStateChange` | draft publish, work delete | **never auto-retry**; one confirmed request; classify from the redirect; a timeout is unconfirmed — verify My Works/My Drafts before a second attempt (deletion is irreversible) |
@@ -600,7 +699,9 @@ flight, no parallelism, no background writes. Work creation is additionally budg
 Draft publishing is budgeted at 10 per hour and work deletion at 5 per hour; both are one
 confirmed request and never retried. Chapter create and update share one `chapter`
 budget of 10 per hour: a chapter save is public and, for a create, non-idempotent, so it
-is one confirmed request with no automatic retry.
+is one confirmed request with no automatic retry. Work metadata edits are budgeted at 10
+per hour (`edit_work`); the update is one confirmed `PATCH /works/:id` with no automatic
+retry, and a timeout is reported as ambiguous.
 
 ---
 

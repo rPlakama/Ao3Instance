@@ -163,6 +163,11 @@ fn work_row(entry: &MyWorkEntry, cached_works: &HashSet<String>, can_write: bool
                  rel=\"noopener noreferrer\">Open on AO3</a></li>\
                  <li><a href=\"/my/works/{id}/chapters\">Chapters</a></li>"
             ));
+            if can_write {
+                actions.push_str(&format!(
+                    "<li><a href=\"/write/work/edit?work_id={id}\">Edit Work</a></li>"
+                ));
+            }
             if can_write && work.complete != Some(true) {
                 actions.push_str(&format!(
                     "<li><a href=\"/write/chapter/new?work_id={id}\">Add Chapter</a></li>"

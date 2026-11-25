@@ -6,6 +6,7 @@
 
 mod actions;
 mod chapter;
+mod edit_work;
 mod preview;
 mod work;
 
@@ -30,8 +31,36 @@ pub(super) use actions::{
     write_bookmark, write_comment, write_kudos, write_reading, write_subscribe, write_unsubscribe,
 };
 pub(super) use chapter::{chapter_editor, chapter_preview, chapter_save};
+pub(super) use edit_work::{edit_work, edit_work_preview, edit_work_save};
 pub(super) use preview::{write_comment_preview, write_preview};
 pub(super) use work::{compose, delete_work, publish_draft, write_work, write_work_preview};
+
+/// Decodes `application/x-www-form-urlencoded` into name -> repeated values.
+///
+/// AO3-style checkbox groups repeat keys (`warnings=...&warnings=...`), which
+/// serde's form extractor cannot collect into a `Vec`; the composer and the work
+/// editor both parse the body by hand for that reason.
+pub(super) fn parse_form_body(
+    body: &[u8],
+) -> Handled<std::collections::HashMap<String, Vec<String>>> {
+    let text = std::str::from_utf8(body)
+        .map_err(|_| AppError::BadRequest("form body is not valid UTF-8".into()))?;
+    let mut fields: std::collections::HashMap<String, Vec<String>> =
+        std::collections::HashMap::new();
+    for pair in text.split('&').filter(|pair| !pair.is_empty()) {
+        let (key, value) = pair.split_once('=').unwrap_or((pair, ""));
+        let key = form_component(key)?;
+        let value = form_component(value)?;
+        fields.entry(key).or_default().push(value);
+    }
+    Ok(fields)
+}
+
+fn form_component(raw: &str) -> Handled<String> {
+    let plus_decoded = raw.replace('+', " ");
+    crate::ao3::parse::percent_decode(&plus_decoded)
+        .ok_or_else(|| AppError::BadRequest("invalid percent-encoding in form body".into()))
+}
 
 pub(super) fn require_writes_enabled(state: &AppState) -> Handled<()> {
     if !state.write_enabled {
@@ -173,6 +202,11 @@ pub(super) fn notice_text(key: &str) -> Option<&'static str> {
             Some("AO3 is rate limiting this instance; try publishing again later.")
         }
         "work_deleted" => Some("Work deleted on AO3."),
+        "work_updated" => Some("Work updated on AO3."),
+        "work_update_failed" => Some("AO3 rejected the work update; see the audit log."),
+        "work_update_rate_limited" => {
+            Some("AO3 is rate limiting this instance; try the update again later.")
+        }
         "chapter_posted" => Some("Chapter posted on AO3."),
         "chapter_draft" => Some("Chapter saved as a draft on AO3."),
         "chapter_updated" => Some("Chapter updated on AO3."),

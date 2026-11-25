@@ -400,4 +400,213 @@ mod tests {
         assert!(errors.iter().any(|error| error.contains("Summary")));
         assert!(errors.iter().any(|error| error.contains("may not add up")));
     }
+
+    #[test]
+    fn parses_the_edit_work_page_and_validates_metadata() {
+        let html = include_str!("../../tests/fixtures/ao3_edit_work.html");
+        let fields = parse_edit_work_page(html).expect("edit page");
+        assert_eq!(fields.title, "The Clockwork Ferry");
+        assert_eq!(fields.rating, "General Audiences");
+        assert_eq!(
+            fields.warnings,
+            vec!["No Archive Warnings Apply".to_string()]
+        );
+        assert_eq!(fields.categories, vec!["F/M".to_string()]);
+        assert_eq!(fields.fandom, "Test Fandom");
+        assert_eq!(fields.language_id, "1");
+        assert!(fields.notes.contains("PLACEHOLDER WORK NOTE"));
+        assert!(validate_edit_work(&fields).is_empty());
+
+        let mut broken = fields;
+        broken.title.clear();
+        broken.warnings.clear();
+        broken.fandom = "x".repeat(TAG_MAX + 1);
+        let errors = validate_edit_work(&broken);
+        assert!(
+            errors
+                .iter()
+                .any(|error| error.contains("Work Title is required"))
+        );
+        assert!(
+            errors
+                .iter()
+                .any(|error| error.contains("Archive Warning is required"))
+        );
+        assert!(
+            errors
+                .iter()
+                .any(|error| error.contains("at most 150 characters"))
+        );
+    }
+
+    #[test]
+    fn a_non_editor_page_fails_closed() {
+        assert!(parse_edit_work_page("<html><body>login</body></html>").is_err());
+    }
+}
+
+/// The editable metadata of an existing work, as AO3's edit form renders it.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct EditWorkFields {
+    pub title: String,
+    pub rating: String,
+    pub warnings: Vec<String>,
+    pub fandom: String,
+    pub categories: Vec<String>,
+    pub relationships: String,
+    pub characters: String,
+    pub additional_tags: String,
+    pub language_id: String,
+    pub summary: String,
+    pub notes: String,
+    pub endnotes: String,
+    pub collections: String,
+    pub recipients: String,
+}
+
+/// Parses `GET /works/:id/edit` (owner-only `works/edit.html.erb` rendering
+/// `_standard_form.html.erb`). Returns `None` when the page is not the work
+/// editor (login wall, not the author, layout drift).
+pub fn parse_edit_work_page(html: &str) -> Result<EditWorkFields> {
+    let document = Html::parse_document(html);
+    let form = document
+        .select(&css("form#work-form")?)
+        .next()
+        .ok_or_else(|| {
+            Error::UpstreamChanged(
+                "AO3 did not show the work editor (not the work's author, or the page changed)"
+                    .to_string(),
+            )
+        })?;
+    let checked = |name: &str| -> Vec<String> {
+        let Ok(selector) = css(&format!("input[type='checkbox'][name='{name}'][checked]")) else {
+            return Vec::new();
+        };
+        form.select(&selector)
+            .filter_map(|node| node.value().attr("value").map(str::to_string))
+            .collect()
+    };
+    Ok(EditWorkFields {
+        title: attr_value(form, "input[name='work[title]']"),
+        rating: selected_value(form, "select[name='work[rating_string]']"),
+        warnings: checked("work[archive_warning_strings][]"),
+        fandom: attr_value(form, "input[name='work[fandom_string]']"),
+        categories: checked("work[category_strings][]"),
+        relationships: attr_value(form, "input[name='work[relationship_string]']"),
+        characters: attr_value(form, "input[name='work[character_string]']"),
+        additional_tags: attr_value(form, "input[name='work[freeform_string]']"),
+        language_id: selected_value(form, "select[name='work[language_id]']"),
+        summary: textarea_value(form, "textarea[name='work[summary]']"),
+        notes: textarea_value(form, "textarea[name='work[notes]']"),
+        endnotes: textarea_value(form, "textarea[name='work[endnotes]']"),
+        collections: attr_value(form, "input[name='work[collection_names]']"),
+        recipients: attr_value(form, "input[name='work[recipients]']"),
+    })
+}
+
+fn attr_value(form: ElementRef<'_>, selector: &str) -> String {
+    let Ok(selector) = css(selector) else {
+        return String::new();
+    };
+    form.select(&selector)
+        .next()
+        .and_then(|node| node.value().attr("value"))
+        .unwrap_or_default()
+        .to_string()
+}
+
+fn selected_value(form: ElementRef<'_>, selector: &str) -> String {
+    let Ok(selector) = css(selector) else {
+        return String::new();
+    };
+    let Ok(option_selector) = css("option[selected]") else {
+        return String::new();
+    };
+    form.select(&selector)
+        .next()
+        .and_then(|node| {
+            node.select(&option_selector)
+                .next()
+                .and_then(|option| option.value().attr("value"))
+                .map(str::to_string)
+        })
+        .unwrap_or_default()
+}
+
+fn textarea_value(form: ElementRef<'_>, selector: &str) -> String {
+    let Ok(selector) = css(selector) else {
+        return String::new();
+    };
+    form.select(&selector)
+        .next()
+        .map(|node| node.text().collect::<String>())
+        .unwrap_or_default()
+}
+
+/// Local validation for a metadata edit (creation still validates chapter text
+/// separately; the editor never touches chapter content).
+pub fn validate_edit_work(fields: &EditWorkFields) -> Vec<String> {
+    let mut errors = Vec::new();
+    if fields.title.trim().is_empty() {
+        errors.push("Work Title is required.".to_string());
+    } else if fields.title.chars().count() > TITLE_MAX {
+        errors.push(format!(
+            "Work Title must be at most {TITLE_MAX} characters."
+        ));
+    }
+    if fields.rating.trim().is_empty() {
+        errors.push("Rating is required.".to_string());
+    }
+    if fields.warnings.is_empty() {
+        errors.push("Archive Warning is required.".to_string());
+    }
+    if fields.fandom.trim().is_empty() {
+        errors.push("Fandoms is required.".to_string());
+    }
+    if fields.language_id.trim().is_empty() {
+        errors.push("Language is required.".to_string());
+    }
+    if fields.summary.chars().count() > SUMMARY_MAX {
+        errors.push(format!("Summary must be at most {SUMMARY_MAX} characters."));
+    }
+    if fields.notes.chars().count() > NOTES_MAX {
+        errors.push(format!("Notes must be at most {NOTES_MAX} characters."));
+    }
+    if fields.endnotes.chars().count() > NOTES_MAX {
+        errors.push(format!("End Notes must be at most {NOTES_MAX} characters."));
+    }
+    for (label, value) in [
+        ("Fandoms", fields.fandom.as_str()),
+        ("Relationships", fields.relationships.as_str()),
+        ("Characters", fields.characters.as_str()),
+        ("Additional Tags", fields.additional_tags.as_str()),
+    ] {
+        let tags: Vec<&str> = value
+            .split(',')
+            .map(str::trim)
+            .filter(|tag| !tag.is_empty())
+            .collect();
+        if tags.iter().any(|tag| tag.chars().count() > TAG_MAX) {
+            errors.push(format!(
+                "Each {label} tag must be at most {TAG_MAX} characters."
+            ));
+        }
+    }
+    let tag_count = [
+        fields.fandom.as_str(),
+        fields.relationships.as_str(),
+        fields.characters.as_str(),
+        fields.additional_tags.as_str(),
+    ]
+    .iter()
+    .flat_map(|value| value.split(','))
+    .map(str::trim)
+    .filter(|tag| !tag.is_empty())
+    .count();
+    if tag_count > USER_DEFINED_TAGS_MAX {
+        errors.push(format!(
+            "Fandom, relationship, character and additional tags together may not exceed {USER_DEFINED_TAGS_MAX}."
+        ));
+    }
+    errors
 }

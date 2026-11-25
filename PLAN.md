@@ -260,8 +260,32 @@ audited `ambiguous` and never retried. After success the cached work is re-fetch
 tests (4); full suite 309 green; the route-drift gate gained nested `resources
 :chapters`, `chapters#create`/`#update`, `post_without_preview_button` and
 `chapter_params` claims (57 total); the wiring crawl covers
-`/my/works/12345/chapters`. Chapter deletion/reordering, backdating and work
-metadata/tag editing remain later work. Evidence: `notes/gates/chapter-management.txt`.
+`/my/works/12345/chapters`. Chapter deletion/reordering and backdating remain later
+work. Evidence: `notes/gates/chapter-management.txt`.
+
+**Work metadata editing (2026-11-25):** a posted work's metadata and tags can now be
+edited from the instance: My Works rows carry an **Edit Work** link (writes enabled)
+to `/write/work/edit?work_id=`, whose AO3-shaped editor is prefilled from AO3's own
+`/works/<id>/edit` form (`#work-form`: title, rating, archive warnings, categories,
+fandom/relationship/character/additional tags, language, summary, notes, end notes,
+collections, gifts), with the select/checkbox choices taken from the cached
+`/works/new` defaults. `POST /write/work/edit/preview` mirrors AO3's limits locally
+(title 255, summary 1,250, notes/end notes 5,000, tag 150, at most 75 user-defined
+tags; title/rating/warning/fandom/language required) and shows a confirmation page
+that re-submits every value; `POST /write/work/edit` then sends exactly one `PATCH
+/works/<id>` with the `work[...]` fields (repeated warning/category arrays; no
+`work[posted]`; chapter text is never sent). A 302 back to `/works/<id>` means
+updated (audit `work-updated`; the UI only offers this on the account's own works
+because AO3's ownership filter redirects a non-author to the same path), a 200/422
+`#error` re-render is AO3's refusal shown on the editor with the fields preserved
+(audit `failed`), and a timeout is audited `ambiguous` and never retried. A cached
+work is re-fetched once (best effort) and opens in the reader with a `work_updated`
+notice; an uncached work goes through `/open/<id>`. The `edit_work` governor budget
+is 10/hour. `tests/writes_work_edit.rs` (5 tests) plus `ao3::compose` parse/validate
+unit tests (2) and an `ao3::actions` redirect-classification test; full suite 317
+green; the route-drift gate gained works#edit/update and the warning/category array
+claims (61 total). Byline/co-creators, work skins/preferences, scheduling and
+chapter delete/reorder remain later. Evidence: `notes/gates/work-edit.txt`.
 
 **Known deviations (documented, not blockers):** required-tag marks are
 styled text badges rather than SVG artwork; comment avatars are a CSS-drawn

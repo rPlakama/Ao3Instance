@@ -3,9 +3,9 @@
 - **Status:** Accepted (2026-11-25)
 - **Date:** 2026-11-25
 - **Supersedes:** the "works/chapters creation" deferral in ADR-0003, for new works,
-  chapter management and managing existing ones; chapter deletion/reordering and work
-  metadata editing remain deferred
-- **Related:** ADR-0003, ADR-0005, `docs/ao3-write-api.md` §3–§4.12,
+  chapter management, managing existing ones and work metadata/tag editing; chapter
+  deletion/reordering remain deferred
+- **Related:** ADR-0003, ADR-0005, `docs/ao3-write-api.md` §3–§4.13,
   `docs/write-client-plan.md`
 
 ## Context
@@ -83,6 +83,15 @@ does not have to hardcode private database facts.
    text kept. After a success the cached work is re-fetched once (best effort)
    so the reader shows the new chapter. One confirmed request, no auto-retry; a
    timeout is `ambiguous`. Chapter deletion/reordering stay on AO3.
+9. **A posted work's metadata and tags can be edited**, through AO3's own edit-page
+   shape. `GET /write/work/edit?work_id=<id>` fetches `GET /works/<id>/edit`
+   (`works/edit.html.erb` → `_standard_form.html.erb`, `form#work-form`) and parses
+   the current values; the rating/warning/category/language choices come from the
+   composer's cached `/works/new` defaults. `POST /write/work/edit/preview`
+   validates against AO3's limits locally and renders a confirmation page that
+   re-submits every value; `POST /write/work/edit` then sends exactly one
+   `PATCH /works/<id>` with the `work[...]` metadata fields. Chapter text is never
+   sent — it stays with the chapter editor (item 8).
 
 ## Non-idempotent-create rules
 
@@ -152,6 +161,46 @@ Adding and editing a chapter reuses the same spine but has its own outcome shape
   position); there is no scheduling or backdating control, so AO3 dates a new
   chapter today and the publication date is never exposed.
 
+## Work metadata edit rules
+
+Editing a posted work's tags/metadata reuses the same spine but has its own outcome
+shape:
+
+- **The editor is AO3's own edit page.** `GET /works/<id>/edit`
+  (`works_controller.rb:322-334`) renders `works/edit.html.erb` →
+  `_standard_form.html.erb` (`form#work-form`). The app parses the current title,
+  rating, archive warnings, categories, fandom/relationship/character/additional-tag
+  strings, numeric language id, summary, notes, end notes, collections and gift
+  recipients from that page, and fails closed (`UpstreamChanged`) when the
+  `#work-form` marker is missing. The select/checkbox option lists are the
+  composer's cached `/works/new` defaults, so no rating, warning, category or
+  numeric language id is hardcoded.
+- **Local validation, then one PATCH.** `validate_edit_work` mirrors AO3's limits
+  (title ≤ 255, summary 1,250, notes/end notes 5,000, each tag 150, at most 75
+  user-defined tags; title, rating, at least one archive warning, fandom and
+  language required). The confirmation page re-submits every value, and
+  `PATCH /works/:id` carries the `work[...]` fields: title, rating, fandom,
+  language, summary, notes, end notes, collections, recipients, repeated warning
+  and category arrays, and optional relationship/character/additional-tag strings.
+  It never sends chapter text or `work[posted]`, and no button name is needed for a
+  direct PATCH (AO3's update action only branches on the preview/edit/post buttons).
+- **Classify from the redirect, with an ownership caveat.** 302 → `/works/<id>` is
+  a save (audit `work-updated`); 200/422 with `#error` is AO3's refusal, shown on
+  the editor with the fields kept (audit `failed`); `/auth_error`, `/users/login`
+  and `/lost_cookie` are typed as usual. AO3's ownership filter redirects a
+  non-author to the same `/works/<id>` path, so the success signal is only sound
+  because the UI offers the action on the account's own posted works (My Works
+  **Edit Work**); it must never be offered for a work id from elsewhere. One
+  confirmed request, no auto-retry; a timeout is `ambiguous`.
+- **Cache refresh after success.** When the work was cached it is re-fetched once
+  (best effort) and the reader opens with a `work_updated` notice; an uncached work
+  is opened through `/open/<id>`. A refresh failure is logged and never turns the
+  write into an error.
+- **Budget.** The `edit_work` governor budget is 10 per hour.
+- **Not implemented.** Byline/co-creator changes, work skins, work preferences
+  (comment permissions, restricted), series and scheduling/backdating stay on AO3;
+  chapter text is edited only through the chapter editor.
+
 ## Scope
 
 **Now:** new work plus first chapter; publish or save as draft; composer options
@@ -162,12 +211,15 @@ a confirmation page, one request and no auto-retry). Draft publishing is budgete
 10/hour and deletion 5/hour. Plus chapter management: AO3's chapter index, adding
 a chapter (posted, or saved as an unposted chapter draft) and editing an existing
 one through AO3's chapter form, each with a local confirmation, exactly one
-request and no auto-retry; chapter saves are budgeted 10/hour.
+request and no auto-retry; chapter saves are budgeted 10/hour. Plus work
+metadata/tag editing: the editor is prefilled from AO3's own edit form, validated
+and confirmed locally, then exactly one `PATCH /works/<id>` (never chapter text,
+never `work[posted]`), with a cache refresh after success and a 10/hour budget.
 
 **Later** (each needs its own contract, confirmation rules and tests): deleting
-and reordering chapters, editing work metadata/tags, co-creators, and any
-scheduling or background posting. These remain deferred and are not implied by
-this ADR.
+and reordering chapters, byline/co-creator changes, work skins and work
+preferences (comment permissions, restricted), and any scheduling or background
+posting. These remain deferred and are not implied by this ADR.
 
 ## Consequences
 
@@ -192,6 +244,11 @@ this ADR.
   have posted the chapter, so the app reports it as unknown and asks the user to
   check AO3 instead of retrying; a failed cache refresh after success never
   turns the write into a failure.
+- A metadata edit is a converging update rather than a create, but it shares the
+  redirect-classification limitation: AO3's ownership refusal is a 302 to the
+  work page, exactly like a successful save. The action is therefore offered only
+  on the account's own works, and a timeout is reported as unknown instead of
+  being retried.
 
 ## Test and evidence
 
@@ -221,17 +278,32 @@ this ADR.
   parser, the editor prefill (including decoded author markup), the fail-closed
   foreign page and the local limits. Full suite 309 green at the time of
   writing.
-- The actions are documented in `docs/ao3-write-api.md` §3–§4.12, and
-  `scripts/check-ao3-routes.sh` asserts the works new/create, drafts list,
-  post_draft, destroy, nested chapters, chapters create/update and
-  `post_without_preview_button` claims against the pinned otwarchive clone
-  (57 claims).
+- `tests/writes_work_edit.rs` (5 tests): the editor prefills from AO3's own edit
+  form; preview sends nothing upstream and the confirmed save sends exactly one
+  `PATCH /works/<id>`, re-fetches the cached work and audits `work-updated`; AO3's
+  `#error` refusal is shown with the fields preserved, audited `failed` and not
+  retried; local validation blocks an empty title/warnings with zero writes; the
+  editor refuses without the write switch. `ao3::compose` unit tests (2) cover the
+  edit-page parser/validator and the fail-closed foreign page; `ao3::actions`
+  covers the redirect classifier (work path accepted, `/edit` or a different id
+  rejected). Full suite 317 green; evidence `notes/gates/work-edit.txt`.
+- The actions are documented in `docs/ao3-write-api.md` §3–§4.13, and
+  `scripts/check-ao3-routes.sh` asserts the works new/create, edit/update,
+  drafts list, post_draft, destroy, nested chapters, chapters create/update,
+  `post_without_preview_button` and warning/category array claims against the
+  pinned otwarchive clone (61 claims).
 - Evidence from the clone (`452391b`): `works_controller.rb:289-319` (create,
   `post_button` publish switch, 302 to the work vs `/preview`, the 29-day draft
-  notice), `works_controller.rb:911-934` (`work_params`; `posted` is not
-  permitted), `_standard_form.html.erb:2,208`, `_work_form_tags.html.erb:22-83`,
+  notice), `works_controller.rb:322-334` (edit),
+  `works_controller.rb:354-394` (update; redirect on save, re-render on refusal),
+  `works_controller.rb:911-934` (`work_params`; `posted` is not
+  permitted), `application_controller.rb:267-279,491-494` (ownership filter and
+  its redirect), `works/edit.html.erb:40`,
+  `_standard_form.html.erb:2,15,32,81,89,208`,
+  `_work_form_tags.html.erb:17-120`, `_notes_form.html.erb:21,35`,
   `_work_form_associations_language.html.erb:5-10`,
   `_posting_fieldset.html.erb:12-25`, `_byline.html.erb:24-32`;
+  `routes.rb:384` (`resources :works` update),
   `routes.rb:393,403-414` (`navigate`, nested chapters), `chapters_controller.rb:81-87`
   (`new`/`edit`), `:114-136` (create), `:139-166` (update), `:167-181`
   (`update_positions`), `:261-264` (`post_chapter`), `:268-272`

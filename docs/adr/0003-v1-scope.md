@@ -9,7 +9,7 @@
 > [ADR-0008](0008-work-creation.md). New work creation, chapter addition/editing, the
 > My Works/Drafts manager, publishing a draft and deleting a work are implemented. The
 > "works/chapters creation" item in the deferral table below now covers only the remaining
-> authoring slices: chapter deletion/reordering, work metadata/tag editing, co-creators and
+> authoring slices: chapter deletion/reordering, co-creators, work preferences/skins and
 > scheduling.
 
 ## Context

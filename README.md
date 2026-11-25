@@ -64,6 +64,13 @@ This is an unofficial project, not affiliated with or endorsed by the OTW.
   Update for an existing one — and the cached work is re-fetched once afterwards
   so the reader shows the change. AO3 refusals appear on the editor with the
   composed text preserved; nothing is retried.
+- **Work metadata editing (opt-in)** — edit a posted work's title, rating, archive
+  warnings, categories, fandom/relationship/character/additional tags, summary,
+  notes, end notes, language, collections and gifts from `/write/work/edit` (the
+  **Edit Work** link on My Works rows). The editor is prefilled from AO3's own edit
+  form, checked against AO3's limits and previewed locally, then sends exactly one
+  `PATCH /works/<id>` — never retried. A cached work is re-fetched once afterwards
+  so the reader shows the change; chapter text is not part of this editor.
 - **Diagnostics** — `/diagnostics` shows upstream HTTP failures, the request
   governor and optional FlareSolverr state, without exposing cookies.
 - **Optional FlareSolverr** — if the host already runs FlareSolverr, blocked
@@ -166,7 +173,8 @@ diagnostics and FlareSolverr limits.
    first. With a session, the header's **Post** link opens the new-work
    composer, and **My Works** rows link to each work's chapter manager
    (**Chapters**; the **Add Chapter** shortcut appears for works still in
-   progress once writes are enabled). Every write appears in **Audit**.
+   progress once writes are enabled) and, once writes are enabled, to a posted
+   work's metadata editor (**Edit Work**). Every write appears in **Audit**.
 
 ## Limitations
 
@@ -182,11 +190,15 @@ diagnostics and FlareSolverr limits.
   a different thread.
 - New-work posting creates the work and its first chapter in one request;
   further chapters are added from the chapter manager, and an existing chapter
-  can be corrected there. Work metadata and tags still cannot be edited from the
-  app, and there is no chapter delete or reorder screen — those stay on AO3 (the
-  editor can still change a chapter's Chapter Number). Chapter saves are dated
-  by AO3: there is no scheduling or backdating UI (a new chapter gets today's
-  date and the publication date is never exposed). A successful save re-fetches
+  can be corrected there. A posted work's metadata and tags can be edited from
+  `/write/work/edit` (title, rating, archive warnings, categories, tags, summary,
+  notes, end notes, language, collections and gifts), but chapter text is edited
+  only from the chapter manager and there is no chapter delete or reorder screen —
+  those stay on AO3 (the editor can still change a chapter's Chapter Number).
+  Byline/co-creator changes, work skins and work preferences (comment permissions,
+  restricted) and scheduled or backdated posting are not exposed here: they stay on
+  AO3. There is no scheduling or backdating UI: AO3 dates a new chapter today and
+  the publication date is never exposed. A successful save re-fetches
   the cached work once (best effort) so the reader shows it immediately; if that
   refresh fails, the previous cached copy stays until "Refresh from AO3". The
   author works manager can publish a draft and delete a work or draft, but
@@ -203,6 +215,10 @@ diagnostics and FlareSolverr limits.
   too. A timed-out create is reported as ambiguous — the work may already be live
   — so check your works list on AO3 before retrying; the app never retries a
   create itself.
+- Editing work metadata uses the same gate (write switch and signed-in session).
+  Each save confirms locally and sends exactly one `PATCH /works/<id>`; the editor
+  never touches chapter text. A timed-out edit is reported as unknown — the change
+  may have landed — so check the work on AO3 before retrying.
 
 ## Security and privacy
 

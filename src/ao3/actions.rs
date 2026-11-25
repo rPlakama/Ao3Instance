@@ -775,6 +775,103 @@ fn classify_chapter_redirect(
     }
 }
 
+fn update_work_fields(fields: &crate::ao3::compose::EditWorkFields) -> Vec<(&'static str, String)> {
+    let mut form: Vec<(&'static str, String)> = vec![
+        ("utf8", "\u{2713}".to_string()),
+        ("work[title]", fields.title.trim().to_string()),
+        ("work[rating_string]", fields.rating.trim().to_string()),
+        ("work[fandom_string]", fields.fandom.trim().to_string()),
+        ("work[language_id]", fields.language_id.trim().to_string()),
+        ("work[summary]", fields.summary.trim().to_string()),
+        ("work[notes]", fields.notes.trim().to_string()),
+        ("work[endnotes]", fields.endnotes.trim().to_string()),
+        (
+            "work[collection_names]",
+            fields.collections.trim().to_string(),
+        ),
+        ("work[recipients]", fields.recipients.trim().to_string()),
+    ];
+    for warning in &fields.warnings {
+        form.push(("work[archive_warning_strings][]", warning.clone()));
+    }
+    if fields.categories.is_empty() {
+        // AO3's own form emits a hidden empty array value so unchecking every
+        // box clears the selection; mirror it (an absent key keeps old values).
+        form.push(("work[category_strings][]", String::new()));
+    } else {
+        for category in &fields.categories {
+            form.push(("work[category_strings][]", category.clone()));
+        }
+    }
+    // Free-text tag fields are always sent (even empty) so clearing them works.
+    for (name, value) in [
+        ("work[relationship_string]", fields.relationships.as_str()),
+        ("work[character_string]", fields.characters.as_str()),
+        ("work[freeform_string]", fields.additional_tags.as_str()),
+    ] {
+        form.push((name, value.trim().to_string()));
+    }
+    form
+}
+
+/// `PATCH /works/:id` — updates one work's metadata/tags (not chapter text).
+///
+/// AO3 answers a successful update with a 302 to the work page; validation
+/// failures re-render the edit page with HTTP 200 and an `#error` block. A
+/// non-author is redirected to the work page too (AO3's ownership filter), so
+/// the UI must only offer this on the account's own works.
+pub async fn update_work(
+    session: &mut AccountSession,
+    work_id: &str,
+    fields: &crate::ao3::compose::EditWorkFields,
+) -> Result<()> {
+    let form = update_work_fields(fields);
+    let encoded: Vec<(&str, &str)> = form
+        .iter()
+        .map(|(name, value)| (*name, value.as_str()))
+        .collect();
+    let path = format!("/works/{}", work_id.trim());
+    let response = session.patch_write(&path, &encoded).await?;
+    match response.status {
+        302 | 303 => {
+            if response.location_contains("/users/login") {
+                return Err(Error::LoggedOut);
+            }
+            if response.location_contains("/auth_error") {
+                return Err(Error::CsrfExpired);
+            }
+            if response.location_contains("/lost_cookie") {
+                return Err(Error::SessionIncomplete);
+            }
+            update_work_result(work_id, response.location.as_deref())
+        }
+        200 | 422 => Err(classify_work_failure(&response.body)),
+        429 => Err(Error::RateLimited {
+            retry_after: response.retry_after,
+        }),
+        403 | 503 => Err(Error::BlockedByEdge {
+            status: response.status,
+        }),
+        status => Err(Error::UpstreamChanged(format!(
+            "work update returned HTTP {status}"
+        ))),
+    }
+}
+
+fn update_work_result(work_id: &str, location: Option<&str>) -> Result<()> {
+    let location = location.unwrap_or_default();
+    let expected = format!("/works/{}", work_id.trim());
+    if location.contains(&expected)
+        && !location.contains(&format!("{expected}/edit"))
+        && !location.contains(&format!("{expected}/preview"))
+    {
+        return Ok(());
+    }
+    Err(Error::UpstreamChanged(format!(
+        "work update redirected to {location:?} (permission or layout problem)"
+    )))
+}
+
 /// First `/works/<id>` in a redirect target (`/works/123` or `/works/123/preview`).
 fn work_id_from_location(location: Option<&str>) -> Option<String> {
     let rest = location?
@@ -930,6 +1027,62 @@ mod tests {
         assert!(
             classify_chapter_redirect(Some("/users/someone"), ChapterSave::Post, None).is_err()
         );
+    }
+
+    #[test]
+    fn clearing_optional_tags_is_sent_explicitly() {
+        let fields = crate::ao3::compose::EditWorkFields {
+            title: "T".into(),
+            rating: "General Audiences".into(),
+            warnings: vec!["No Archive Warnings Apply".into()],
+            fandom: "F".into(),
+            language_id: "1".into(),
+            ..crate::ao3::compose::EditWorkFields::default()
+        };
+        let form = update_work_fields(&fields);
+        let has =
+            |name: &str, value: &str| form.iter().any(|(key, sent)| *key == name && sent == value);
+        assert!(
+            has("work[category_strings][]", ""),
+            "empty categories clear"
+        );
+        assert!(
+            has("work[relationship_string]", ""),
+            "empty relationships clear"
+        );
+        assert!(has("work[character_string]", ""), "empty characters clear");
+        assert!(
+            has("work[freeform_string]", ""),
+            "empty additional tags clear"
+        );
+        assert!(has(
+            "work[archive_warning_strings][]",
+            "No Archive Warnings Apply"
+        ));
+
+        let with_categories = crate::ao3::compose::EditWorkFields {
+            categories: vec!["F/M".into()],
+            ..fields
+        };
+        let form = update_work_fields(&with_categories);
+        assert!(
+            form.iter()
+                .any(|(key, value)| *key == "work[category_strings][]" && value == "F/M")
+        );
+        assert!(
+            !form
+                .iter()
+                .any(|(key, value)| *key == "work[category_strings][]" && value.is_empty())
+        );
+    }
+
+    #[test]
+    fn work_update_redirects_are_classified() {
+        assert!(update_work_result("7701", Some("/works/7701")).is_ok());
+        assert!(update_work_result("7701", Some("https://archiveofourown.org/works/7701")).is_ok());
+        assert!(update_work_result("7701", Some("/works/7701/edit")).is_err());
+        assert!(update_work_result("7701", Some("/works/7702")).is_err());
+        assert!(update_work_result("7701", Some("/users/someone")).is_err());
     }
 
     #[test]

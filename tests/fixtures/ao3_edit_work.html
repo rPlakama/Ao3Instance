@@ -1,0 +1,96 @@
+<!DOCTYPE html>
+<!--
+  Synthetic AO3 "Edit Work" page (`otwarchive/app/views/works/edit.html.erb`
+  rendering `_standard_form.html.erb`, form id `work-form`) for the work editor
+  parser tests. Field names follow `_work_form_tags.html.erb`,
+  `_work_form_associations_language.html.erb` and `works/_notes_form.html.erb`.
+-->
+<html lang="en">
+  <body>
+    <div id="main" class="works-edit region" role="main">
+      <h2 class="heading">Edit Work</h2>
+      <ul class="navigation actions">
+        <li><a href="/works/7701/chapters/new">Add Chapter</a></li>
+        <li><a href="/collections/123">Manage Collections</a></li>
+      </ul>
+      <form id="work-form" class="verbose post work" action="/works/7701" accept-charset="UTF-8" method="post">
+        <input type="hidden" name="_method" value="patch" />
+        <input type="hidden" name="authenticity_token" value="form-token" />
+        <fieldset class="work meta">
+          <legend>Tags</legend>
+          <dl>
+            <dt class="rating required"><label for="work_rating_string">Rating*</label></dt>
+            <dd class="rating required">
+              <select name="work[rating_string]" id="work_rating_string">
+                <option value="Not Rated">Not Rated</option>
+                <option value="General Audiences" selected>General Audiences</option>
+                <option value="Teen And Up Audiences">Teen And Up Audiences</option>
+                <option value="Mature">Mature</option>
+                <option value="Explicit">Explicit</option>
+              </select>
+            </dd>
+            <dt class="warning required"><label>Archive Warnings*</label></dt>
+            <dd class="warning required">
+              <fieldset class="warnings"><ul>
+                <li><input type="checkbox" name="work[archive_warning_strings][]" id="work_archive_warning_strings_creator_chose" value="Creator Chose Not To Use Archive Warnings" /><label for="work_archive_warning_strings_creator_chose">Creator Chose Not To Use Archive Warnings</label></li>
+                <li><input type="checkbox" name="work[archive_warning_strings][]" id="work_archive_warning_strings_no_archive_warnings" value="No Archive Warnings Apply" checked /><label for="work_archive_warning_strings_no_archive_warnings">No Archive Warnings Apply</label></li>
+                <li><input type="checkbox" name="work[archive_warning_strings][]" id="work_archive_warning_strings_graphic" value="Graphic Depictions Of Violence" /><label for="work_archive_warning_strings_graphic">Graphic Depictions Of Violence</label></li>
+              </ul></fieldset>
+            </dd>
+            <dt class="fandom required"><label for="work_fandom_string">Fandoms*</label></dt>
+            <dd class="fandom required"><input type="text" value="Test Fandom" name="work[fandom_string]" id="work_fandom_string" /></dd>
+            <dt class="category"><label>Categories</label></dt>
+            <dd class="category"><fieldset><ul>
+              <li><input type="checkbox" name="work[category_strings][]" id="work_category_strings_fm" value="F/M" checked /><label for="work_category_strings_fm">F/M</label></li>
+              <li><input type="checkbox" name="work[category_strings][]" id="work_category_strings_gen" value="Gen" /><label for="work_category_strings_gen">Gen</label></li>
+            </ul></fieldset></dd>
+            <dt class="relationship"><label for="work_relationship_string">Relationships</label></dt>
+            <dd class="relationship"><input type="text" value="Character A/Character B" name="work[relationship_string]" id="work_relationship_string" /></dd>
+            <dt class="character"><label for="work_character_string">Characters</label></dt>
+            <dd class="character"><input type="text" value="Character A" name="work[character_string]" id="work_character_string" /></dd>
+            <dt class="freeform"><label for="work_freeform_string">Additional Tags</label></dt>
+            <dd class="freeform"><input type="text" value="Fluff, Domestic Fluff" name="work[freeform_string]" id="work_freeform_string" /></dd>
+          </dl>
+        </fieldset>
+        <fieldset class="work info">
+          <legend>Work Info</legend>
+          <dl>
+            <dt><label for="work_title">Work Title*</label></dt>
+            <dd><input type="text" value="The Clockwork Ferry" name="work[title]" id="work_title" /></dd>
+            <dt class="summary"><label for="work_summary">Summary</label></dt>
+            <dd class="summary"><textarea rows="4" cols="60" name="work[summary]" id="work_summary">A ferry that runs on time, once a century.</textarea></dd>
+            <dt class="notes"><label for="work_notes">Notes</label></dt>
+            <dd class="notes"><textarea name="work[notes]" id="work_notes">PLACEHOLDER WORK NOTE: the tide table is a personal matter.</textarea></dd>
+            <dt class="notes"><label for="work_endnotes">End Notes</label></dt>
+            <dd class="notes"><textarea name="work[endnotes]" id="work_endnotes"></textarea></dd>
+          </dl>
+        </fieldset>
+        <fieldset class="work associations">
+          <legend>Associations</legend>
+          <dl>
+            <dt class="language"><label for="work_language_id">Language*</label></dt>
+            <dd class="language">
+              <select name="work[language_id]" id="work_language_id">
+                <option value="1" selected>English</option>
+                <option value="18">Français</option>
+                <option value="30">Español</option>
+              </select>
+            </dd>
+            <dt class="collections"><label for="work_collection_names">Post to Collections / Challenges</label></dt>
+            <dd class="collections"><input type="text" value="" name="work[collection_names]" id="work_collection_names" /></dd>
+            <dt class="recipient"><label for="work_recipients">Gift this work to</label></dt>
+            <dd class="recipient"><input type="text" value="" name="work[recipients]" id="work_recipients" /></dd>
+          </dl>
+        </fieldset>
+        <fieldset>
+          <legend>Post</legend>
+          <ul class="actions">
+            <li><input type="submit" name="preview_button" value="Preview" /></li>
+            <li><input type="submit" name="update_button" value="Update" /></li>
+            <li><a href="/works/7701">Cancel</a></li>
+          </ul>
+        </fieldset>
+      </form>
+    </div>
+  </body>
+</html>

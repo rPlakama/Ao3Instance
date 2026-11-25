@@ -390,14 +390,43 @@ success the cached work is re-fetched once, best effort, so the reader shows the
 chapter; a refresh failure is logged and never turns the write into an error. The
 `chapter` governor budget is 10 per hour. Tests: `tests/writes_chapters.rs` (7) plus
 `ao3::chapters` parser/validation unit tests (4); full suite 309 green; the route gate
-stands at 57 claims and the wiring crawl covers `/my/works/12345/chapters`. Evidence:
+then stood at 57 claims and the wiring crawl covers `/my/works/12345/chapters`. Evidence:
 `notes/gates/chapter-management.txt`.
 
-**Scope.** New work plus first chapter, publish or draft. Chapter management (index,
-add, edit) is documented above; editing a work's metadata/tags, chapter
-deletion/reordering and scheduling stay later work, and the works manager with its
-publish/delete actions is the next addendum. Tests: `tests/writes_work.rs` (6) plus
-`ao3::compose` unit tests.
+**Work metadata editing.** A posted work's metadata and tags are edited through AO3's
+own edit surface with the same write spine. `GET /write/work/edit?work_id=<id>` fetches
+`/works/<id>/edit` live and parses `form#work-form` (`works/edit.html.erb` →
+`_standard_form.html.erb`) for the current title, rating, archive warnings, categories,
+fandom/relationship/character/additional-tag strings, numeric language id, summary,
+notes, end notes, collections and gift recipients; the select/checkbox choices come
+from the composer's cached `/works/new` defaults, so no private id is hardcoded, and a
+page without `#work-form` fails closed (`UpstreamChanged`). The preview route
+`POST /write/work/edit/preview` runs `validate_edit_work` (title 255, summary 1,250,
+notes/end notes 5,000, each tag 150, at most 75 user-defined tags; title, rating, at
+least one warning, fandom and language required) and renders a confirmation page that
+re-submits every value as hidden fields. `POST /write/work/edit` then sends exactly one
+`PATCH /works/<id>` with the `work[...]` fields: title, rating, fandom, language,
+summary, notes, end notes, collections, recipients, repeated
+`work[archive_warning_strings][]` / `work[category_strings][]`, and optional
+relationship/character/additional-tag strings — no `work[posted]`, no button name and
+never chapter text. A 302 back to `/works/<id>` means updated (audit `work-updated`;
+the UI only offers this from My Works, because AO3's ownership filter redirects a
+non-author to the same work path), a 200/422 `#error` re-render is AO3's refusal shown
+on the editor with the fields preserved (audit `failed`), and a timeout is audited
+`ambiguous` and never retried. After success a cached work is re-fetched once (best
+effort) and opens in the reader with `notice=work_updated`; an uncached work goes
+through `/open/<id>`. My Works rows gained **Edit Work** for posted works when writes
+are enabled. The `edit_work` governor budget is 10 per hour. Tests:
+`tests/writes_work_edit.rs` (5) plus `ao3::compose` parse/validate unit tests (2) and an
+`ao3::actions` redirect-classification test; full suite 317 green; the route-drift gate
+gained works#edit/update and the warning/category array claims (61 total). Evidence:
+`notes/gates/work-edit.txt`.
+
+**Scope.** New work plus first chapter, publish or draft; chapter management (index,
+add, edit); work metadata/tag editing; and the works manager with its publish/delete
+actions (next addendum). Chapter deletion/reordering, byline/co-creator changes, work
+skins and work preferences, and scheduling or backdating stay later work. Tests:
+`tests/writes_work.rs` (6) plus `ao3::compose` unit tests.
 
 ### Works management addendum — 2026-11-25
 

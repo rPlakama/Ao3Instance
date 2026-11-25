@@ -20,12 +20,12 @@ use serde::Deserialize;
 use super::super::AppState;
 use super::super::error::{AppError, Handled};
 use super::{
-    ensure_pseud, invalidate_user_list, record_write_failure, require_confirmation,
-    require_non_empty_target, require_usable_session, require_writes_enabled,
+    ensure_pseud, invalidate_user_list, parse_form_body, record_write_failure,
+    require_confirmation, require_non_empty_target, require_usable_session, require_writes_enabled,
 };
 use crate::ao3::actions::{self, PostMode};
 use crate::ao3::compose::{self, NewWorkDefaults, NewWorkInput};
-use crate::ao3::parse::{SpaceMode, percent_decode, percent_encode};
+use crate::ao3::parse::{SpaceMode, percent_encode};
 use crate::error::Error;
 use crate::render;
 use crate::render::NavSection;
@@ -135,26 +135,6 @@ impl ComposeForm {
     }
 }
 
-/// Decodes `application/x-www-form-urlencoded` into name -> repeated values.
-fn parse_compose_form(body: &[u8]) -> Handled<ComposeForm> {
-    let text = std::str::from_utf8(body)
-        .map_err(|_| AppError::BadRequest("form body is not valid UTF-8".into()))?;
-    let mut fields: HashMap<String, Vec<String>> = HashMap::new();
-    for pair in text.split('&').filter(|pair| !pair.is_empty()) {
-        let (key, value) = pair.split_once('=').unwrap_or((pair, ""));
-        let key = decode_component(key)?;
-        let value = decode_component(value)?;
-        fields.entry(key).or_default().push(value);
-    }
-    Ok(ComposeForm::from_fields(&fields))
-}
-
-fn decode_component(raw: &str) -> Handled<String> {
-    let plus_decoded = raw.replace('+', " ");
-    percent_decode(&plus_decoded)
-        .ok_or_else(|| AppError::BadRequest("invalid percent-encoding in form body".into()))
-}
-
 fn blank_input(defaults: &NewWorkDefaults) -> NewWorkInput {
     NewWorkInput {
         pseud_id: defaults
@@ -174,7 +154,7 @@ fn blank_input(defaults: &NewWorkDefaults) -> NewWorkInput {
 }
 
 /// Loads (and briefly caches) the options from AO3's own new-work form.
-async fn load_defaults(state: &AppState, refresh: bool) -> Handled<NewWorkDefaults> {
+pub(super) async fn load_defaults(state: &AppState, refresh: bool) -> Handled<NewWorkDefaults> {
     if !refresh
         && let Some((fetched_at, defaults)) = state.compose_defaults.read().await.as_ref()
         && fetched_at.elapsed() < DEFAULTS_TTL
@@ -380,7 +360,7 @@ pub(in crate::server) async fn write_work_preview(
     body: Bytes,
 ) -> Handled<Html<String>> {
     require_writes_enabled(&state)?;
-    let form = parse_compose_form(&body)?;
+    let form = ComposeForm::from_fields(&parse_form_body(&body)?);
     require_usable_session(
         &state,
         "Sign in to AO3 on the Session page before posting a work.",
@@ -420,7 +400,7 @@ pub(in crate::server) async fn write_work(
     body: Bytes,
 ) -> Handled<Response> {
     require_writes_enabled(&state)?;
-    let form = parse_compose_form(&body)?;
+    let form = ComposeForm::from_fields(&parse_form_body(&body)?);
     require_confirmation(form.confirm.as_deref())?;
     let mode = form.mode()?;
     let account = require_usable_session(
