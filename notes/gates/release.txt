@@ -54,3 +54,36 @@ permission denied" (no container daemon reachable). The plan's tier-3 sandbox ru
 validates the parsers against a real Rails instance. All other gates are green and the
 live site is respected (no crawling; one polite request returned 429 and was not
 retried).
+
+Release gate run — v0.1.4 — 2026-11-25T14:36:00-03:00
+toolchain: rustc 1.98.1, cargo 1.98.0 (nix dev shell)
+
+== nix build (0.1.3 tree, pre-bump)
+exit=0   store: /nix/store/lmhqssvxr1r9n1sv3lhqzpnbyd2h5xkz-ao3instance-0.1.3
+
+== nix flake check (0.1.3 tree)
+exit=0 (module open-firewall, module flaresolverr-port and the NixOS VM test
+that boots the service and asserts /health, the database and the key file)
+
+== built binary smoke test (0.1.3 store path)
+/ 200 · /works 200 · /read/96374731?show_comments=1 200 · /session 200 ·
+/audit 200 · /diagnostics 200 · /history 200 · /assets/ao3.css 200 ·
+/health 200 (body "ok")
+
+== version bump
+Cargo.toml 0.1.3 -> 0.1.4; Cargo.lock root package updated to 0.1.4.
+flake.nix reads the version from Cargo.toml, so no flake edit was needed.
+
+== nix build (0.1.4)
+exit=0   store: /nix/store/vlx02ssaz4qn9cmsmga84633y6afkv4j-ao3instance-0.1.4
+binary: 15.25 MB (release, stripped), starts and serves:
+/ 200 · /works 200 · /read/96374731?show_comments=1 200 · /session 200 ·
+/audit 200 · /diagnostics 200 · /history 200 · /assets/ao3.css 200 ·
+/health 200 ("ok")
+
+== cargo fmt --check / cargo clippy -D warnings / cargo test (0.1.4 tree)
+fmt exit=0 · clippy exit=0 · 272 passed, 0 failed (163 lib + 109 integration)
+
+== release title (changes since v0.1.3)
+Add cached AO3 reader comments, direct kudos/subscription posts and a
+collapsible filter sidebar
