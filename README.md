@@ -44,6 +44,12 @@ This is an unofficial project, not affiliated with or endorsed by the OTW.
   buttons do (the click is the deliberate action); comments and bookmarks go
   through a confirmation page that names the target. Every action is attempted
   once and recorded in an append-only audit ledger.
+- **Posting new works (opt-in)** — a composer at `/works/new` mirrors AO3's
+  new-work form (rating, archive warnings, categories, tags, title, creator
+  pseud, summary, notes, language, collections, gifts, chapter title, work
+  text). Its options are read from AO3's own page, the work is checked against
+  AO3's limits and previewed locally, then exactly one confirmed request
+  publishes it or saves it as a draft on AO3.
 - **Diagnostics** — `/diagnostics` shows upstream HTTP failures, the request
   governor and optional FlareSolverr state, without exposing cookies.
 - **Optional FlareSolverr** — if the host already runs FlareSolverr, blocked
@@ -143,7 +149,8 @@ diagnostics and FlareSolverr limits.
    password is never persisted.
 4. Writes remain disabled until `AO3I_WRITE_ENABLED=true`. Kudos and work
    subscriptions post straight from the reader; comments and bookmarks confirm
-   first. Every write appears in **Audit**.
+   first. With a session, the header's **Post** link opens the new-work
+   composer. Every write appears in **Audit**.
 
 ## Limitations
 
@@ -157,6 +164,14 @@ diagnostics and FlareSolverr limits.
   work itself in Entire Work mode (and for a one-chapter work), or one chapter
   in single-chapter view of a multi-chapter work — so switching views can show
   a different thread.
+- New-work posting creates the work and its first chapter in one request; there
+  is no "add chapter" flow yet, and works cannot be edited or deleted from the
+  app. Drafts are AO3 objects, not local ones, and AO3 deletes unposted drafts
+  after about 29 days. Nothing is scheduled or posted in the background.
+- Posting requires `AO3I_WRITE_ENABLED=true` and a signed-in AO3 session. A
+  timed-out create is reported as ambiguous — the work may already be live — so
+  check your works list on AO3 before retrying; the app never retries a create
+  itself.
 
 ## Security and privacy
 
@@ -196,7 +211,7 @@ committed.
 - [docs/operator.md](docs/operator.md) — running, configuration, pages,
   troubleshooting, limitations
 - [docs/adr/](docs/adr/) — architecture decisions (auth, access posture, write
-  scope and safety, FlareSolverr)
+  scope and safety, work creation, FlareSolverr)
 - [docs/ao3-write-api.md](docs/ao3-write-api.md) — AO3 action contracts and
   failure taxonomy
 - [docs/failure-matrix.md](docs/failure-matrix.md) and

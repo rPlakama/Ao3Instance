@@ -1,0 +1,52 @@
+Posting new works (fanfics) — verification
+2026-11-25T16:25Z (America/Recife)
+
+== feature
+GET /works/new          composer built from AO3's own new-work form options
+                        (ratings, warnings, categories, numeric language ids,
+                        creator pseuds parsed in src/ao3/compose.rs; cached 10m)
+POST /write/work/preview local validation + confirmation page; no network write
+POST /write/work        one real POST /works on AO3; publish (post_button) or
+                        save draft (save_button); intent/audit + governor
+                        (post_work 3/hour); ACK: header "Post" link.
+
+Classification: 302 /works/<id> = published (audit work-posted; app redirects to
+/open/<id> and caches/opens the new work); 302 /works/<id>/preview = draft
+(audit work-draft; AO3 deletes drafts ~29 days); 200 #error = failed with AO3's
+own messages shown and the composed text preserved; 429 = rate limited;
+network timeout = audit ambiguous, no retry, composer says "check AO3 first".
+
+Local validation mirrors AO3 model limits (title 1-255, summary 1250, notes
+5000, tag 150 chars, max 75 user-defined tags, content 10-510000, required
+rating/warning/fandom/language/pseud). AO3 form contract verified against the
+pinned clone (works_controller.rb#create 289-319, _standard_form, _work_form_tags,
+_work_form_author byline, _posting_fieldset): singular
+work[chapter_attributes][content], work[author_attributes][ids][], button names
+post_button/save_button (values irrelevant), no POST /works/preview.
+
+== tests
+cargo test: 288 passed, 0 failed (170 unit + 118 integration)
+  new tests/writes_work.rs (6): composer options + header Post link; preview has
+  no network write; confirmed publish sends exactly one POST /works with the
+  expected form fields and audits work-posted; draft sends save_button and
+  audits work-draft; local validation blocks invalid work with zero writes;
+  AO3 #error text is surfaced and audited as failed; composer requires the
+  write switch.
+  new src/ao3/compose.rs unit tests (3) + actions unit tests (2).
+cargo fmt --check: exit 0
+cargo clippy --all-targets -D warnings: exit 0
+nix build .#default: exit 0
+  store: /nix/store/f16fniivk5g6mrq74bjcqfksyaa8mrda-ao3instance-0.1.4
+scripts/check-ao3-routes.sh --require: 47 passed, 0 failed (works#new/create +
+  work params + post_button + post_draft claims added)
+scripts/check-no-solver-build-dep.sh: ok
+
+== UI
+.run/screenshots-compose/composer-light.png: 1100px light renderer of the
+composer (Tags / Work Info / Associations / Work Text / Post buttons, AO3-shaped
+verbose form, header Post link). Verified against a mock AO3 /works/new page.
+
+== docs
+docs/adr/0008-work-creation.md (new) supersedes ADR-0003's creation deferral;
+ADR-0005 amendment for non-idempotent creates; ao3-write-api matrix/limits;
+README/operator/write-client-plan/PLAN updated.

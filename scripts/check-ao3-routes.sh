@@ -54,6 +54,8 @@ need config/routes.rb 'patch :mark_as_read' 'PATCH mark_as_read'
 need config/routes.rb 'resources :favorite_tags, only: [:create, :destroy]' 'favorite tags'
 need config/routes.rb 'resources :bookmarks' 'bookmarks'
 need config/routes.rb 'resources :comments' 'comments'
+need config/routes.rb 'resources :works' 'works routes (new/create)'
+need config/routes.rb 'resources :chapters' 'chapter routes'
 need config/routes.rb 'namespace :v2' 'api/v2 namespace (admin-only)'
 need config/routes.rb "downloads/:id/:download_title.:format" 'downloads route (robots-disallowed)'
 echo
@@ -67,6 +69,10 @@ need app/controllers/subscriptions_controller.rb ':subscribable_type' 'subscriba
 need app/controllers/bookmarks_controller.rb 'params.require(:bookmark).permit(' 'bookmark params'
 need app/controllers/bookmarks_controller.rb ':bookmarker_notes' 'bookmarker_notes field'
 need app/controllers/favorite_tags_controller.rb 'params.require(:favorite_tag).permit(' 'favorite tag params'
+need app/controllers/works_controller.rb 'def create' 'POST /works (create work)'
+need app/controllers/works_controller.rb 'params.require(:work).permit(' 'work params'
+need app/controllers/works_controller.rb 'params[:post_button]' 'post_button publish switch'
+need app/controllers/works_controller.rb 'def post_draft' 'post_draft publish path'
 echo
 
 echo "-- access model"

@@ -20,6 +20,9 @@ fn budget(action: &str) -> (usize, Duration) {
         "kudos" => (10, Duration::from_secs(60)),
         "subscribe" | "unsubscribe" => (20, Duration::from_secs(3_600)),
         "bookmark" | "reading" => (10, Duration::from_secs(60)),
+        // Publishing is rare and consequential; one accidental double-post is
+        // worse than a slow retry, so keep posting well under AO3's limits.
+        "post_work" => (3, Duration::from_secs(3_600)),
         _ => (10, Duration::from_secs(60)),
     }
 }

@@ -150,6 +150,12 @@ fn greeting(ctx: &PageContext) -> String {
                 </div></details></div>"
             .to_string();
     }
+    // AO3's signed-in header offers Post and Log Out next to the greeting.
+    let post_link = if ctx.write_enabled {
+        "<li><a href=\"/works/new\">Post</a></li>"
+    } else {
+        ""
+    };
     format!(
         "<nav id=\"greeting\" aria-label=\"User\"><ul class=\"user navigation actions\">\
          <li class=\"dropdown\"><a href=\"/dashboard\" data-dropdown-toggle \
@@ -167,7 +173,7 @@ fn greeting(ctx: &PageContext) -> String {
          <li><a href=\"/themes\">Site Skins</a></li>\
          <li><a href=\"/audit\">Write Audit</a></li>\
          <li><a href=\"/diagnostics\">HTTP Diagnostics</a></li>\
-         </ul></li>\
+         </ul></li>{post_link}\
          <li><a href=\"/session\">Preferences</a></li>\
          <li><a href=\"/users/logout/confirm\">Log Out</a></li>\
          </ul></nav>",
@@ -178,6 +184,7 @@ fn greeting(ctx: &PageContext) -> String {
         } else {
             "imported"
         },
+        post_link = post_link,
     )
 }
 

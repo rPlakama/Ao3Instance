@@ -98,3 +98,38 @@ one subscribe click. Duplicate and abuse risk stays contained server-side: the l
 receipt and subscription ledger are checked before the write, a duplicate kudos maps to
 `AlreadyDone`, unsubscribe refuses to act on an unknown subscription id, and every outcome
 is audited and surfaced as a reader notice.
+
+## Amendment (2026-11-25) — non-idempotent work creation
+
+**What changed.** New-work creation (posting fanfics) is now an in-scope write
+([ADR-0008](0008-work-creation.md)): the composer at `/works/new` validates locally, shows
+a confirmation page, and the confirmed submission sends exactly one `POST /works`. It is
+the first create with no duplicate signal in AO3's answer, no local ledger that can
+pre-check it and no undo path in the app, so the four rules apply in their strictest
+form.
+
+**Confirmation.** Nothing posts as a side effect: publish and save-draft are separate
+buttons, the confirmation page names the work, the chosen creator pseud and the effect,
+and `POST /write/work` refuses without the hidden `confirm=yes` token
+(`require_confirmation`).
+
+**One attempt, classified from the 302.** The create is sent once, and the outcome is the
+redirect target: `/works/<id>` = posted, `/works/<id>/preview` = saved as an unpublished
+draft on AO3 (the archive deletes drafts about 29 days after creation). `/auth_error` means
+the CSRF token was rejected, `/users/login` a logged-out session, `/lost_cookie` an
+incomplete jar. A 200 re-render with `#error` blocks is a typed failure carrying AO3's own
+messages; 429 is `RateLimited`; 403/503 is `BlockedByEdge`.
+
+**Timeout = ambiguous, no blind retry.** A transport failure after the request was sent may
+mean the work exists. The intent/audit row is closed as `ambiguous`, the composer says the
+work may already be on AO3, and the user checks their works list before a second attempt.
+The app never retries the create itself and never reports ambiguity as success or failure.
+
+**CSRF refresh is the only allowed retry.** The session layer refreshes the token and
+retries once when AO3 answers `/auth_error`; that is safe for a create because Rails
+rejects the request in `protect_from_forgery` before `works#create` runs, so nothing was
+created by the rejected attempt. No other failure path re-sends the request.
+
+**Budget and ledger.** `post_work` is governor-budgeted at 3 per hour, the `write_intent`
+row is committed before the send, and the audit outcomes are `work-posted`, `work-draft`,
+`failed` and `ambiguous`.

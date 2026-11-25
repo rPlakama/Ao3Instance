@@ -196,6 +196,26 @@ write tests. Verified against the live archive from this environment: a real
 zero-comment work page parses to an empty thread, and a rate-limited comment
 fetch renders the typed `comments_rate_limited` notice.
 
+**Posting new works (2026-11-25):** a new-work composer at `GET /works/new` (also the
+header **Post** link when signed in with writes enabled) mirrors AO3's own new-work form:
+rating, archive warnings, categories, fandom/relationship/character/additional tags,
+title, creator pseud, summary, notes, language, collections, gifts, chapter title and
+work text. Its options — including the numeric language ids and creator pseuds that exist
+only in AO3's database — are parsed from AO3's live `/works/new` page and reused for 10
+minutes; validation mirrors AO3's model limits locally (title 1–255, summary 1,250, notes
+5,000, tag 150, at most 75 user-defined tags, work text 10–510,000, at least one warning,
+rating/fandom/language/pseud required), so an invalid work never reaches the archive.
+`POST /write/work/preview` shows a local confirmation with no network write;
+`POST /write/work` then sends exactly one `POST /works` with `post_button` (publish) or
+`save_button` (Save as Draft). Outcomes are classified from the redirect path: 302
+`/works/<id>` = posted (audit `work-posted`; the app caches and opens the work), 302
+`/works/<id>/preview` = draft saved on AO3 (audit `work-draft`; AO3 deletes drafts after
+~29 days), a 200 `#error` re-render = failed with AO3's messages shown and the composed
+text preserved. A timeout is audited `ambiguous` and never retried; the governor allows
+3 posts per hour. `tests/writes_work.rs` (6 tests) plus `ao3::compose` unit tests; full
+suite 288 green. ADR-0008 records the decision and supersedes the ADR-0003 deferral for
+new-work creation.
+
 **Known deviations (documented, not blockers):** required-tag marks are
 styled text badges rather than SVG artwork; comment avatars are a CSS-drawn
 visitor silhouette rather than AO3's synced user images, and the kudos module

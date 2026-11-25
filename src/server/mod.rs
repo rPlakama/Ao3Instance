@@ -87,6 +87,10 @@ pub struct AppState {
     pub skin_css: tokio::sync::RwLock<Option<String>>,
     /// One solver-fetched search page awaiting its redirect, short-lived.
     pub solved_search: tokio::sync::Mutex<Option<SolvedSearch>>,
+    /// Options parsed from AO3's `/works/new` form, reused briefly by the
+    /// composer (language ids and creator pseuds are only known from that page).
+    pub compose_defaults:
+        tokio::sync::RwLock<Option<(std::time::Instant, crate::ao3::compose::NewWorkDefaults)>>,
 }
 
 pub struct SolvedSearch {
@@ -201,6 +205,7 @@ pub async fn router(config: &Config, store: Store) -> Result<Router> {
         skin: tokio::sync::RwLock::new(saved_skin),
         skin_css: tokio::sync::RwLock::new(saved_skin_css),
         solved_search: tokio::sync::Mutex::new(None),
+        compose_defaults: tokio::sync::RwLock::new(None),
     });
     if restored_imported {
         let bg_state = Arc::clone(&state);
@@ -242,6 +247,9 @@ pub async fn router(config: &Config, store: Store) -> Result<Router> {
         .route("/session/adult", post(session::session_adult))
         .route("/session/logout", post(session::session_logout))
         .route("/users/logout/confirm", get(session::logout_confirm))
+        .route("/works/new", get(writes::compose))
+        .route("/write/work/preview", post(writes::write_work_preview))
+        .route("/write/work", post(writes::write_work))
         .route("/write/preview", get(writes::write_preview))
         .route("/write/subscribe", post(writes::write_subscribe))
         .route("/write/unsubscribe", post(writes::write_unsubscribe))

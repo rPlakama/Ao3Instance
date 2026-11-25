@@ -96,7 +96,11 @@ a cached thread POSTs to `/read/<id>/comments`, which fetches it once from AO3) 
 `/works/search` AO3 Work Search (30-min cached, `?refresh=1` to force refresh, `?local=1` searches cached works) ·
 `/tags/search` live AO3 tag search (30-min cached, offline fallback) ·
 `/tags/<tag>/works` live AO3 tag page (30-min cached, offline fallback) ·
-`/open/<id>` one-click cache+read · `/audit` write ledger ·
+`/open/<id>` one-click cache+read ·
+`/works/new` new-work composer (signed in **and** writes enabled; local preview, then one
+confirmed post; the header **Post** link points here) · `POST /write/work/preview` local
+confirmation (no upstream write) · `POST /write/work` the one create request ·
+`/audit` write ledger ·
 `/diagnostics` HTTP failures, solver state and clear · `/about` instance notes.
 `/users/login`, `/works/search` and `/works/{id}` mirror AO3 URLs; uncached
 works show an offline miss card instead of fetching on a `GET`.
@@ -179,8 +183,15 @@ re-importing the session; cached works and progress are unaffected.
   `confirm=yes` token (the same-origin guard applies to every mutating route).
   No retries for comments, bookmarks or subscriptions; kudos duplicates are
   detected from AO3's own message.
+- Posting a new work (`/works/new`, also the header **Post** link) composes AO3's
+  own form, validates against AO3's limits, shows a confirmation page naming the
+  work and pseud, then sends exactly one `POST /works`: `post_button` publishes
+  it, `save_button` saves it as an AO3 draft. It is never retried — a timeout is
+  recorded as ambiguous and the composer tells you to check your works list on
+  AO3 before trying again.
 - Client budgets: comments 3/15 min (AO3's own limit), kudos 10/min,
-  subscriptions 20/h, bookmarks 10/min. `Retry-After` parks the action.
+  subscriptions 20/h, bookmarks 10/min, new works 3/h. `Retry-After` parks the
+  action.
 - The audit log (`/audit`) is append-only and stores targets and outcomes — never
   payloads, cookies or passwords.
 - To stop all writes immediately: restart with `AO3I_WRITE_ENABLED=false` (default).
@@ -219,6 +230,10 @@ shows exactly what was done.
 
 - Chapter-level reading progress only; no scroll/block anchor yet (I7 refinement).
 - Bookmarks and comments are created, not edited or deleted from the app.
+- New-work posting creates a work plus its first chapter only: adding chapters,
+  editing or deleting a posted work, and a My Works management page are not
+  implemented. Drafts live on AO3, not locally, and AO3 deletes them after about
+  29 days. Nothing is scheduled or posted in the background.
 - Cached comment threads are a read-only copy of AO3's rendered comments: there
   is no reply, edit or delete from the cached thread, and only AO3's first page
   is stored (further pages link out). The copy is keyed to the commentable the

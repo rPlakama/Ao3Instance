@@ -133,9 +133,11 @@ triggers `/lost_cookie`. Import is validated by the §2.2 probe before being mar
 | mark for later | `PATCH /works/:id/mark_for_later` | HTML | — | 302 back; next read shows state | 302 → login |
 | mark as read | `PATCH /works/:id/mark_as_read` | HTML | — | 302 back; next read shows state | 302 → login |
 | favorite tag | `POST /users/:uid/favorite_tags` | **JSON** | `favorite_tag[tag_id]` | 201 `{item_id, item_success_message}` | 422 `{errors:[…]}` |
+| work create | `POST /works` | HTML | `work[title]`, `work[rating_string]`, `work[archive_warning_strings][]`, `work[fandom_string]`, `work[language_id]`, `work[chapter_attributes][content]`, `work[author_attributes][ids][]`, `post_button`/`save_button` | 302 → `/works/:id` (posted) or `/works/:id/preview` (draft) | 200 re-render with `#error` blocks; 429; 302 → `/auth_error` |
 
-Deferred (documented, not in v1): mute/block, work/chapter creation, collections, comment
-moderation (approve/reject/freeze/hide), admin version of any action.
+Deferred (documented, not implemented): chapter addition, editing/deleting a work, a My
+Works management view, mute/block, collections, comment moderation
+(approve/reject/freeze/hide), admin version of any action.
 
 ---
 
@@ -236,6 +238,61 @@ moderation (approve/reject/freeze/hide), admin version of any action.
 - Body `favorite_tag[tag_id]`; JSON 201/422 (`favorite_tags_controller.rb:9-44`).
 - Max 20 favorite tags (`config/config.yml:206`); duplicates rejected by the model.
 
+### 4.8 Work create — `POST /works`
+
+- **Preconditions:** signed-in usable session (both cookies, §2); CSRF token; writes
+  enabled client-side. Rating, fandom, language, creator pseud and at least one archive
+  warning are required. This request creates the work **and its first chapter**; adding
+  further chapters is a different contract (`chapters#create`).
+- **Body (minimal):** `work[title]`, `work[rating_string]`,
+  `work[archive_warning_strings][]` (at least one), `work[fandom_string]`,
+  `work[language_id]`, `work[chapter_attributes][content]`,
+  `work[author_attributes][ids][]`, `authenticity_token`.
+  **Optional:** `work[category_strings][]`, `work[relationship_string]`,
+  `work[character_string]`, `work[freeform_string]`, `work[summary]`, `work[notes]`,
+  `work[collection_names]`, `work[recipients]`, `work[chapter_attributes][title]`.
+  The chapter field is **singular** (`work[chapter_attributes]`, from
+  `fields_for "work[chapter_attributes]"`, `_standard_form.html.erb:208`); tags and
+  categories use plural array fields.
+- **Button name decides publish vs draft** (`_posting_fieldset.html.erb:12-25`):
+  `post_button` makes the controller set `@work.posted = true` and redirect to
+  `/works/:id`; `save_button` (or no post button at all) saves an unpublished draft and
+  redirects to `/works/:id/preview`. The controller only tests parameter presence
+  (`params[:post_button]`, `works_controller.rb:303`), so the submitted value
+  (`Post` / `Save as Draft`) is ignored. `work[posted]` is **not** a permitted parameter
+  (`work_params`, `works_controller.rb:911-934`) — the flag cannot be forced in the body.
+- **Limits** (mirrored in the client from AO3's models/config): title 1–255, summary
+  ≤ 1,250, notes ≤ 5,000, each tag ≤ 150 chars, fandom + relationship + character +
+  additional tags ≤ 75 total, work text 10–510,000 chars. AO3 still validates tags,
+  recipients, language and collection membership server-side; local validation is a fast
+  pre-check, not the authority.
+- **Response classification:**
+
+  | response | meaning |
+  | --- | --- |
+  | 302 → `/works/:id` | work created and **posted** |
+  | 302 → `/works/:id/preview` | work created as an **unposted draft**; AO3 deletes drafts about 29 days after creation (`works_controller.rb:314-316`) |
+  | 200 (or 422) re-render with `#error li` | validation failure; the messages are AO3's own user-facing text, nothing was created |
+  | 302 → `/auth_error` | CSRF expired; Rails rejected before the action; one refresh-and-retry is safe |
+  | 302 → `/users/login` | logged out; re-authenticate |
+  | 302 → `/lost_cookie` | jar incomplete (`user_credentials` missing) |
+  | 429 | rate limited; honour `Retry-After` |
+  | 403/503 | edge block / challenge |
+  | transport error | **ambiguous**: the work may exist; verify on AO3 before retrying |
+
+- **Gotchas:**
+  - There is no `POST /works/preview`. The member route is `GET /works/:id/preview`
+    (`routes.rb:390`), and AO3's own **Preview** button submits the create form; with no
+    `post_button`, that persists a draft. Previewing upstream is a write, never a read.
+  - `work[language_id]` is a **numeric database id**, not an ISO code (the search form
+    only exposes ISO short codes). Parse the `<select>` on `GET /works/new`
+    (`_work_form_associations_language.html.erb:5-10`).
+  - The byline is `work[author_attributes][ids][]`; for a one-pseud account AO3 renders
+    it as a hidden input that still carries the `[]` suffix
+    (`_byline.html.erb:24-32`), so send the array form either way.
+  - The create response is a redirect even for a draft; follow it with a `GET`, never a
+    second `POST` (§1).
+
 ---
 
 ## 5. Outcome detection
@@ -247,6 +304,8 @@ Ordered from strongest to weakest signal. Prefer the highest available for each 
    redirects by itself; a verification read is a separate explicit GET):
    - `/comments/:id` → comment created;
    - `/bookmarks/:id` → bookmark created;
+   - `/works/:id` → work created and posted;
+   - `/works/:id/preview` → work created as an unposted draft;
    - `/auth_error` → CSRF expired;
    - `/users/:login/change_password` → `PasswordChangeRequired`;
    - `/429` → rate limited (the comment limiter's redirect is W5; W1 maps the HTTP 429 status);
@@ -257,6 +316,8 @@ Ordered from strongest to weakest signal. Prefer the highest available for each 
 3. **Body marker** — for kudos, the followed work page:
    - success: the kudos section shows the user / `#kudos_message` is present;
    - failure: one of the exact strings in §4.1 appears in the page.
+   For a work create, the failure marker is a re-rendered form carrying an `#error`
+   block whose `li` items are AO3's messages (§4.8).
 4. **Re-read verification** — for ambiguous cases (network failure after send, missing
    marker): read the target state (kudos given? subscription present? comment id present?)
    and only then decide. Never infer success from "no error".
@@ -297,6 +358,7 @@ Never use HTTP status alone: kudos success and failure are both `302`.
 | `ServerConstrained` | favorite tags (model validation) | retry allowed; 422 duplicate → already done |
 | `ClientGuarded` | comments, bookmarks | **never auto-retry**; verify by re-read; require a new user confirmation for a second attempt |
 | `NoConstraint` | subscriptions | **never retry**; pre-check the index, post-check, show state |
+| `NonIdempotentCreate` | work create | **never retry**; read the 302 to classify; a timeout is ambiguous — the user verifies on AO3 before a second attempt |
 
 Ambiguity rule: a transport failure *after* the request was written is `Ambiguous`. The
 only acceptable follow-up is a read that proves the effect; if the read cannot prove
@@ -315,11 +377,18 @@ worse than a failed one.
 | comment length | 10,000 chars | `config.yml:105` |
 | favorite tags | 20 | `config.yml:206` |
 | kudos shown | 50 per page | `config.yml:205` |
+| work title | 255 chars | `config.yml:101` |
+| work summary | 1,250 chars | `config.yml:103` |
+| work notes | 5,000 chars | `config.yml:104` |
+| tag name | 150 chars | `config.yml:106` |
+| work text | 10–510,000 chars | `config.yml:107-108` |
+| user-defined tags (fandom, relationship, character, additional) | 75 total | `config.yml:132` |
 | session lifetime | 2 weeks (3 months remembered) | `config.yml:14-15` |
 | comment thread depth | 5 | `config.yml:198` |
 
 The client's own floor is stricter than the server's: ≥ 2 s between requests, one in
-flight, no parallelism, no background writes.
+flight, no parallelism, no background writes. Work creation is additionally budgeted at
+3 per hour by the write governor: posting is rare, consequential and non-idempotent.
 
 ---
 
@@ -351,4 +420,8 @@ flight, no parallelism, no background writes.
       second bookmark.
 - [ ] Exact subscription duplicate behaviour on the sandbox (no DB constraint).
 - [ ] Whether `view_adult=1` is required to kudos/comment on adult works.
+- [ ] Work create on the sandbox: publish → 302 `/works/:id` and save draft → 302
+      `/works/:id/preview`; and whether the hidden empty `work[archive_warning_strings][]`
+      input AO3's own form includes (`include_hidden`) is needed alongside a selected
+      warning.
 - [ ] Cloudflare challenge shape on a plain HTTP client (status, body markers).

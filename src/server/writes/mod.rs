@@ -6,6 +6,7 @@
 
 mod actions;
 mod preview;
+mod work;
 
 use std::sync::Arc;
 
@@ -28,6 +29,7 @@ pub(super) use actions::{
     write_bookmark, write_comment, write_kudos, write_reading, write_subscribe, write_unsubscribe,
 };
 pub(super) use preview::{write_comment_preview, write_preview};
+pub(super) use work::{compose, write_work, write_work_preview};
 
 pub(super) fn require_writes_enabled(state: &AppState) -> Handled<()> {
     if !state.write_enabled {

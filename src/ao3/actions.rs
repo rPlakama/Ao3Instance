@@ -4,8 +4,11 @@
 //! is worse than a failed one) and classifies the response into a typed result.
 //! The confirmation step, intent ledger and governor live in the server layer.
 
+use scraper::Html;
 use serde::Deserialize;
 
+use crate::ao3::compose::NewWorkInput;
+use crate::ao3::html::{collapse_text, parse_selector};
 use crate::ao3::parse::{SpaceMode, percent_encode};
 use crate::ao3::pseuds::{self, Pseud};
 use crate::ao3::session::AccountSession;
@@ -426,6 +429,154 @@ fn comment_id_from_location(location: Option<&str>) -> Option<i64> {
     None
 }
 
+/// How AO3 should persist a composed work.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PostMode {
+    /// Publish now (`post_button`): the work becomes public.
+    Publish,
+    /// Save as an unposted draft (`save_button`); AO3 deletes drafts after ~29 days.
+    Draft,
+}
+
+/// Result of one create request.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PostedWork {
+    pub work_id: Option<String>,
+    pub draft: bool,
+}
+
+/// `POST /works` — creates one work (and its first chapter) through AO3's own
+/// posting form.
+///
+/// Exactly one request: the caller owns the confirmation step, intent/audit rows
+/// and the governor. Creation is not idempotent, so it is never retried here; the
+/// CSRF refresh inside `post_write` is safe because `/auth_error` means the
+/// request was refused before anything was created.
+pub async fn post_work(
+    session: &mut AccountSession,
+    work: &NewWorkInput,
+    mode: PostMode,
+) -> Result<PostedWork> {
+    let mut fields: Vec<(&str, String)> = vec![
+        ("utf8", "\u{2713}".to_string()),
+        ("work[title]", work.title.trim().to_string()),
+        ("work[rating_string]", work.rating.trim().to_string()),
+        ("work[fandom_string]", work.fandom.trim().to_string()),
+        ("work[language_id]", work.language_id.trim().to_string()),
+        ("work[chapter_attributes][content]", work.content.clone()),
+    ];
+    for warning in work
+        .warnings
+        .iter()
+        .filter(|warning| !warning.trim().is_empty())
+    {
+        fields.push(("work[archive_warning_strings][]", warning.clone()));
+    }
+    for category in work
+        .categories
+        .iter()
+        .filter(|category| !category.trim().is_empty())
+    {
+        fields.push(("work[category_strings][]", category.clone()));
+    }
+    for (key, value) in [
+        ("work[relationship_string]", &work.relationships),
+        ("work[character_string]", &work.characters),
+        ("work[freeform_string]", &work.additional_tags),
+        ("work[summary]", &work.summary),
+        ("work[notes]", &work.notes),
+        ("work[collection_names]", &work.collections),
+        ("work[recipients]", &work.recipients),
+        ("work[chapter_attributes][title]", &work.chapter_title),
+        ("work[author_attributes][ids][]", &work.pseud_id),
+    ] {
+        if !value.trim().is_empty() {
+            fields.push((key, value.clone()));
+        }
+    }
+    match mode {
+        PostMode::Publish => fields.push(("post_button", "Post".to_string())),
+        PostMode::Draft => fields.push(("save_button", "Save as Draft".to_string())),
+    }
+
+    let encoded: Vec<(&str, &str)> = fields
+        .iter()
+        .map(|(key, value)| (*key, value.as_str()))
+        .collect();
+    let response = session.post_write("/works", &encoded).await?;
+    match response.status {
+        302 | 303 => {
+            if response.location_contains("/users/login") {
+                return Err(Error::LoggedOut);
+            }
+            if response.location_contains("/auth_error") {
+                return Err(Error::CsrfExpired);
+            }
+            if response.location_contains("/lost_cookie") {
+                return Err(Error::SessionIncomplete);
+            }
+            let location = response.location;
+            let Some(work_id) = work_id_from_location(location.as_deref()) else {
+                return Err(Error::UpstreamChanged(format!(
+                    "work create redirected to {location:?}"
+                )));
+            };
+            let draft = mode == PostMode::Draft
+                || location
+                    .as_deref()
+                    .is_some_and(|target| target.contains("/preview"));
+            Ok(PostedWork {
+                work_id: Some(work_id),
+                draft,
+            })
+        }
+        // The form is re-rendered with `#error` blocks when validation fails.
+        200 | 422 => Err(classify_work_failure(&response.body)),
+        429 => Err(Error::RateLimited {
+            retry_after: response.retry_after,
+        }),
+        403 | 503 => Err(Error::BlockedByEdge {
+            status: response.status,
+        }),
+        status => Err(Error::UpstreamChanged(format!(
+            "work create returned HTTP {status}"
+        ))),
+    }
+}
+
+/// First `/works/<id>` in a redirect target (`/works/123` or `/works/123/preview`).
+fn work_id_from_location(location: Option<&str>) -> Option<String> {
+    let rest = location?
+        .split('/')
+        .skip_while(|segment| *segment != "works")
+        .nth(1)?;
+    let id: String = rest.chars().take_while(char::is_ascii_digit).collect();
+    (!id.is_empty()).then_some(id)
+}
+
+/// AO3's `#error` block (`app/helpers/validation_helper.rb:32-51`), else a typed
+/// generic refusal. Messages are AO3's own, already user-facing text.
+fn classify_work_failure(body: &str) -> Error {
+    let messages = error_messages(body);
+    if messages.is_empty() {
+        Error::Validation("AO3 rejected the work without showing a reason".to_string())
+    } else {
+        Error::Validation(messages.join(" "))
+    }
+}
+
+fn error_messages(html: &str) -> Vec<String> {
+    let Ok(selector) = parse_selector("#error li") else {
+        return Vec::new();
+    };
+    let document = Html::parse_document(html);
+    document
+        .select(&selector)
+        .map(|item| collapse_text(&item))
+        .filter(|message| !message.is_empty())
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -472,6 +623,37 @@ mod tests {
             classify_comment_failure("<p>Couldn't save comment!</p>"),
             Error::Validation(_)
         ));
+    }
+
+    #[test]
+    fn work_ids_and_draft_redirects_are_parsed() {
+        assert_eq!(
+            work_id_from_location(Some("/works/777")),
+            Some("777".to_string())
+        );
+        assert_eq!(
+            work_id_from_location(Some("/works/778/preview")),
+            Some("778".to_string())
+        );
+        assert_eq!(work_id_from_location(Some("/users/someone")), None);
+        assert_eq!(work_id_from_location(Some("/users/login")), None);
+        assert_eq!(work_id_from_location(None), None);
+    }
+
+    #[test]
+    fn work_form_errors_are_read_from_aos_error_block() {
+        let html = r#"<div id="error" class="error">
+            <h4>Sorry! We couldn&#39;t save this work because:</h4>
+            <ul><li>Title must be at least 1 characters long without leading spaces.</li>
+            <li>Language cannot be blank.</li></ul></div>"#;
+        assert_eq!(
+            error_messages(html),
+            vec![
+                "Title must be at least 1 characters long without leading spaces.".to_string(),
+                "Language cannot be blank.".to_string()
+            ]
+        );
+        assert!(error_messages("<html><body>no errors</body></html>").is_empty());
     }
 
     #[test]

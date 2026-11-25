@@ -5,6 +5,11 @@
 - **Supersedes:** `docs/init-audit.md` §2 D3 and D4 (read-only v0)
 - **Related:** ADR-0005, `docs/ao3-write-api.md`
 
+> **Amended (2026-11-25).** New-work creation is in scope again; see
+> [ADR-0008](0008-work-creation.md). The "works/chapters creation" item in the deferral
+> table below now covers only chapter addition; editing/deleting an existing work and a My
+> Works management view also remain unimplemented.
+
 ## Context
 
 The owner's objective is a client that posts kudos, comments, subscriptions and more. AO3

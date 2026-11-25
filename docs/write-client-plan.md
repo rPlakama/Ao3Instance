@@ -166,6 +166,7 @@ No step may be skipped for "simple" actions. Kudos is simple until it double-pos
 | `ServerConstrained` | favorite tags | yes | 422 duplicate → `AlreadyDone` |
 | `ClientGuarded` | comments, bookmarks | **no** | verify by read; re-confirmation required |
 | `NoConstraint` | subscriptions | **no** | pre-check the index; never blind POST |
+| `NonIdempotentCreate` | work create | **no** | read the 302 to classify; a timeout is ambiguous — verify on AO3 before retrying |
 
 The class is a property of the action, declared next to its handler and asserted by a
 test. A new action without a class does not compile (or fails the gate).
@@ -332,6 +333,38 @@ AO3's first page is cached (`has_more` links out); deleted or hidden comments ar
 from the cache and their replies are hoisted to the omitted comment's parent rather than
 lost. Bodies are untrusted author HTML, stored raw like chapter text and sanitized at
 render. Tests: `tests/comments_cache.rs`.
+
+### Work creation addendum — 2026-11-25
+
+**Decision.** New-work creation is now in scope ([ADR-0008](adr/0008-work-creation.md)),
+superseding the "works/chapters creation" deferral in ADR-0003 for new works only. The
+composer at `GET /works/new` mirrors AO3's own new-work form: rating, archive warnings,
+categories, fandom/relationship/character/additional tags, title, creator pseud, summary,
+notes, language, collections, gifts, chapter title and work text. The option lists
+(ratings, warnings, categories, numeric language ids, creator pseuds) are parsed from
+AO3's real `/works/new` page and cached for 10 minutes, so no private database id is
+hardcoded. AO3's model limits are mirrored locally (title 1–255, summary 1,250, notes
+5,000, each tag 150, at most 75 user-defined tags, work text 10–510,000, at least one
+warning, rating/fandom/language/pseud required), so an obviously invalid work never
+reaches the archive.
+
+**Pipeline.** `POST /write/work/preview` renders a local confirmation with no network
+write; the confirmation page re-submits the same values with `confirm=yes` to
+`POST /write/work`, which sends exactly one `POST /works` with
+`work[chapter_attributes][content]`, `work[author_attributes][ids][]`,
+`work[rating_string]`, `work[archive_warning_strings][]`, `work[fandom_string]`,
+`work[language_id]` and the optional fields, plus `post_button` (publish) or `save_button`
+(Save as Draft). The outcome is classified from the redirect: a 302 to `/works/:id` means
+posted (audit `work-posted`, then the app caches and opens the work through `/open/:id`);
+a 302 to `/works/:id/preview` means saved as a draft (audit `work-draft`, then a
+`/session` notice — AO3 deletes drafts about 29 days after creation); a 200 re-render with
+`#error` blocks means failed (audit `failed`, AO3's messages shown, composed text kept);
+a timeout is audited `ambiguous` and never retried. The `post_work` governor budget is
+3 per hour.
+
+**Scope.** New work plus first chapter, publish or draft. Adding chapters, editing or
+deleting a work and a My Works page stay later work. Tests: `tests/writes_work.rs` (6)
+plus `ao3::compose` unit tests.
 
 ### W5 status — partial (2026-11-22): kudos + reading flags
 
