@@ -148,12 +148,16 @@ services.ao3instance = {
   port = 8099;
   # openFirewall = true;      # default: loopback only
   # flaresolverrPort = 8191;  # optional host-provided FlareSolverr
+  # writesEnabled = true;     # opt in to kudos/comments/posting; import AO3 cookies at /session
 };
 ```
 
 The module creates the data directory (mode `0700`, owned by the `ao3instance`
 system user), runs `ao3i-server`, restarts on failure, and applies systemd
-hardening. Back up the whole data directory (database **and** key); without the
+hardening. `writesEnabled = true` sets `AO3I_WRITE_ENABLED=true`; writes also
+need a usable AO3 session, imported on the **Session** page (both the
+`_otwarchive_session` and `user_credentials` cookies), otherwise the UI explains
+that the session is unusable instead of pretending the reader is signed out. Back up the whole data directory (database **and** key); without the
 key the session cannot be decrypted.
 
 ## Configuration

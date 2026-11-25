@@ -120,6 +120,22 @@
             grep -qx "PORTS=9123" ${values}
             grep -q "ENV=AO3I_BIND=0.0.0.0" ${values}
             ! grep -q "^ENV=AO3I_FLARESOLVERR_URL=" ${values}
+            ! grep -q "^ENV=AO3I_WRITE_ENABLED=" ${values}
+            touch $out
+          '';
+
+        ao3instance-module-writes-enabled =
+          let
+            enabled = evalModuleConfig {
+              enable = true;
+              writesEnabled = true;
+            };
+            values = pkgs.writeText "ao3instance-module-writes-enabled.txt" ''
+              ${builtins.concatStringsSep "\n" (map (value: "ENV=${value}") enabled.systemd.services.ao3instance.serviceConfig.Environment)}
+            '';
+          in
+          pkgs.runCommand "check-ao3instance-module-writes-enabled" { } ''
+            grep -qx "ENV=AO3I_WRITE_ENABLED=true" ${values}
             touch $out
           '';
 
@@ -146,6 +162,7 @@
               enable = true;
               dataDir = "/var/lib/ao3instance-test";
               port = 9123;
+              writesEnabled = true;
             };
           };
           testScript = ''
@@ -154,6 +171,9 @@
             machine.succeed("curl -fsS http://127.0.0.1:9123/health | grep -qx ok")
             machine.succeed("test -s /var/lib/ao3instance-test/ao3i.db")
             machine.succeed("test -s /var/lib/ao3instance-test/key")
+            machine.succeed(
+              "systemctl show ao3instance.service -p Environment | grep -q 'AO3I_WRITE_ENABLED=true'"
+            )
           '';
         };
       };

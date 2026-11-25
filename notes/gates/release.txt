@@ -1,55 +1,58 @@
-Release gate run — v0.1.5 — 2026-11-25T19:15Z
+Release gate run — v0.1.6 — 2026-11-25T20:50Z
 toolchain: rustc 1.98.1, cargo 1.98.0 (nix dev shell)
 
-== changes since v0.1.4 (7 commits)
-- fix(session): distinguish writes-disabled and unusable-session states (#0f6c9ae)
-- feat(compose): post new works to AO3 from the instance (#641eb8c)
-- feat(works): author works manager — drafts, publish draft, delete work (#0c11095)
-- feat(chapters): add and edit chapters through AO3's own chapter form (#c593dfd)
-- feat(edit-work): edit work metadata and tags from the instance (#9109c72)
-- feat(comments): reply to, edit and delete comments on AO3 (#cb1881f)
-- feat(bookmarks): edit and delete bookmarks from the live bookmarks page (#5420d1b)
+== changes since v0.1.5 (one commit)
+- feat(nix): services.ao3instance.writesEnabled — declarative equivalent of
+  AO3I_WRITE_ENABLED=true, default false, with docs pointing at the /session
+  cookie re-import (both the _otwarchive_session and user_credentials cookies)
+  for a usable write session.
 
-== nix build (0.1.4, pre-bump)
-exit=0   store: /nix/store/fcgh4fbihkhq7jwmz9qjhpbwq8hli2v1-ao3instance-0.1.4
+  Note: v0.1.5 is already tagged/pushed and does not contain this option (it was
+  added afterwards), so this is a new patch release rather than an amendment of
+  the published v0.1.5 tag.
 
-== nix flake check (0.1.4 tree, includes the NixOS module VM test)
+== nix build (module change, pre-bump 0.1.5 tree)
+exit=0   store: /nix/store/9vbrykr8zcvnk9kbqwfqfjdx7jf8cyqi-ao3instance-0.1.5
+
+== nix flake check (module change, pre-bump tree)
 exit=0
-
-== built binary smoke test (0.1.4 store path)
-/ 200 · /session 200 · /audit 200 · /diagnostics 200 · /about 200 ·
-/themes 200 · /health 200   (fresh data dir, writes disabled, no solver)
+  - ao3instance-module-writes-enabled: ENV=AO3I_WRITE_ENABLED=true when the
+    option is on
+  - ao3instance-module-open-firewall: asserts AO3I_WRITE_ENABLED stays unset by
+    default
+  - nixos-module VM test: boots with writesEnabled = true, /health is ok,
+    ao3i.db + key exist, and `systemctl show ... -p Environment` carries
+    AO3I_WRITE_ENABLED=true
 
 == version bump
-Cargo.toml 0.1.4 -> 0.1.5; Cargo.lock root package updated to 0.1.5
+Cargo.toml 0.1.5 -> 0.1.6; Cargo.lock root package updated to 0.1.6
 
-== nix build (0.1.5)
-exit=0   store: /nix/store/q5p9qzhny671i01c90qrh6lzqmbcmgyw-ao3instance-0.1.5
-binary: 15,970,968 bytes (release, stripped), starts and serves:
+== nix build (0.1.6)
+exit=0   store: /nix/store/4hr92wsswy2j1zqwicbxrd5d5gj6qhxr-ao3instance-0.1.6
+binary: 15,971,000 bytes (release, stripped), starts and serves:
 / 200 · /session 200 · /audit 200 · /diagnostics 200 · /about 200 ·
 /themes 200 · /health 200   (fresh data dir, writes disabled, no solver)
 
-== cargo test (0.1.5 tree)
+== cargo test (0.1.6 tree)
 330 passed, 0 failed, 0 ignored (unit + 25 integration targets)
 
-== cargo clippy --all-targets -- -D warnings (0.1.5 tree)
+== cargo clippy --all-targets -- -D warnings (0.1.6 tree)
 exit=0
 
-== cargo fmt --check (0.1.5 tree)
+== cargo fmt --check (0.1.6 tree)
 exit=0
 
 == enforcement gates
 scripts/check-ao3-routes.sh --require → 68 passed, 0 failed
 scripts/check-no-solver-build-dep.sh → ok (FlareSolverr is not a build dependency)
 
-== release title (changes since v0.1.4)
-Add work posting, chapter and metadata editing, interactive comments and
-bookmark management
+== release title
+Add writesEnabled NixOS module option for opt-in AO3 writes
 
 == post-release state
-- Write actions remain opt-in (AO3I_WRITE_ENABLED, default off) and require a
-  re-imported AO3 session; all write routes go through confirmation, governor,
-  intent/audit ledger and a single upstream request.
-- Known deferred gaps (documented in ADR-0008 "Later"): favourite-tag toggles,
-  work-author comment moderation (approve/reject/freeze/hide), chapter delete/
-  reorder, inbox replies, bookmark create-with-notes and collection curation.
+- `services.ao3instance.writesEnabled = true` is the declarative equivalent of
+  AO3I_WRITE_ENABLED=true; writes still need a usable AO3 session, imported on
+  /session (both cookies). With writes on and no usable session the UI says the
+  session is unusable instead of misreporting sign-in.
+- No application behaviour changed in this patch release; the write surface is
+  the v0.1.5 feature set.

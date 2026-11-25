@@ -36,6 +36,22 @@ in
       '';
     };
 
+    writesEnabled = lib.mkOption {
+      type = lib.types.bool;
+      default = false;
+      description = ''
+        Enable AO3 write actions (kudos, comments and replies, subscriptions,
+        posting and editing works and chapters, bookmark management). Off by
+        default: a client that can write against the archive is an explicit
+        operator decision.
+
+        Writes need a usable AO3 session imported on the /session page (both
+        the _otwarchive_session and user_credentials cookies). With this option
+        on but no usable session, the UI explains that the session is unusable
+        instead of pretending the reader is signed out.
+      '';
+    };
+
     flaresolverrPort = lib.mkOption {
       type = lib.types.nullOr lib.types.port;
       default = null;
@@ -95,6 +111,7 @@ in
             "AO3I_DATA_DIR=${toString cfg.dataDir}"
             "AO3I_PORT=${toString cfg.port}"
           ]
+          ++ lib.optional cfg.writesEnabled "AO3I_WRITE_ENABLED=true"
           ++ lib.optional cfg.openFirewall "AO3I_BIND=0.0.0.0"
           ++ lib.optional (
             cfg.flaresolverrPort != null

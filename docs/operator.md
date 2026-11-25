@@ -151,8 +151,8 @@ so use `/themes/clear` to return to the built-in look.
 ## NixOS module
 
 `nixosModules.default` defines `services.ao3instance.dataDir`,
-`services.ao3instance.port`, `services.ao3instance.openFirewall`, and
-`services.ao3instance.flaresolverrPort`:
+`services.ao3instance.port`, `services.ao3instance.openFirewall`,
+`services.ao3instance.flaresolverrPort` and `services.ao3instance.writesEnabled`:
 
 ```nix
 services.ao3instance = {
@@ -160,17 +160,26 @@ services.ao3instance = {
   dataDir = "/var/lib/ao3instance";
   port = 8099;
   flaresolverrPort = 8191; # optional; sets AO3I_FLARESOLVERR_URL=http://127.0.0.1:<port>
+  writesEnabled = true;    # optional; sets AO3I_WRITE_ENABLED=true
 };
 ```
 
 It creates `/var/lib/ao3instance` (0700, owned by the `ao3instance` system
 user), runs the package binary with `AO3I_DATA_DIR`/`AO3I_PORT`, and restarts on
 failure. With `openFirewall = true` the module also opens the configured port
-and sets `AO3I_BIND=0.0.0.0`; by default it stays loopback-only. The app holds
+and sets `AO3I_BIND=0.0.0.0`; by default it stays loopback-only.
+`writesEnabled = true` sets `AO3I_WRITE_ENABLED=true` and is the declarative
+equivalent of running with the write switch on; writes still require a usable
+AO3 session imported on the **Session** page (both the `_otwarchive_session`
+and `user_credentials` cookies). With the switch on but no usable session the
+UI says the session is unusable instead of pretending the reader is signed out. The app holds
 an AO3 session, so only expose it on trusted networks or behind a reverse
 proxy. Back up the whole data directory (SQLite database plus AES key).
-The flake check `nixos-module` boots a VM, waits for the port, checks `/health`,
-and verifies that `ao3i.db` and `key` are created.
+The flake checks cover the module options (`writesEnabled` sets
+`AO3I_WRITE_ENABLED=true`, `flaresolverrPort` sets the solver URL, the defaults
+leave both unset) and the `nixos-module` check boots a VM, waits for the port,
+checks `/health`, verifies that `ao3i.db` and `key` are created, and confirms
+the service environment carries `AO3I_WRITE_ENABLED=true`.
 
 ## First use
 
